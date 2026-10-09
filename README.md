@@ -1,3 +1,5 @@
+**English** · [Português](README.pt-BR.md)
+
 # orq — orchestrating coding agents with herdr
 
 You describe the work in a Plane issue. A **conductor** (Claude, ideally Opus) reads it, picks the right agent for
@@ -128,6 +130,18 @@ orq-stats --days 30                              # scoreboard: delivery, approva
 orq-block antigravity --days 3                   # out of the picks (e.g. weekly quota gone, no collector for it)
 ```
 
+### Language
+orq speaks English and Portuguese: CLI messages, `herdr-board`, notices and `install.sh`. It follows
+`[ui] lang` in your config (`"auto"` = system locale, `"en"`, `"pt"`), or the `ORQ_LANG` environment variable.
+Switch it any time:
+- `orq-lang pt` / `orq-lang en` / `orq-lang toggle` (`orq-lang` alone shows the current one);
+- `l` inside `herdr-board`;
+- a herdr key: `install.sh` links the `orq` herdr plugin; bind its `orq.lang-toggle` action (snippet in
+  `herdr-plugin/herdr-plugin.toml`) — e.g. `prefix+shift+l` — and `orq.board` to open the board as an overlay.
+
+Whatever is already running keeps its language. Conductors always talk to you in your own language. Docs:
+[Português](README.pt-BR.md).
+
 ## Daily use
 
 ```bash
@@ -167,6 +181,7 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 | `herdr-baseline` | Manual snapshot of the tests failing on the base (outside the flow) |
 | `agent-quota` | Current quota of each agent and account |
 | `orq-config` · `orq-pick` · `orq-stats` · `orq-block` | Configuration, agent pick, scoreboard, manual blocks |
+| `orq-lang` | Shows or switches the language of orq's messages (en/pt) |
 
 ## More
 

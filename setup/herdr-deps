@@ -7,18 +7,19 @@
 #   herdr-deps -r <repo principal> -b <base> -w <worktree>
 #   exit 0 = linked · 3 = main repo dirty or not on <base>: ASK THE USER · other = error
 set -euo pipefail
+. "$(dirname "$(realpath "$0")")/orq-i18n.sh"
 R=""; B=""; WT=""
 while getopts "r:b:w:" f; do
   case $f in r) R=$OPTARG;; b) B=$OPTARG;; w) WT=$OPTARG;; *) sed -n '2,8p' "$0"; exit 2;; esac
 done
-for v in R B WT; do [ -n "${!v}" ] || { echo "missing -$(echo $v | tr A-Z a-z | cut -c1)"; exit 2; }; done
+for v in R B WT; do [ -n "${!v}" ] || { echo "$(m missing faltou) -$(echo $v | tr A-Z a-z | cut -c1)"; exit 2; }; done
 R=$(cd "$R" && pwd); WT=$(cd "$WT" && pwd)
 GD=$(git -C "$R" rev-parse --path-format=absolute --git-common-dir)
 
 grep -qx node_modules "$GD/info/exclude" 2>/dev/null || echo node_modules >> "$GD/info/exclude"
 
 exec 9>"$GD/herdr-deps.lock"
-flock -n 9 || { echo "another conductor is installing dependencies in $(basename "$R"); waiting..."; flock 9; }
+flock -n 9 || { echo "$(m "another conductor is installing dependencies in $(basename "$R"); waiting..." "outro conductor está instalando dependências em $(basename "$R"); aguardando...")"; flock 9; }
 
 git -C "$R" fetch -q origin "$B"
 LOCKS=package.json
@@ -27,7 +28,7 @@ for l in bun.lock bun.lockb package-lock.json yarn.lock pnpm-lock.yaml; do [ -f 
 if ! git -C "$R" diff --quiet HEAD "origin/$B" -- $LOCKS || [ ! -d "$R/node_modules" ]; then
   BR=$(git -C "$R" branch --show-current)
   if [ "$BR" != "$B" ] || [ -n "$(git -C "$R" status --porcelain --untracked-files=no)" ]; then
-    echo "deps are stale, but $(basename "$R") is on '$BR' or has changes: not touching it. Ask the user."; exit 3
+    echo "$(m "deps are stale, but $(basename "$R") is on '$BR' or has changes: not touching it. Ask the user." "deps defasadas, mas $(basename "$R") está em '$BR' ou com alterações: não mexo. Pergunte ao usuário.")"; exit 3
   fi
   git -C "$R" merge -q --ff-only "origin/$B"
   cd "$R"
@@ -35,7 +36,7 @@ if ! git -C "$R" diff --quiet HEAD "origin/$B" -- $LOCKS || [ ! -d "$R/node_modu
   elif [ -f pnpm-lock.yaml ]; then CMD=(pnpm install)
   elif [ -f yarn.lock ]; then CMD=(yarn install)
   else CMD=(npm install); fi
-  echo "installing dependencies in $(basename "$R") (${CMD[*]})..."
+  echo "$(m "installing dependencies in" "instalando dependências em") $(basename "$R") (${CMD[*]})..."
   "${CMD[@]}" >/dev/null
 fi
 ln -sfn "$R/node_modules" "$WT/node_modules"

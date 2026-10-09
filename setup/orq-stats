@@ -17,6 +17,8 @@ import time
 from collections import defaultdict
 from pathlib import Path
 from statistics import median
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from orq_i18n import m, set_lang  # noqa: E402
 
 ROLE = re.compile(r"^(impl|fix\d*|review\d*|[a-z]+-review\d*)-?")
 
@@ -129,6 +131,7 @@ def main(argv):
             days = int(argv.pop(0))
         elif a == "--json":
             as_json = True
+    set_lang()
     runs = collect(ws, days)
     groups = defaultdict(list)
     for r in runs:
@@ -146,8 +149,8 @@ def main(argv):
     if as_json:
         print(json.dumps(rows, indent=2))
         return 0
-    print(f"Scoreboard for the last {days} days in {ws} ({len(runs)} runs; medians per run)\n")
-    hdr = f"{'role':7} {'agent':12} {'model':22} {'n':>4} {'ok%':>5} {'approved%':>12} {'min':>6} {'new tok':>10} {'total tok':>10}"
+    print(m(f"Scoreboard for the last {days} days in {ws} ({len(runs)} runs; medians per run)", f"Placar dos últimos {days} dias em {ws} ({len(runs)} execuções; medianas por execução)") + "\n")
+    hdr = f"{m('role','papel'):7} {m('agent','agente'):12} {m('model','modelo'):22} {'n':>4} {'ok%':>5} {m('approved%','aprov%'):>12} {'min':>6} {m('new tok','tok novos'):>10} {m('total tok','tok total'):>10}"
     print(hdr); print("-" * len(hdr))
     for x in sorted(rows, key=lambda x: (["impl", "fix", "review", "other"].index(x["role"]), -x["n"])):
         ap = f"{x['approved']}% ({x['n_appr']})" if x["approved"] is not None else "-"

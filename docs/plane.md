@@ -1,3 +1,5 @@
+**English** · [Português](pt-BR/plane.md)
+
 # Plane MCP (self-hosted)
 A self-hosted Plane isn't reachable through `mcp.plane.so` → use **stdio**, with a pinned version.
 

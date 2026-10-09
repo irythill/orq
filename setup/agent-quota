@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(dirname "$(realpath "$0")")/orq-i18n.sh"
 # agent-quota [name...] — quota of each Claude account (`claude-accounts`), Codex, OpenCode and Antigravity (default: all).
 # Uses Omarchy's collectors live (--force). Claude with CLAUDE_CONFIG_DIR and a cache per account (its cache is shared
 # and, with an expired token, would show ANOTHER account's numbers).
@@ -6,13 +7,13 @@
 #   -  = the plan has no such window (e.g. Codex Plus only reports weekly): not limiting, decide by the other one.
 #   ?  = no data (expired token, collector failed): don't use that account until you log in again.
 fmt() {
-  jq -r --arg a "$1" '
+  jq -r --arg a "$1" --arg nd "$(m 'no limit data' 'sem dados de limite')" '
     def pct(l): ([.limits[]? | select(.label|test(l;"i")) | .percent*100|floor] | first);
     def show(v): if v == null then "-" else "\(v)%" end;
     if (.usageStatusText // "") != "" then "\($a) 5h=? week=? [\(.usageStatusText)]"
-    elif ((.limits // []) | length) == 0 then "\($a) 5h=? week=? [no limit data]"
+    elif ((.limits // []) | length) == 0 then "\($a) 5h=? week=? [\($nd)]"
     else "\($a) 5h=\(show(pct("5-hour"))) week=\(show(pct("7-day|weekly")))" end' 2>/dev/null \
-    || echo "$1 5h=? week=? [collector failed]"
+    || echo "$1 5h=? week=? [$(m 'collector failed' 'coletor falhou')]"
 }
 want() { [ $# -le 1 ] || [[ " ${*:2} " == *" $1 "* ]]; }
 
@@ -27,20 +28,21 @@ done
 # its latest session (rate_limits; 300-min window = 5h, 10080 = week). Window already reset → 0%.
 codex_from_session() {
   local f; f=$(ls -t "$HOME"/.codex/sessions/*/*/*/*.jsonl 2>/dev/null | head -1)
-  [ -n "$f" ] || { echo "codex 5h=? week=? [no limit data]"; return; }
+  [ -n "$f" ] || { echo "codex 5h=? week=? [$(m 'no limit data' 'sem dados de limite')]"; return; }
   grep '"rate_limits":{' "$f" | tail -1 | jq -r --argjson now "$(date +%s)" \
-    --arg age "$(( ($(date +%s) - $(stat -c %Y "$f")) / 60 ))" '
-    ([.. | objects | .rate_limits? | objects] | last) as $r | if $r == null then "codex 5h=? week=? [no limit data]" else
+    --arg age "$(( ($(date +%s) - $(stat -c %Y "$f")) / 60 ))" --arg nd "$(m 'no limit data' 'sem dados de limite')" \
+    --arg fl "$(m 'from the last session, %s min ago' 'da última sessão, há %s min')" '
+    ([.. | objects | .rate_limits? | objects] | last) as $r | if $r == null then "codex 5h=? week=? [\($nd)]" else
     def win(m): [$r.primary, $r.secondary | select(. != null and .window_minutes == m)] | first;
     def show(w): if w == null then "-" elif (w.resets_at // 0) < $now then "0%" else "\(w.used_percent|floor)%" end;
-    "codex 5h=\(show(win(300))) week=\(show(win(10080))) [from the last session, \($age) min ago]" end' 2>/dev/null \
-    || echo "codex 5h=? week=? [no limit data]"
+    "codex 5h=\(show(win(300))) week=\(show(win(10080))) [\($fl | sub("%s"; $age))]" end' 2>/dev/null \
+    || echo "codex 5h=? week=? [$(m 'no limit data' 'sem dados de limite')]"
 }
 if want codex "$@"; then
   line=$(timeout 30 /usr/share/omarchy/bin/omarchy-agent-usage-codex --limits-only --force 2>/dev/null | fmt codex)
   case $line in *"5h=? week=?"*) codex_from_session ;; *) echo "$line" ;; esac
 fi
 # OpenCode (MiniMax provider): no quota collector. "-" = not limiting; a 429/limit error in a child → switch vendor.
-want opencode "$@" && echo "opencode 5h=- week=- [no quota collector for MiniMax]"
+want opencode "$@" && echo "opencode 5h=- week=- [$(m 'no quota collector for MiniMax' 'MiniMax sem coletor de cota')]"
 # Antigravity (agy): no quota collector. "-" = not limiting; use orq-block when its quota runs out.
-want antigravity "$@" && echo "antigravity 5h=- week=- [no quota collector]"
+want antigravity "$@" && echo "antigravity 5h=- week=- [$(m 'no quota collector' 'sem coletor de cota')]"

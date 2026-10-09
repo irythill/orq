@@ -1,3 +1,5 @@
+**English** · [Português](pt-BR/case-study.md)
+
 # Case study: one developer, five coding agents, a 14 GB laptop
 
 *By [irythill](https://github.com/irythill). Numbers from the author's own `.orquestra/` history (September–October

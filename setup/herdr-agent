@@ -23,6 +23,7 @@
 #       HERDR_AGENT_TUI=1 in the environment makes -T the default.
 # The tab closes by itself HERDR_CLOSE_DELAY s (20) after the end (TUI: when the screen exits); HERDR_KEEP_TAB=1 keeps it.
 set -euo pipefail
+. "$(dirname "$(realpath "$0")")/orq-i18n.sh"
 
 A=${AGENT:-codex}; P=""; G=""; T=""; D=""; O=""; M=""; E=""; RO=0; RESUME=""; ACC=""; INC=(); TUI=${HERDR_AGENT_TUI:-0}
 BASEDIFF=""
@@ -32,11 +33,11 @@ while getopts "a:p:g:t:d:o:m:e:c:i:rR:Tb:" f; do
 done
 shift $((OPTIND - 1)); [ "${1:-}" = "--" ] && shift
 PROMPT=${1:?give the prompt file}
-for v in T D O; do [ -n "${!v}" ] || { echo "missing -$(echo $v | tr A-Z a-z)"; exit 2; }; done
+for v in T D O; do [ -n "${!v}" ] || { echo "$(m missing faltou) -$(echo $v | tr A-Z a-z)"; exit 2; }; done
 D=$(cd "$D" && pwd); PROMPT=$(realpath "$PROMPT"); mkdir -p "$(dirname "$O")"; O=$(realpath -m "$O")
 # -b <base>: attaches `git diff origin/<base>...HEAD` (review without running git; required for Antigravity).
 if [ -n "$BASEDIFF" ]; then
-  git -C "$D" diff "origin/$BASEDIFF...HEAD" > "$O.diff" || { echo "could not build the diff against origin/$BASEDIFF"; exit 2; }
+  git -C "$D" diff "origin/$BASEDIFF...HEAD" > "$O.diff" || { echo "$(m "could not build the diff against origin/$BASEDIFF" "não consegui gerar o diff contra origin/$BASEDIFF")"; exit 2; }
   INC+=("$O.diff")
 fi
 # Follow-ups (-R) reuse the prefix: remove the previous round's result so ".done exists" means "this one finished".
@@ -50,7 +51,7 @@ q() { printf '%q' "$1"; }
 # -T with -R and the screen still open: the follow-up goes straight into it; the end-of-turn hook writes .done again.
 if [ $TUI = 1 ] && [ -n "$RESUME" ] && [ -s "$O.pane" ] && herdr pane get "$(cat "$O.pane")" >/dev/null 2>&1; then
   herdr agent prompt "$(cat "$O.pane")" "$(cat "$PROMPT")" >/dev/null
-  echo "[herdr-agent] $T → $(cat "$O.pane") (follow-up typed into the open screen)"; exit 0
+  echo "[herdr-agent] $T → $(cat "$O.pane") $(m "(follow-up typed into the open screen)" "(follow-up digitado na tela aberta)")"; exit 0
 fi
 # Memory cap per agent (own cgroup): if it blows up (e.g. jest with 15 workers), only that agent dies — not everything.
 UNIT="herdr-agent-$(date +%s)-$$"
@@ -110,7 +111,7 @@ opencode)
   RUNLINE="$CAP $ENVP $(printf '%q ' "${CMD[@]}")$MSG 2>&1 | tee $(q "$O.log") | jq -r --unbuffered 'if .type==\"text\" then .part.text elif .type==\"tool_use\" then \"· \"+(.part.tool//\"tool\") else empty end' 2>/dev/null"
   # OpenCode sometimes doesn't exit after its final event (helper processes hold the pipe): a watcher stops the
   # agent's group when the last event is step_finish/stop and the log has been idle for 30 s.
-  WATCH="( while sleep 10; do systemctl --user is-active -q $UNIT.scope || break; tail -1 $(q "$O.log") 2>/dev/null | jq -e 'select(.type==\"step_finish\" and .part.reason==\"stop\")' >/dev/null 2>&1 && [ \$(( \$(date +%s) - \$(stat -c %Y $(q "$O.log")) )) -ge 30 ] && { echo '[herdr-agent] opencode finished but did not exit; stopping its group'; systemctl --user stop $UNIT.scope; break; }; done ) &"
+  WATCH="( while sleep 10; do systemctl --user is-active -q $UNIT.scope || break; tail -1 $(q "$O.log") 2>/dev/null | jq -e 'select(.type==\"step_finish\" and .part.reason==\"stop\")' >/dev/null 2>&1 && [ \$(( \$(date +%s) - \$(stat -c %Y $(q "$O.log")) )) -ge 30 ] && { echo '[herdr-agent] $(m 'opencode finished but did not exit; stopping its group' 'o opencode terminou mas não encerrou; parando o grupo')'; systemctl --user stop $UNIT.scope; break; }; done ) &"
   IDLINE="jq -r 'select(.sessionID) .sessionID' $(q "$O.log") | tail -1 > $(q "$O.id"); jq -rs '[.[]|select(.type==\"text\")|.part.text]|last // \"\"' $(q "$O.log") > $(q "$O.out.md")"
   ;;
 antigravity|agy)
@@ -138,7 +139,7 @@ antigravity|agy)
 copilot)
   # Copilot CLI: second opinion, always read only (small allowance). No MCP; allowed tools = git reads.
   # Anything else is denied by -p without asking. Fixed session UUID for the follow-up (-R).
-  [ $RO = 1 ] || { echo "copilot only runs read only (-r)"; exit 2; }
+  [ $RO = 1 ] || { echo "$(m "copilot only runs read only (-r)" "o copilot só roda em modo leitura (-r)")"; exit 2; }
   if [ -n "$RESUME" ]; then SID=$RESUME; CMD=(copilot --resume="$SID"); else SID=$(cat /proc/sys/kernel/random/uuid); CMD=(copilot --session-id="$SID"); fi
   CMD+=(-s -C "$D" --disable-builtin-mcps --disable-mcp-server plane
         --allow-tool 'shell(git diff:*)' --allow-tool 'shell(git log:*)' --allow-tool 'shell(git show:*)' --deny-tool write)
@@ -163,11 +164,11 @@ claude)
   RUNLINE="$CAP env -u HERDR_PANE_ID $ACCENV$(printf '%q ' "${CMD[@]}")< $(q "$PROMPT") 2>&1 | tee $(q "$O.log") | jq -r --unbuffered 'if .type==\"assistant\" then (.message.content[]? | if .type==\"text\" then .text elif .type==\"tool_use\" then \"· \"+.name else empty end) else empty end' 2>/dev/null"
   IDLINE="echo $SID > $(q "$O.id"); jq -rs '[.[]|select(.type==\"result\")|.result]|last // \"\"' $(q "$O.log") > $(q "$O.out.md")"
   ;;
-*) echo "unknown agent: $A (use codex, opencode, claude, antigravity or copilot)"; exit 2;;
+*) echo "$(m "unknown agent: $A (use codex, opencode, claude, antigravity or copilot)" "agente desconhecido: $A (use codex, opencode, claude, antigravity ou copilot)")"; exit 2;;
 esac
-[ -n "$ACC" ] && [ "$A" != claude ] && { echo "-c only applies to -a claude"; exit 2; }
+[ -n "$ACC" ] && [ "$A" != claude ] && { echo "$(m "-c only applies to -a claude" "-c só vale para -a claude")"; exit 2; }
 
-[ $TUI = 1 ] && { [ $A = antigravity ] || [ $A = copilot ]; } && { echo "-T does not support $A (no end-of-turn hook)"; exit 2; }
+[ $TUI = 1 ] && { [ $A = antigravity ] || [ $A = copilot ]; } && { echo "$(m "-T does not support $A (no end-of-turn hook)" "-T não suporta $A (sem hook de fim de turno)")"; exit 2; }
 if [ $TUI = 1 ]; then
   # End-of-turn hook shared by the three: writes answer/session, .done and notifies the conductor (in the background,
   # so the agent's screen isn't held while herdr-notify waits for the conductor to leave a dialog).
@@ -233,7 +234,7 @@ JS
   esac
   RUN="$O.run.sh"
   { echo '#!/usr/bin/env bash'; echo "cd $(q "$D")"; [ -n "${PRE:-}" ] && echo "$PRE"; echo "$RUNLINE"; [ -n "${POST:-}" ] && echo "$POST"
-    echo 'echo; echo "['"$A"' (TUI) exited] answer: '"$O"'.out.md"'; echo '[ "${HERDR_KEEP_TAB:-0}" = 1 ] || { sleep "${HERDR_CLOSE_DELAY:-20}"; herdr tab close "$(herdr pane get "$HERDR_PANE_ID" | jq -r .result.pane.tab_id)" >/dev/null 2>&1; }'; } > "$RUN"
+    echo 'echo; echo "['"$A"' (TUI) '"$(m exited encerrado)"'] '"$(m answer resposta)"': '"$O"'.out.md"'; echo '[ "${HERDR_KEEP_TAB:-0}" = 1 ] || { sleep "${HERDR_CLOSE_DELAY:-20}"; herdr tab close "$(herdr pane get "$HERDR_PANE_ID" | jq -r .result.pane.tab_id)" >/dev/null 2>&1; }'; } > "$RUN"
   chmod +x "$RUN"
   PANE=$(herdr-tab "${G:-agents}" "$T" "$D" "bash $(q "$RUN")")
   echo "$PANE" > "$O.pane"; echo "[herdr-agent] $T → $PANE (TUI)"; exit 0
@@ -252,7 +253,7 @@ RUN="$O.run.sh"
   echo 'st=fail; [ "$rc" = 0 ] && grep -q "[^[:space:]]" '"$(q "$O.out.md")"' 2>/dev/null && st=ok   # whitespace-only answer = failure'
   echo 'printf "status=%s rc=%s at=%s\n" "$st" "$rc" "$(date -Is)" > '"$(q "$O.done")"
   echo 'herdr-notify '"$(q "$PARENT")"' "[HERDR-AGENT DONE] '"$T"' status=$st rc=$rc answer: '"$O"'.out.md" || true'
-  echo 'echo; echo "['"$A"' finished: exit $rc status=$st] answer: '"$O"'.out.md"'
+  echo 'echo; echo "['"$A"' '"$(m finished terminou)"': exit $rc status=$st] '"$(m answer resposta)"': '"$O"'.out.md"'
   echo '# Close our own tab (the result stays in .out.md/.log). HERDR_KEEP_TAB=1 keeps it open.'
   echo '[ "${HERDR_KEEP_TAB:-0}" = 1 ] || { sleep "${HERDR_CLOSE_DELAY:-20}"; herdr tab close "$(herdr pane get "$HERDR_PANE_ID" | jq -r .result.pane.tab_id)" >/dev/null 2>&1; }'
 } > "$RUN"

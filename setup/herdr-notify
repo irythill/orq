@@ -5,6 +5,7 @@
 #
 #   herdr-notify <conductor-pane|""> "<message>"
 P=${1:-}; MSG=${2:?message}
+. "$(dirname "$(realpath "$0")")/orq-i18n.sh"
 # Pop-up (native to the OS with ui.toast.delivery = "system"): short title "✓/✗ <title>", details in the body.
 T=${MSG#\[HERDR-AGENT DONE\] }; TITLE=${T%% status=*}; ICON="✓"
 case $MSG in *status=ok*) ;; *status=*) ICON="✗";; *) ICON="•"; TITLE=$MSG;; esac
@@ -13,9 +14,9 @@ herdr notification show "$ICON $TITLE" ${BODY:+--body "$BODY"} >/dev/null 2>&1 |
 [ -n "$P" ] || exit 0
 for try in 1 2 3; do
   st=$(herdr agent get "$P" 2>/dev/null | jq -r '.result.agent.agent_status // empty')
-  [ -n "$st" ] || { echo "[herdr-notify] conductor $P not found"; exit 1; }
+  [ -n "$st" ] || { echo "[herdr-notify] $(m "conductor $P not found" "conductor $P não encontrado")"; exit 1; }
   [ "$st" = blocked ] && herdr agent wait "$P" --until idle --until done --until working --timeout 1800000 >/dev/null 2>&1
   herdr agent prompt "$P" "$MSG" >/dev/null 2>&1 && exit 0
   sleep 20
 done
-echo "[herdr-notify] aviso ao conductor $P falhou"; exit 1
+echo "[herdr-notify] $(m "notice to conductor $P failed" "aviso ao conductor $P falhou")"; exit 1

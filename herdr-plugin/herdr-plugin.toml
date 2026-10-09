@@ -1,0 +1,29 @@
+# orq inside herdr: actions you can bind to keys in ~/.config/herdr/config.toml, e.g.
+#   [[keys.command]]
+#   key = "prefix+L"
+#   type = "plugin_action"
+#   command = "orq.lang-toggle"
+#   description = "orq: switch language (en/pt)"
+# Commands run through a login shell so ~/.local/bin (where install.sh links orq) is on PATH.
+id = "orq"
+name = "orq"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "orq helpers: language switch and the live board"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "lang-toggle"
+title = "orq: switch language (en/pt)"
+command = ["bash", "-lc", "orq-lang toggle --notify"]
+
+[[actions]]
+id = "board"
+title = "orq: open the board"
+command = ["bash", "-lc", "herdr plugin pane open --plugin orq --entrypoint board"]
+
+[[panes]]
+id = "board"
+title = "orq board"
+placement = "overlay"
+command = ["bash", "-lc", "herdr-board"]

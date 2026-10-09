@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# orq-lang — shows or sets the language of orq's messages (ui.lang in ~/.config/orq/config.toml or config.json).
+#
+#   orq-lang                 show the current language
+#   orq-lang pt|en|auto      set it (auto = system locale)
+#   orq-lang toggle          switch between en and pt
+#   --notify                 also show a herdr pop-up (used by the herdr key binding)
+# Applies to whatever starts afterwards (board, notices, orq-pick...); running agents keep their language.
+set -euo pipefail
+DIR=$(dirname "$(realpath "$0")")
+NOTIFY=0; ARG=""
+for a in "$@"; do case $a in --notify) NOTIFY=1 ;; pt|en|auto|toggle) ARG=$a ;; *) echo "usage: orq-lang [pt|en|auto|toggle] [--notify]" >&2; exit 2 ;; esac; done
+CFG_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/orq
+F=${ORQ_CONFIG:-}; [ -n "$F" ] || { [ -f "$CFG_DIR/config.json" ] && [ ! -f "$CFG_DIR/config.toml" ] && F=$CFG_DIR/config.json || F=$CFG_DIR/config.toml; }
+cur=$(env -u ORQ_LANG ORQ_LANG= bash -c ". '$DIR/orq-i18n.sh'; echo \$ORQ_LANG")   # effective language now
+set_cfg() {  # $1 = en | pt | auto — atomic write (the file may be read at any moment)
+  mkdir -p "$(dirname "$F")"; [ -f "$F" ] || : > "$F"
+  local tmp; tmp=$(mktemp "$F.XXXX")
+  if [ "${F##*.}" = json ]; then
+    jq --arg l "$1" '.ui.lang = $l' "$F" > "$tmp"
+  else
+    awk -v l="$1" '
+      /^\[ui\][[:space:]]*$/ { print; inui = 1; next }
+      /^\[/ { if (inui && !done) { print "lang = \"" l "\""; done = 1 } inui = 0 }
+      inui && /^[[:space:]]*lang[[:space:]]*=/ { print "lang = \"" l "\""; done = 1; next }
+      { print }
+      END { if (!done) { if (!inui) print "\n[ui]"; print "lang = \"" l "\"" } }' "$F" > "$tmp"
+  fi
+  mv -f "$tmp" "$F"
+}
+case $ARG in
+  "") echo "$cur (ui.lang = $("$DIR/orq-config" get ui.lang 2>/dev/null || echo auto))"; exit 0 ;;
+  toggle) new=$([ "$cur" = pt ] && echo en || echo pt) ;;
+  *) new=$ARG ;;
+esac
+set_cfg "$new"
+now=$(env -u ORQ_LANG bash -c ". '$DIR/orq-i18n.sh'; echo \$ORQ_LANG")
+msg=$([ "$now" = pt ] && echo "Idioma do orq: Português" || echo "orq language: English")
+echo "$msg"
+[ "$NOTIFY" = 1 ] && herdr notification show "$msg" >/dev/null 2>&1 || true

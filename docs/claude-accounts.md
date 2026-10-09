@@ -1,3 +1,5 @@
+**English** · [Português](pt-BR/claude-accounts.md)
+
 # Several Claude accounts
 One `CLAUDE_CONFIG_DIR` folder per account, listed in `~/.config/claude-accounts`:
 ```

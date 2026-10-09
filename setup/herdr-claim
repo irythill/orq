@@ -8,6 +8,7 @@
 #   herdr-claim [-w <workspace>] -l         lists issues with an owner
 # Default workspace: the current folder. The pane is the caller's HERDR_PANE_ID (the conductor).
 set -euo pipefail
+. "$(dirname "$(realpath "$0")")/orq-i18n.sh"
 WS=$PWD; MODE=claim
 while getopts "w:frl" f; do
   case $f in w) WS=$OPTARG;; f) MODE=force;; r) MODE=release;; l) MODE=list;; *) sed -n '2,9p' "$0"; exit 2;; esac
@@ -26,21 +27,21 @@ if [ $MODE = list ]; then
   exit 0
 fi
 
-ID=${1:?give the issue ID}; ME=${HERDR_PANE_ID:?run inside herdr (conductor)}
+ID=${1:?"$(m "give the issue ID" "informe o ID da issue")"}; ME=${HERDR_PANE_ID:?"$(m "run inside herdr (conductor)" "rode dentro do herdr (conductor)")"}
 mkdir -p "$O/$ID"; F=$O/$ID/owner
 exec 9>"$O/.claims.lock"; flock 9
 
 if [ $MODE = release ]; then
-  [ -f "$F" ] && [ "$(field pane "$F")" != "$ME" ] && { echo "$ID belongs to $(field pane "$F"); not releasing it"; exit 1; }
+  [ -f "$F" ] && [ "$(field pane "$F")" != "$ME" ] && { echo "$(m "$ID belongs to $(field pane "$F"); not releasing it" "$ID é de $(field pane "$F"); não libero")"; exit 1; }
   rm -f "$F"; echo "$ID liberada"; exit 0
 fi
 if [ -f "$F" ] && [ $MODE = claim ]; then
   OWNER=$(field pane "$F")
-  [ "$OWNER" = "$ME" ] && { echo "$ID is already yours"; exit 0; }
+  [ "$OWNER" = "$ME" ] && { echo "$(m "$ID is already yours" "$ID já é sua")"; exit 0; }
   if alive "$OWNER"; then
-    echo "$ID is owned by another conductor ($(cat "$F")). Do not run it; tell the user (-f only with their OK)."; exit 1
+    echo "$(m "$ID is owned by another conductor ($(cat "$F")). Do not run it; tell the user (-f only with their OK)." "$ID já está com outro conductor ($(cat "$F")). Não execute; avise o usuário (-f só com o OK dele).")"; exit 1
   fi
-  echo "previous owner ($OWNER) is gone; taking over $ID"
+  echo "$(m "previous owner ($OWNER) is gone; taking over $ID" "o dono anterior ($OWNER) não existe mais; assumindo $ID")"
 fi
 printf 'pane=%s account=%s at=%s\n' "$ME" "$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}")" "$(date -Is)" > "$F"
-echo "$ID is yours ($ME)"
+echo "$(m "$ID is yours ($ME)" "$ID é sua ($ME)")"

@@ -10,13 +10,14 @@
 #   (fetched right then); whatever fails there is pre-existing. No full suite, no stale baseline.
 #   Supports jest (--findRelatedTests) and vitest (related), detected from the package.json "test" script.
 set -euo pipefail
+. "$(dirname "$(realpath "$0")")/orq-i18n.sh"
 
 WS=""; R=""; WT=""; B=""; O=""; G=""; RUN=0
 while getopts "w:r:d:b:o:g:x" f; do
   case $f in w) WS=$OPTARG;; r) R=$OPTARG;; d) WT=$OPTARG;; b) B=$OPTARG;; o) O=$OPTARG;; g) G=$OPTARG;; x) RUN=1;;
     *) sed -n '2,10p' "$0"; exit 2;; esac
 done
-for v in WS R WT B O; do [ -n "${!v}" ] || { echo "missing -$(echo $v | tr A-Z a-z | cut -c1)"; sed -n '7,7p' "$0"; exit 2; }; done
+for v in WS R WT B O; do [ -n "${!v}" ] || { echo "$(m missing faltou) -$(echo $v | tr A-Z a-z | cut -c1)"; sed -n '7,7p' "$0"; exit 2; }; done
 WT=$(cd "$WT" && pwd); mkdir -p "$(dirname "$O")"; O=$(realpath -m "$O")
 
 if [ $RUN = 0 ]; then
@@ -40,13 +41,13 @@ st=fail; NEW=0
 finish() {
   printf "status=%s new=%s at=%s\n" "$st" "$NEW" "$(date -Is)" > "$O.done"
   herdr-notify "${HERDR_NOTIFY_PANE:-}" "[HERDR-AGENT DONE] verify $R status=$st new=$NEW answer: $O.txt" || true
-  echo "[verify finished: status=$st new=$NEW] $O.txt"
+  echo "[verify $(m finished terminou): status=$st new=$NEW] $O.txt"
 }
 trap finish EXIT
 
 LOCK=${VERIFY_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/herdr-verify.lock}
 exec 9>"$LOCK"
-flock -n 9 || { echo "another verification is running; waiting for my turn..."; flock 9; }
+flock -n 9 || { echo "$(m "another verification is running; waiting for my turn..." "outra verificação em andamento; aguardando a vez...")"; flock 9; }
 
 cd "$WT"
 mapfile -t FILES < <(git diff --name-only --diff-filter=d "origin/$B...HEAD" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$' || true)
@@ -65,9 +66,9 @@ runtests() {
                 $CAP npx vitest "$@" --run --passWithNoTests --reporter=json --outputFile="$j" --maxWorkers=2 || true ;;
       *jest*)   if [ "$mode" = related ]; then set -- --findRelatedTests "$@"; else set -- --runTestsByPath "$@"; fi
                 $CAP npx jest "$@" --passWithNoTests --json --outputFile="$j" --maxWorkers=2 --workerIdleMemoryLimit=1G || true ;;
-      *) echo "unsupported runner: '$TEST'" >&2; return 1;;
+      *) echo "$(m "unsupported runner" "runner não suportado"): '$TEST'" >&2; return 1;;
     esac ) >&2
-  [ -s "$j" ] || { echo "no JSON result in $dir (did the runner die? see $O.log)" >&2; return 1; }
+  [ -s "$j" ] || { echo "$(m "no JSON result in $dir (did the runner die? see $O.log)" "sem resultado JSON em $dir (o runner morreu? veja $O.log)")" >&2; return 1; }
   jq -r --arg d "$dir/" '.testResults[] | .name as $f | .assertionResults[] | select(.status=="failed")
     | "\($f | ltrimstr($d)) :: \(.fullName)"' "$j" | sort -u
 }
@@ -78,7 +79,7 @@ BASEFAILED=""; BASEINFO="no failure on the branch: base not checked"
 if [ -n "$FAILED" ]; then
   # Same test files on the current origin/<base> (only those that exist there; a new test can't fail on the base).
   REPO=$WS/$R; BWT=$WS/.worktrees/verifybase-$R-$$; BJ=$(mktemp --suffix=.json)
-  git -C "$REPO" fetch -q origin "$B" || echo "WARNING: fetching origin/$B failed; using the local origin/$B"
+  git -C "$REPO" fetch -q origin "$B" || echo "$(m "WARNING: fetching origin/$B failed; using the local origin/$B" "AVISO: o fetch de origin/$B falhou; usando o origin/$B local")"
   git -C "$REPO" worktree add -q --detach "$BWT" "origin/$B"
   trap 'git -C "$REPO" worktree remove --force "$BWT" 2>/dev/null || true; finish' EXIT
   [ -e "$REPO/node_modules" ] && ln -sfn "$(readlink -f "$REPO/node_modules")" "$BWT/node_modules"

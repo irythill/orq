@@ -56,6 +56,10 @@ Explain simply, then suggest the example's values and ask if they want to change
   being picked recently, spreads the work). Several issues in parallel → favor `tokens`; few, important issues →
   favor `quality`.
 - `max_rounds` (2) review rounds before handing back; `machine.agent_mem_max` (4G) — suggest less on <16 GB RAM.
+- **Language** of orq's messages (board, notices, CLI): `[ui] lang = "auto" | "en" | "pt"` (auto = system locale).
+  Suggest the language the user is talking to you in. Mention they can switch any time with `orq-lang toggle`, the
+  `l` key in `herdr-board`, or a herdr key bound to the `orq.lang-toggle` action (see the comments in
+  `herdr-plugin/herdr-plugin.toml`).
 
 ## 5. Write and validate
 - Show the full TOML (same layout and comments as the example, only the agents they enabled). After the OK:

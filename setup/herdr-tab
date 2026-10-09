@@ -4,8 +4,9 @@
 #
 #   herdr-tab <group> <title> <dir> <command>
 set -euo pipefail
+. "$(dirname "$(realpath "$0")")/orq-i18n.sh"
 G=${1:?group}; T=${2:?title}; D=${3:?dir}; CMD=${4:?command}
-herdr status server >/dev/null 2>&1 || { echo "the herdr server is not running (systemctl --user start herdr)" >&2; exit 2; }
+herdr status server >/dev/null 2>&1 || { echo "$(m "the herdr server is not running" "o servidor do herdr não está rodando") (systemctl --user start herdr)" >&2; exit 2; }
 W=$(herdr workspace list | jq -r --arg g "$G" '[.result.workspaces[]|select(.label==$g)][0].workspace_id // empty')
 if [ -z "$W" ]; then
   R=$(herdr workspace create --cwd "$D" --label "$G" --no-focus)
@@ -14,7 +15,7 @@ else
   R=$(herdr tab create --workspace "$W" --cwd "$D" --label "$T" --no-focus)
 fi
 PANE=$(jq -r '.result.root_pane.pane_id // empty' <<<"$R")
-[ -n "$PANE" ] || { echo "herdr returned no pane: $R" >&2; exit 1; }
+[ -n "$PANE" ] || { echo "$(m "herdr returned no pane" "o herdr não devolveu um pane"): $R" >&2; exit 1; }
 herdr pane rename "$PANE" "$T" >/dev/null 2>&1 || true
 herdr pane run "$PANE" "$CMD" >/dev/null
 echo "$PANE"

@@ -14,6 +14,8 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from orq_i18n import m, set_lang  # noqa: E402
 
 F = Path(os.environ.get("XDG_STATE_HOME", "~/.local/state")).expanduser() / "orq" / "blocks.json"
 
@@ -39,12 +41,12 @@ def main(a):
         print(__doc__.strip()); return 0
     if a[0] == "-l":
         for k, v in sorted(b.items()):
-            print(f"{k:14} until {datetime.fromtimestamp(v['until']):%Y-%m-%d %H:%M}  {v.get('reason', '')}")
+            print(f"{k:14} {m('until', 'até')} {datetime.fromtimestamp(v['until']):%Y-%m-%d %H:%M}  {v.get('reason', '')}")
         if not b:
-            print("no active blocks")
+            print(m("no active blocks", "nenhum bloqueio ativo"))
         return 0
     if a[0] == "-r":
-        b.pop(a[1], None); save(b); print(f"{a[1]} unblocked"); return 0
+        b.pop(a[1], None); save(b); print(f"{a[1]} " + m("unblocked", "liberado")); return 0
     name, a = a[0], a[1:]
     until, reason = datetime.now() + timedelta(days=7), ""
     while a:
@@ -54,7 +56,7 @@ def main(a):
         elif o == "--reason": reason = a.pop(0)
     b[name] = {"until": until.timestamp(), "reason": reason}
     save(b)
-    print(f"{name} out of orq-pick until {until:%Y-%m-%d %H:%M}")
+    print(f"{name} " + m("out of orq-pick until", "fora do orq-pick até") + f" {until:%Y-%m-%d %H:%M}")
     return 0
 
 

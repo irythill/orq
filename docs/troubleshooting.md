@@ -1,3 +1,5 @@
+**English** · [Português](pt-BR/troubleshooting.md)
+
 # Known problems and fixes
 
 | Symptom | Cause | Fix |

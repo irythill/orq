@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from orq_i18n import m as tr, set_lang  # noqa: E402
 STATE = Path(os.environ.get("XDG_STATE_HOME", "~/.local/state")).expanduser() / "orq"
 QCACHE = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "herdr-board.quota"
 
@@ -68,6 +70,7 @@ def main(argv):
         elif a == "--no-record": record = False
         elif a == "--exclude-agent": excl.add(argv.pop(0))
     cfg = json.loads(sh(str(HERE / "orq-config"), *(["-w", ws] if ws else [])) or "{}")
+    set_lang(cfg)
     agents, pol = cfg.get("agents") or {}, cfg.get("policy") or {}
     w = {"quality": .4, "tokens": .45, "speed": .15, "rotation": .2, "reserve": .3, "explore": .1,
          "min_samples": 8, "window": 6, **(pol.get("weights") or {})}
@@ -92,22 +95,22 @@ def main(argv):
         if role not in (a.get("roles") or []):
             continue
         if name in excl:
-            notes.append(f"{name}: excluded (--exclude-agent)"); continue
+            notes.append(f"{name}: " + tr("excluded (--exclude-agent)", "excluído (--exclude-agent)")); continue
         if name in blocks:
-            notes.append(f"{name}: blocked (orq-block -l)"); continue
+            notes.append(f"{name}: " + tr("blocked (orq-block -l)", "bloqueado (orq-block -l)")); continue
         if role in ("review", "opinion") and pol.get("review", "other-vendor") == "other-vendor" and impl_vendor \
                 and a.get("vendor") == impl_vendor:
-            notes.append(f"{name}: same vendor as the implementer"); continue
+            notes.append(f"{name}: " + tr("same vendor as the implementer", "mesmo fornecedor do implementador")); continue
         m, e = model_for(a, role, level)
         if not m:
-            notes.append(f"{name}: no model for {role}/{level}"); continue
+            notes.append(f"{name}: " + tr(f"no model for {role}/{level}", f"sem modelo para {role}/{level}")); continue
         # Quota: an agent with several accounts (claude) uses the least used one under the limit.
         accs = [(n, q.get(n, -1)) for n in (a.get("quota") or []) if n not in blocks]
         if a.get("quota") and not accs:
-            notes.append(f"{name}: all accounts blocked"); continue
+            notes.append(f"{name}: " + tr("all accounts blocked", "todas as contas bloqueadas")); continue
         usable = [(n, v) for n, v in accs if v is not None and v < pol.get("quota_limit", 90)]
         if accs and not usable:
-            notes.append(f"{name}: quota >= {pol.get('quota_limit', 90)}% or no data ({', '.join(f'{n}={v}' for n, v in accs)})"); continue
+            notes.append(f"{name}: " + tr("quota", "cota") + f" >= {pol.get('quota_limit', 90)}% " + tr("or no data", "ou sem dados") + " ({', '.join(f'{n}={v}' for n, v in accs)})"); continue
         acct = min(usable, key=lambda x: x[1])[0] if len(accs) > 1 else None
         st = stats.get(("impl" if role == "fix" else role, name, m.split("/")[-1]))
         n = st["n"] if st else 0
@@ -119,7 +122,7 @@ def main(argv):
                           tok=st["new"] if st and st["new"] else None, mins=st["min"] if st else None,
                           prior=a.get("prior", .6), reserve=bool(a.get("reserve"))))
     if not cands:
-        print("orq-pick: no candidate for " + role + ("; " + "; ".join(notes) if notes else ""), file=sys.stderr)
+        print("orq-pick: " + tr("no candidate for ", "nenhum candidato para ") + role + ("; " + "; ".join(notes) if notes else ""), file=sys.stderr)
         return 3
     toks = [c["tok"] for c in cands if c["tok"] and c["n"] >= w["min_samples"]]
     mins = [c["mins"] for c in cands if c["mins"] and c["n"] >= w["min_samples"]]
@@ -131,15 +134,16 @@ def main(argv):
         used = sum(1 for p in recent if p["agent"] == c["agent"])
         c["score"] = (w["quality"] * d + w["tokens"] * t + w["speed"] * s - w["rotation"] * used
                       - (w["reserve"] if c["reserve"] else 0) + (w["explore"] if few else 0))
-        c["why"] = f"delivery={d:.2f} economy={t:.2f} speed={s:.2f} rotation=-{used} " + \
-                   ("reserve " if c["reserve"] else "") + (f"few samples(n={c['n']})" if few else f"n={c['n']}")
+        c["why"] = (f"{tr('delivery', 'entrega')}={d:.2f} {tr('economy', 'economia')}={t:.2f} {tr('speed', 'rapidez')}={s:.2f} "
+                    f"{tr('rotation', 'rodízio')}=-{used} " + (tr("reserve ", "reserva ") if c["reserve"] else "")
+                    + (tr("few samples", "poucos dados") + f"(n={c['n']})" if few else f"n={c['n']}"))
     cands.sort(key=lambda c: -c["score"])
     best = cands[0]
     if explain:
         for c in cands:
             print(f"{'→' if c is best else ' '} {c['score']:+.3f}  {c['agent']:12} {c['model']:24} {c['why']}", file=sys.stderr)
         for nte in notes:
-            print(f"  out: {nte}", file=sys.stderr)
+            print(f"  {tr('out', 'fora')}: {nte}", file=sys.stderr)
     if record:
         with picks_f.open("a") as f:
             f.write(json.dumps({"t": int(time.time()), "role": role, "level": level, "agent": best["agent"],

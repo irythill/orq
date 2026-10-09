@@ -1,3 +1,5 @@
+**English** · [Português](pt-BR/omarchy.md)
+
 # Omarchy extras (optional)
 
 ## herdr colors following the theme

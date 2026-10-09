@@ -18,6 +18,8 @@ import json
 import os
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from orq_i18n import m, set_lang  # noqa: E402
 
 DEFAULTS = {
     "machine": {
@@ -34,6 +36,7 @@ DEFAULTS = {
         "max_rounds": 2,             # fix rounds before stopping and calling the user
         "review": "other-vendor",    # other-vendor | any
             },
+    "ui": {"lang": "auto"},          # auto (system locale) | en | pt — CLI messages and herdr-board
     "tracker": {"kind": "none"},     # plane | none
     "repos": {},                     # defined by the workspace
 }
@@ -49,8 +52,10 @@ def load(path: Path):
         try:
             import tomli as tomllib
         except ModuleNotFoundError:
-            sys.exit(f"orq-config: {path} is TOML and this Python ({sys.version.split()[0]}) can't read TOML. "
-                     "Install `tomli` (pip install --user tomli) or use config.json.")
+            sys.exit(m(f"orq-config: {path} is TOML and this Python ({sys.version.split()[0]}) can't read TOML. "
+                       "Install `tomli` (pip install --user tomli) or use config.json.",
+                       f"orq-config: {path} é TOML e este Python ({sys.version.split()[0]}) não lê TOML. "
+                       "Instale o `tomli` (pip install --user tomli) ou use config.json."))
     return tomllib.loads(text)
 
 
@@ -102,7 +107,7 @@ def main(argv):
                 cfg = merge(cfg, load(f))
                 files.append(str(f))
     except (ValueError, OSError) as e:  # TOMLDecodeError and JSONDecodeError inherit from ValueError
-        print(f"orq-config: error reading {f}: {e}", file=sys.stderr)
+        print(m(f"orq-config: error reading {f}: {e}", f"orq-config: erro lendo {f}: {e}"), file=sys.stderr)
         return 2
     cfg = expand(cfg)
     cfg["_workspace"] = str(ws_root) if ws_root else None
@@ -110,7 +115,7 @@ def main(argv):
     if not argv:
         print(json.dumps(cfg, ensure_ascii=False, indent=2))
     elif argv[0] == "files":
-        print("\n".join(files) if files else "(no file; defaults only)")
+        print("\n".join(files) if files else m("(no file; defaults only)", "(nenhum arquivo; só os padrões)"))
     elif argv[0] == "get" and len(argv) == 2:
         v = cfg
         for part in argv[1].split("."):

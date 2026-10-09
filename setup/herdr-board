@@ -5,9 +5,19 @@
 #
 #   herdr-board --once     prints once (to check)
 #   herdr-board            refreshes every HERDR_BOARD_INTERVAL s (default 3)
-#   keys: q quits · f jumps to the pane of a line (gum) · r refreshes the quota now
+#   keys: q quits · f jumps to the pane of a line (gum) · r refreshes the quota now · l switches language (orq-lang)
 # Workspaces read (claims and .orquestra): HERDR_BOARD_WS, space separated (default: orq-config's workspace or the current folder).
 set -uo pipefail
+. "$(dirname "$(realpath "$0")")/orq-i18n.sh"
+# Labels computed once (the board redraws every few seconds).
+T_QUEUE=$(m "TEST QUEUE" "FILA DE TESTES"); T_AGENTS=$(m AGENTS AGENTES); T_COND=$(m CONDUCTORS CONDUCTORS)
+T_QUOTA=$(m QUOTA COTA); T_EMPTY=$(m empty vazia); T_NONE=$(m none nenhum); T_RUN=$(m running rodando)
+T_WAIT=$(m "waiting " "esperando"); T_FULL=$(m "full suite" "suíte inteira"); T_ORPHAN=$(m "no .run.sh (orphan?)" "sem .run.sh (órfão?)")
+T_FOR=$(m for há); T_DEFAULT=$(m default padrão); T_SESSION=$(m session sessão); T_AGO=$(m ago atrás)
+T_COLLECT=$(m "collecting..." "coletando..."); T_JUMP=$(m "jump to..." "pular para...")
+T_WORKING=$(m working trabalhando); T_ASKING=$(m "asking for approval" "pedindo aprovação")
+T_DONE=$(m "done — your turn" "terminou — sua vez"); T_IDLE=$(m idle ocioso)
+T_FOOT=$(m "child tabs open · q quit · f jump to a pane · r refresh quota · l language" "abas de filhos abertas · q sai · f pula para um pane · r atualiza a cota · l idioma")
 _ws=$(orq-config get _workspace 2>/dev/null); [ -n "$_ws" ] && [ "$_ws" != null ] || _ws=$PWD
 WSS=(${HERDR_BOARD_WS:-$_ws}); INT=${HERDR_BOARD_INTERVAL:-3}
 LOCK=${VERIFY_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/herdr-verify.lock}
@@ -39,11 +49,11 @@ quota() {
     setsid bash -c 'exec 8>"$1.lock"; flock -n 8 || exit 0; agent-quota > "$1.tmp" 2>/dev/null && [ -s "$1.tmp" ] && mv -f "$1.tmp" "$1"' _ "$QCACHE" \
       </dev/null >/dev/null 2>&1 &
   fi
-  [ -s "$QCACHE" ] || { echo "${D}collecting...${R}"; return; }
+  [ -s "$QCACHE" ] || { echo "${D}${T_COLLECT}${R}"; return; }
   awk '{ pct=0; for(i=2;i<=3;i++){ v=$i; sub(/.*=/,"",v); sub(/%/,"",v); if (v ~ /^[0-9]+$/ && v+0>pct) pct=v+0 }
          col = pct>=90 ? "\033[31m" : pct>=70 ? "\033[33m" : "\033[32m"; if ($0 ~ /\?/) col="\033[2m"
          printf "%s%s %s %s\033[0m  ", col, $1, $2, $3 }' "$QCACHE"
-  echo "${D}($(dur $(( $(date +%s) - m ))) ago)${R}"
+  echo "${D}($(dur $(( $(date +%s) - m ))) ${T_AGO})${R}"
 }
 
 render() {
@@ -57,7 +67,7 @@ render() {
   out+="${B} ORQ${R} ${D}· ${WSS[*]/#$HOME/\~}${R}$(printf '%*s' 6 '')mem ${col}$(gb $used)/$(gb $((mt*1024))) ${bar}${R}  ${D}${now}${R}\n\n"
 
   # Test queue: holder and waiters in kernel order (/proc/locks: holder without "->", waiters with "->").
-  out+="${B} TEST QUEUE${R}\n"
+  out+="${B} ${T_QUEUE}${R}\n"
   local ino n=0 line pid sp o kind id repo top=() waiting=" " shown=0; ino=$(stat -c %i "$LOCK" 2>/dev/null)
   # /proc/locks records the pid of the `flock` that took the lock (and exited): the holder is the script with no waiting `flock` child.
   for sp in $(pgrep -f 'setup/herdr-(verify|baseline) -x'); do
@@ -66,9 +76,9 @@ render() {
     tr '\0' ' ' </proc/$sp/cmdline | grep -q herdr-baseline && kind=baseline
     repo=$(arg "$sp" -r); o=$(arg "$sp" -o); id=$([ $kind = verify ] && basename "$(dirname "$o")" || echo "—")
     if [ "$st" = run ]; then
-      out+=" ${G}▶${R} $(printf '%-9s %-8s %-20s' "$id" "$kind" "$repo") ${G}running${R}  $(printf '%-7s' "$(dur "$(age "$(pgrep -o -P "$sp" || echo "$sp")")")") $(gb "$(scope_mem "$sp")")"
-      [ $kind = baseline ] && out+="  ${Y}full suite${R}"; out+="\n"
-    else out+=" ${Y}${w}${R} $(printf '%-9s %-8s %-20s' "$id" "$kind" "$repo") ${D}waiting  $(dur "$(age "$sp")")${R}\n"; fi
+      out+=" ${G}▶${R} $(printf '%-9s %-8s %-20s' "$id" "$kind" "$repo") ${G}${T_RUN}${R}  $(printf '%-7s' "$(dur "$(age "$(pgrep -o -P "$sp" || echo "$sp")")")") $(gb "$(scope_mem "$sp")")"
+      [ $kind = baseline ] && out+="  ${Y}${T_FULL}${R}"; out+="\n"
+    else out+=" ${Y}${w}${R} $(printf '%-9s %-8s %-20s' "$id" "$kind" "$repo") ${D}${T_WAIT} $(dur "$(age "$sp")")${R}\n"; fi
     echo "$id $kind $repo|$id $kind $repo" >> "$JUMPS"; }
   if [ -n "$ino" ]; then
     while read -r line; do   # queue in kernel order
@@ -78,21 +88,21 @@ render() {
     for sp in "${top[@]}"; do [[ $waiting == *" $sp "* ]] || { qline "$sp" run; shown=1; }; done
     for sp in $waiting; do n=$((n+1)); qline "$sp" wait "$n"; shown=1; done
   fi
-  ((shown)) || out+=" ${D}empty${R}\n"
+  ((shown)) || out+=" ${D}${T_EMPTY}${R}\n"
 
   # Agents: live herdr-agent-* scopes ↔ the <prefix>.run.sh that created them.
-  out+="\n${B} AGENTS${R}\n"
+  out+="\n${B} ${T_AGENTS}${R}\n"
   local u rs pre lab ag mdl el mem act k=0
   while read -r u; do
     [ -n "$u" ] || continue; k=$((k+1))
     rs=$(grep -l -- "--unit=${u%.scope} " "${WSS[@]/%//.orquestra}"/*/*.run.sh 2>/dev/null | head -1)
     el=$(( $(date +%s) - $(date -d "$(systemctl --user show -p ActiveEnterTimestamp --value "$u")" +%s) ))
     mem=$(systemctl --user show -p MemoryCurrent --value "$u")
-    if [ -z "$rs" ]; then out+=" ${RE}?${R} ${D}${u} — no .run.sh (orphan?)${R}  $(dur $el)  $(gb "$mem")\n"; continue; fi
+    if [ -z "$rs" ]; then out+=" ${RE}?${R} ${D}${u} — ${T_ORPHAN}${R}  $(dur $el)  $(gb "$mem")\n"; continue; fi
     pre=${rs%.run.sh}; id=$(basename "$(dirname "$pre")"); lab=$(basename "$pre")
     ag=$(grep -oE '(codex|claude|opencode) (exec|-p|run)?' "$rs" | head -1 | cut -d' ' -f1); grep -q 'TUI' "$rs" && ag+="·tela"
     mdl=$(grep -oE -- '(-m|--model) [^ ]+' "$rs" | head -1 | cut -d' ' -f2); mdl=${mdl##*/}
-    grep -qE 'codex exec resume|codex resume|--resume|opencode run .* -s ' "$rs" && mdl="${mdl:-session} (follow-up)"
+    grep -qE 'codex exec resume|codex resume|--resume|opencode run .* -s ' "$rs" && mdl="${mdl:-$T_SESSION} (follow-up)"
     act=""
     if [ -s "$pre.log" ]; then
       act=$(tail -n 40 "$pre.log" | jq -r 'if .type=="assistant" then (.message.content[]?|if .type=="tool_use" then "· "+.name else empty end)
@@ -100,27 +110,27 @@ render() {
       [ -n "$act" ] || act=$(tail -n 5 "$pre.log" | grep -v '^\s*$' | grep -v '^{' | tail -1)
     fi
     act=$(tr -s '\n\t ' ' ' <<<"$act" | sed "s|$HOME/Code/[^ ]*/||g" | cut -c1-48)
-    local warn=""; ((el>3*3600)) && warn=" ${RE}⚠ for $(dur $el)${R}"
-    out+=" ${C}●${R} $(printf '%-9s %-24s %-24s %-7s %-7s' "$id" "${lab}" "$ag ${mdl:-default}" "$(dur $el)" "$(gb "$mem")") ${D}${act}${R}${warn}\n"
+    local warn=""; ((el>3*3600)) && warn=" ${RE}⚠ ${T_FOR} $(dur $el)${R}"
+    out+=" ${C}●${R} $(printf '%-9s %-24s %-24s %-7s %-7s' "$id" "${lab}" "$ag ${mdl:-$T_DEFAULT}" "$(dur $el)" "$(gb "$mem")") ${D}${act}${R}${warn}\n"
     echo "$id ${lab}|$(cat "$pre.pane" 2>/dev/null)" >> "$JUMPS"
   done < <(systemctl --user list-units --type=scope --state=running --no-legend --plain 'herdr-agent-*' 2>/dev/null | awk '{print $1}')
-  ((k==0)) && out+=" ${D}none${R}\n"
+  ((k==0)) && out+=" ${D}${T_NONE}${R}\n"
 
   # Conductors: panes "conductor"; issues pelo herdr-claim; estado pelo herdr.
-  out+="\n${B} CONDUCTORS${R}\n"
+  out+="\n${B} ${T_COND}${R}\n"
   local claims=""; for w in "${WSS[@]}"; do claims+=$(herdr-claim -w "$w" -l 2>/dev/null | grep '(alive)'); claims+=$'\n'; done
   while IFS=$'\t' read -r p st w; do
     local is name ic txt
     is=$(awk -v p="pane=$p" '$2==p{printf "%s ", $1}' <<<"$claims"); name=$(jq -r --arg w "$w" '.[$w] // $w' <<<"$wsl")
-    case $st in working) ic="${G}●"; txt="working";; blocked) ic="${RE}⚠"; txt="asking for approval";;
-      done) ic="${Y}⏸"; txt="done — your turn";; idle) ic="${D}○"; txt="idle";; *) ic="${D}?"; txt=$st;; esac
+    case $st in working) ic="${G}●"; txt=$T_WORKING;; blocked) ic="${RE}⚠"; txt=$T_ASKING;;
+      done) ic="${Y}⏸"; txt=$T_DONE;; idle) ic="${D}○"; txt=$T_IDLE;; *) ic="${D}?"; txt=$st;; esac
     out+=" ${ic}${R} $(printf '%-8s %-22s %-26s' "$p" "${name:0:22}" "${is:-—}") ${ic} ${txt}${R}\n"
     echo "conductor ${name} (${is:-—})|$p" >> "$JUMPS"
   done < <(jq -r '.[]|select(.label=="conductor")|[.pane_id,.agent_status,(.pane_id|split(":")[0])]|@tsv' <<<"$panes")
 
   local nt; nt=$(jq '[.[]|select(.agent==null and .label!=null and (.label|test("^[A-Z]+-[0-9]+ ")))]|length' <<<"$panes")
-  out+="\n${B} QUOTA${R}   $(quota)\n"
-  out+="\n${D} ${nt} child tabs open · q quit · f jump to a pane · r refresh quota${R}"
+  out+="\n${B} ${T_QUOTA}${R}   $(quota)\n"
+  out+="\n${D} ${nt} ${T_FOOT}${R}"
   # Jump to a verify: pane by the tab label.
   awk -F'|' '$2 !~ /:/' "$JUMPS" | while IFS='|' read -r t _; do
     set -- $t; pn=$(jq -r --arg l "$1 $2 $3" '[.[]|select(.label==$l)]|last|.pane_id // empty' <<<"$panes")
@@ -133,7 +143,7 @@ render() {
 jump() {
   [ -s "$JUMPS.all" ] || return; command -v gum >/dev/null || return
   printf '\e[H\e[J'; tput cnorm
-  local sel; sel=$(cut -d'|' -f1 "$JUMPS.all" | gum filter --placeholder "jump to..." --height 15) || { tput civis; return; }
+  local sel; sel=$(cut -d'|' -f1 "$JUMPS.all" | gum filter --placeholder "$T_JUMP" --height 15) || { tput civis; return; }
   local pn; pn=$(grep -F "$sel|" "$JUMPS.all" | head -1 | cut -d'|' -f2)
   [ -n "$pn" ] && { herdr agent focus "$pn" >/dev/null 2>&1 || herdr tab focus "$(herdr pane get "$pn" | jq -r .result.pane.tab_id)" >/dev/null 2>&1; }
   tput civis
@@ -145,5 +155,6 @@ tput civis; printf '\e[2J'
 while :; do
   render
   read -rsn1 -t "$INT" key || continue
-  case $key in q) exit 0;; f) jump; printf '\e[2J';; r) rm -f "$QCACHE";; esac
+  case $key in q) exit 0;; f) jump; printf '\e[2J';; r) rm -f "$QCACHE";;
+    l) "$(dirname "$(realpath "$0")")/orq-lang" toggle >/dev/null; exec env -u ORQ_LANG "$0" "$@";; esac
 done

@@ -10,11 +10,12 @@
 # Workspace: the current folder if it has .orquestra-conductor.md (created by new-conductor.sh); otherwise CONDUCTOR_WS.
 # The session name is conductor-<workspace folder>.
 set -euo pipefail
+. "$(dirname "$(realpath "$0")")/orq-i18n.sh"
 if [ -f "$PWD/.orquestra-conductor.md" ]; then WS=$PWD
-else WS=${CONDUCTOR_WS:?"no .orquestra-conductor.md here: cd into a workspace (see new-conductor.sh) or set CONDUCTOR_WS"}; fi
+else WS=${CONDUCTOR_WS:?"$(m "no .orquestra-conductor.md here: cd into a workspace (see new-conductor.sh) or set CONDUCTOR_WS" "não há .orquestra-conductor.md aqui: entre num workspace (veja new-conductor.sh) ou defina CONDUCTOR_WS")"}; fi
 F=${CONDUCTOR_FILE:-$WS/.orquestra-conductor.md}
-[ "${HERDR_ENV:-}" = 1 ] || { echo "run it inside a herdr pane (open 'herdr' and call herdr-conductor there)"; exit 2; }
-[ -f "$F" ] || { echo "conductor instructions not found: $F"; exit 2; }
+[ "${HERDR_ENV:-}" = 1 ] || { echo "$(m "run it inside a herdr pane (open 'herdr' and call herdr-conductor there)" "rode dentro de um pane do herdr (abra o 'herdr' e chame o herdr-conductor lá)")"; exit 2; }
+[ -f "$F" ] || { echo "$(m "conductor instructions not found" "instruções do conductor não encontradas"): $F"; exit 2; }
 
 ACC=${1:-}; MODEL=${2:-}
 case $MODEL in
