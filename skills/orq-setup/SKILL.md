@@ -60,6 +60,8 @@ Explain simply, then suggest the example's values and ask if they want to change
   Suggest the language the user is talking to you in. Mention they can switch any time with `orq-lang toggle`, the
   `l` key in `herdr-board`, or a herdr key bound to the `orq.lang-toggle` action (see the comments in
   `herdr-plugin/herdr-plugin.toml`).
+- **Board theme**: `[ui] theme = "gunmetal"` (default, dark) | `"chrome"` (light) | `"lcd"` (green) | `"terminal"`.
+  Light terminal → suggest `chrome`; they can cycle with `t` inside `herdr-board`.
 
 ## 5. Write and validate
 - Show the full TOML (same layout and comments as the example, only the agents they enabled). After the OK:

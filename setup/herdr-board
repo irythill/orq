@@ -5,26 +5,55 @@
 #
 #   herdr-board --once     prints once (to check)
 #   herdr-board            refreshes every HERDR_BOARD_INTERVAL s (default 3)
-#   keys: q quits · f jumps to the pane of a line (gum) · r refreshes the quota now · l switches language (orq-lang)
+#   keys: q quits · f jumps to the pane of a line (gum) · r refreshes the quota · l language · t theme
+# Theme: ui.theme in the orq config (gunmetal | chrome | lcd | terminal) or ORQ_THEME; palettes from the irythill
+# SYNTH.DECK portfolio — no glow, no gradient: hierarchy comes from weight and hairlines.
 # Workspaces read (claims and .orquestra): HERDR_BOARD_WS, space separated (default: orq-config's workspace or the current folder).
 set -uo pipefail
 . "$(dirname "$(realpath "$0")")/orq-i18n.sh"
-# Labels computed once (the board redraws every few seconds).
-T_QUEUE=$(m "TEST QUEUE" "FILA DE TESTES"); T_AGENTS=$(m AGENTS AGENTES); T_COND=$(m CONDUCTORS CONDUCTORS)
-T_QUOTA=$(m QUOTA COTA); T_EMPTY=$(m empty vazia); T_NONE=$(m none nenhum); T_RUN=$(m running rodando)
-T_WAIT=$(m "waiting " "esperando"); T_FULL=$(m "full suite" "suíte inteira"); T_ORPHAN=$(m "no .run.sh (orphan?)" "sem .run.sh (órfão?)")
+# Labels computed once (the board redraws every few seconds). Section names are DAW terms, the same in both languages.
+T_QUEUE=$(m "test queue" "fila de testes"); T_AGENTS=$(m agents agentes); T_COND=conductors
+T_QUOTA=$(m quota cota); T_EMPTY=$(m empty vazia); T_NONE=$(m none nenhum); T_RUN=$(m running rodando)
+T_WAIT=$(m "waiting" "esperando"); T_FULL=$(m "full suite" "suíte inteira"); T_ORPHAN=$(m "no .run.sh (orphan?)" "sem .run.sh (órfão?)")
 T_FOR=$(m for há); T_DEFAULT=$(m default padrão); T_SESSION=$(m session sessão); T_AGO=$(m ago atrás)
 T_COLLECT=$(m "collecting..." "coletando..."); T_JUMP=$(m "jump to..." "pular para...")
 T_WORKING=$(m working trabalhando); T_ASKING=$(m "asking for approval" "pedindo aprovação")
 T_DONE=$(m "done — your turn" "terminou — sua vez"); T_IDLE=$(m idle ocioso)
-T_FOOT=$(m "child tabs open · q quit · f jump to a pane · r refresh quota · l language" "abas de filhos abertas · q sai · f pula para um pane · r atualiza a cota · l idioma")
+T_TABS=$(m "child tabs open" "abas de filhos abertas")
+T_KEYS=$(m "q quit · f jump · r quota · l language · t theme" "q sai · f pula · r cota · l idioma · t tema")
+
+# --- theme --------------------------------------------------------------------------------------------------------
+THEME=${ORQ_THEME:-$(orq-config get ui.theme 2>/dev/null || true)}
+case $THEME in gunmetal|chrome|lcd|terminal) ;; *) THEME=gunmetal ;; esac
+fg() { printf '\e[38;2;%sm' "$1"; }; bg() { printf '\e[48;2;%sm' "$1"; }
+case $THEME in   # paper surface ink ink2 muted rule accent ok warn err   (RGB "r;g;b")
+  gunmetal) P=(25\;27\;29 36\;39\;41 230\;232\;234 172\;174\;176 139\;142\;145 83\;86\;89 160\;187\;215 160\;187\;215 214\;180\;110 224\;120\;110) ;;
+  chrome)   P=(220\;222\;224 237\;238\;240 29\;32\;34 59\;61\;64 83\;85\;88 150\;152\;155 59\;88\;118 59\;88\;118 150\;105\;30 165\;55\;45) ;;
+  lcd)      P=(8\;18\;12 15\;28\;19 127\;234\;133 97\;181\;101 91\;141\;93 47\;81\;54 127\;234\;133 127\;234\;133 214\;220\;110 234\;120\;100) ;;
+esac
+if [ "$THEME" = terminal ]; then
+  BASE=$'\e[0m'; SURF=$'\e[0m'; INK=''; INK2=''; MUT=$'\e[2m'; RUL=$'\e[2m'; ACC=$'\e[36m'; OK=$'\e[32m'; WRN=$'\e[33m'; ERR=$'\e[31m'
+else
+  BASE="$(bg "${P[0]}")$(fg "${P[2]}")"; SURF="$(bg "${P[1]}")$(fg "${P[2]}")"
+  INK=$(fg "${P[2]}"); INK2=$(fg "${P[3]}"); MUT=$(fg "${P[4]}"); RUL=$(fg "${P[5]}"); ACC=$(fg "${P[6]}")
+  OK=$(fg "${P[7]}"); WRN=$(fg "${P[8]}"); ERR=$(fg "${P[9]}")
+fi
+B=$'\e[1m'; R=$'\e[22m'"$BASE"   # R = back to the theme's base (never to the terminal's default)
+COLS=$(tput cols 2>/dev/null || echo 100); ((COLS < 60)) && COLS=60
+hair() { local n=$1 c=${2:-─} out=""; ((n < 1)) && return; printf -v out '%*s' "$n" ''; printf '%s' "${out// /$c}"; }
+# section <NAME> <subtitle>: "TRACKS ─ agents ───────────" across the width.
+section() { local t=" $1 ─ $2 "; printf '%s%s%s%s%s%s%s' "$B$INK" " $1" "$R$MUT" " ─ $2 " "$RUL" "$(hair $((COLS - ${#t} - 2)))" "$R"; }
+# meter <pct 0-100> <cells>: ▕████░░▏ colored by level.
+meter() { local p=${1:-0} n=${2:-10} f c=$OK; ((p >= 90)) && c=$ERR || { ((p >= 70)) && c=$WRN; }
+  f=$(( (p * n + 50) / 100 )); ((f > n)) && f=$n
+  printf '%s▕%s%s%s%s▏%s' "$RUL" "$c" "$(hair "$f" █)" "$RUL" "$(hair $((n - f)) ░)" "$R"; }
+
 _ws=$(orq-config get _workspace 2>/dev/null); [ -n "$_ws" ] && [ "$_ws" != null ] || _ws=$PWD
 WSS=(${HERDR_BOARD_WS:-$_ws}); INT=${HERDR_BOARD_INTERVAL:-3}
 LOCK=${VERIFY_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/herdr-verify.lock}
 QCACHE=${XDG_RUNTIME_DIR:-/tmp}/herdr-board.quota; QTTL=300
 JUMPS=${XDG_RUNTIME_DIR:-/tmp}/herdr-board.$$.jumps
 
-B=$'\e[1m'; D=$'\e[2m'; R=$'\e[0m'; G=$'\e[32m'; Y=$'\e[33m'; RE=$'\e[31m'; C=$'\e[36m'; M=$'\e[35m'
 
 dur() { local s=${1:-0}; if ((s<60)); then echo "${s}s"; elif ((s<3600)); then printf '%dm%02ds' $((s/60)) $((s%60))
   elif ((s<86400)); then printf '%dh%02dm' $((s/3600)) $((s%3600/60)); else printf '%dd%02dh' $((s/86400)) $((s%86400/3600)); fi; }
@@ -49,25 +78,34 @@ quota() {
     setsid bash -c 'exec 8>"$1.lock"; flock -n 8 || exit 0; agent-quota > "$1.tmp" 2>/dev/null && [ -s "$1.tmp" ] && mv -f "$1.tmp" "$1"' _ "$QCACHE" \
       </dev/null >/dev/null 2>&1 &
   fi
-  [ -s "$QCACHE" ] || { echo "${D}${T_COLLECT}${R}"; return; }
-  awk '{ pct=0; for(i=2;i<=3;i++){ v=$i; sub(/.*=/,"",v); sub(/%/,"",v); if (v ~ /^[0-9]+$/ && v+0>pct) pct=v+0 }
-         col = pct>=90 ? "\033[31m" : pct>=70 ? "\033[33m" : "\033[32m"; if ($0 ~ /\?/) col="\033[2m"
-         printf "%s%s %s %s\033[0m  ", col, $1, $2, $3 }' "$QCACHE"
-  echo "${D}($(dur $(( $(date +%s) - m ))) ${T_AGO})${R}"
+  [ -s "$QCACHE" ] || { echo " ${MUT}${T_COLLECT}${R}"; return; }
+  local name f1 f2 v1 v2 p line=" "
+  while read -r name f1 f2 _; do
+    v1=${f1#*=}; v1=${v1%\%}; v2=${f2#*=}; v2=${v2%\%}
+    if [[ $v1 == "?" || $v2 == "?" ]]; then line+="${MUT}${name} ?${R}   "; continue; fi
+    p=0; [[ $v1 =~ ^[0-9]+$ ]] && p=$v1; [[ $v2 =~ ^[0-9]+$ ]] && ((v2 > p)) && p=$v2
+    if [[ ! $v1 =~ ^[0-9]+$ && ! $v2 =~ ^[0-9]+$ ]]; then line+="${INK2}${name}${R} ${MUT}–${R}   "; continue; fi
+    line+="${INK2}${name}${R} $(meter "$p" 6) ${INK}$(printf '%3s' "$p")%${R}   "
+  done < "$QCACHE"
+  echo "$line"
+  echo " ${MUT}$(dur $(( $(date +%s) - m ))) ${T_AGO}${R}"
 }
 
 render() {
   local out="" now; now=$(date +%H:%M:%S); : > "$JUMPS"
+  COLS=$(tput cols 2>/dev/null || echo 100); ((COLS < 60)) && COLS=60
   local panes; panes=$(herdr pane list 2>/dev/null | jq -c '.result.panes // []'); [ -n "$panes" ] || panes='[]'
   local wsl; wsl=$(herdr workspace list 2>/dev/null | jq -c '[.result.workspaces[]?|{(.workspace_id):.label}]|add // {}')
   read -r mt ma < <(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{print t, a}' /proc/meminfo)
-  local used=$(( (mt-ma)*1024 )) pct=$(( (mt-ma)*100/mt )) bar="" i col=$G
-  ((pct>=85)) && col=$RE || { ((pct>=70)) && col=$Y; }
-  for i in $(seq 1 20); do ((i*5<=pct)) && bar+="▓" || bar+="░"; done
-  out+="${B} ORQ${R} ${D}· ${WSS[*]/#$HOME/\~}${R}$(printf '%*s' 6 '')mem ${col}$(gb $used)/$(gb $((mt*1024))) ${bar}${R}  ${D}${now}${R}\n\n"
+  local used=$(( (mt-ma)*1024 )) pct=$(( (mt-ma)*100/mt ))
+  # Header band (surface color): ORQ · workspace ........ theme · time
+  local left=" ORQ  ${WSS[*]/#$HOME/\~}" right="$THEME · $now "
+  # No reset at the end: \e[K (added per line) paints the rest of the row in the band's color.
+  out+="${SURF}${B}${ACC} ORQ"$'\e[22m'"${SURF}${INK2}  ${WSS[*]/#$HOME/\~}$(printf '%*s' $((COLS - ${#left} - ${#right})) '')${MUT}${right}\n"
+  out+=" ${MUT}MEM${R}  $(meter "$pct" 24) ${INK}$(gb $used)${R} ${MUT}/ $(gb $((mt*1024)))${R}\n\n"
 
-  # Test queue: holder and waiters in kernel order (/proc/locks: holder without "->", waiters with "->").
-  out+="${B} ${T_QUEUE}${R}\n"
+  # TRANSPORT — test queue: holder and waiters in kernel order (/proc/locks: holder without "->", waiters with "->").
+  out+="$(section TRANSPORT "$T_QUEUE")\n"
   local ino n=0 line pid sp o kind id repo top=() waiting=" " shown=0; ino=$(stat -c %i "$LOCK" 2>/dev/null)
   # /proc/locks records the pid of the `flock` that took the lock (and exited): the holder is the script with no waiting `flock` child.
   for sp in $(pgrep -f 'setup/herdr-(verify|baseline) -x'); do
@@ -76,9 +114,9 @@ render() {
     tr '\0' ' ' </proc/$sp/cmdline | grep -q herdr-baseline && kind=baseline
     repo=$(arg "$sp" -r); o=$(arg "$sp" -o); id=$([ $kind = verify ] && basename "$(dirname "$o")" || echo "—")
     if [ "$st" = run ]; then
-      out+=" ${G}▶${R} $(printf '%-9s %-8s %-20s' "$id" "$kind" "$repo") ${G}${T_RUN}${R}  $(printf '%-7s' "$(dur "$(age "$(pgrep -o -P "$sp" || echo "$sp")")")") $(gb "$(scope_mem "$sp")")"
-      [ $kind = baseline ] && out+="  ${Y}${T_FULL}${R}"; out+="\n"
-    else out+=" ${Y}${w}${R} $(printf '%-9s %-8s %-20s' "$id" "$kind" "$repo") ${D}${T_WAIT} $(dur "$(age "$sp")")${R}\n"; fi
+      out+=" ${ACC}▶ REC${R}  ${INK}$(printf '%-9s' "$id")${R} ${INK2}$(printf '%-8s %-18s' "$kind" "$repo")${R} ${OK}${T_RUN}${R} ${INK}$(printf '%-7s' "$(dur "$(age "$(pgrep -o -P "$sp" || echo "$sp")")")")${R} ${INK2}$(gb "$(scope_mem "$sp")")${R}"
+      [ $kind = baseline ] && out+="  ${WRN}${T_FULL}${R}"; out+="\n"
+    else out+=" ${MUT}‖ $(printf '%02d' "$w")${R}   ${INK}$(printf '%-9s' "$id")${R} ${INK2}$(printf '%-8s %-18s' "$kind" "$repo")${R} ${MUT}${T_WAIT} $(dur "$(age "$sp")")${R}\n"; fi
     echo "$id $kind $repo|$id $kind $repo" >> "$JUMPS"; }
   if [ -n "$ino" ]; then
     while read -r line; do   # queue in kernel order
@@ -88,56 +126,60 @@ render() {
     for sp in "${top[@]}"; do [[ $waiting == *" $sp "* ]] || { qline "$sp" run; shown=1; }; done
     for sp in $waiting; do n=$((n+1)); qline "$sp" wait "$n"; shown=1; done
   fi
-  ((shown)) || out+=" ${D}${T_EMPTY}${R}\n"
+  ((shown)) || out+=" ${MUT}${T_EMPTY}${R}\n"
 
-  # Agents: live herdr-agent-* scopes ↔ the <prefix>.run.sh that created them.
-  out+="\n${B} ${T_AGENTS}${R}\n"
-  local u rs pre lab ag mdl el mem act k=0
+  # TRACKS — agents: live herdr-agent-* scopes ↔ the <prefix>.run.sh that created them.
+  out+="\n$(section TRACKS "$T_AGENTS")\n"
+  local u rs pre lab ag mdl el mem act k=0 cap; cap=$(orq-config get machine.agent_mem_max 2>/dev/null || echo 4G)
+  cap=$(numfmt --from=iec "${cap:-4G}" 2>/dev/null || echo 4294967296)
   while read -r u; do
     [ -n "$u" ] || continue; k=$((k+1))
     rs=$(grep -l -- "--unit=${u%.scope} " "${WSS[@]/%//.orquestra}"/*/*.run.sh 2>/dev/null | head -1)
     el=$(( $(date +%s) - $(date -d "$(systemctl --user show -p ActiveEnterTimestamp --value "$u")" +%s) ))
-    mem=$(systemctl --user show -p MemoryCurrent --value "$u")
-    if [ -z "$rs" ]; then out+=" ${RE}?${R} ${D}${u} — ${T_ORPHAN}${R}  $(dur $el)  $(gb "$mem")\n"; continue; fi
+    mem=$(systemctl --user show -p MemoryCurrent --value "$u"); [[ $mem =~ ^[0-9]+$ ]] || mem=0
+    if [ -z "$rs" ]; then out+=" ${ERR}●${R} $(printf '%02d' $k)  ${MUT}${u} — ${T_ORPHAN}${R}  $(dur $el)  $(gb "$mem")\n"; continue; fi
     pre=${rs%.run.sh}; id=$(basename "$(dirname "$pre")"); lab=$(basename "$pre")
-    ag=$(grep -oE '(codex|claude|opencode) (exec|-p|run)?' "$rs" | head -1 | cut -d' ' -f1); grep -q 'TUI' "$rs" && ag+="·tela"
+    ag=$(grep -oE '\b(codex|claude|opencode|agy|copilot)\b' "$rs" | head -1); [ "$ag" = agy ] && ag=antigravity
+    grep -q 'TUI' "$rs" && ag+="·TUI"
     mdl=$(grep -oE -- '(-m|--model) [^ ]+' "$rs" | head -1 | cut -d' ' -f2); mdl=${mdl##*/}
-    grep -qE 'codex exec resume|codex resume|--resume|opencode run .* -s ' "$rs" && mdl="${mdl:-$T_SESSION} (follow-up)"
+    grep -qE 'codex exec resume|codex resume|--resume|opencode run .* -s |--conversation' "$rs" && mdl="${mdl:-$T_SESSION} (follow-up)"
     act=""
     if [ -s "$pre.log" ]; then
       act=$(tail -n 40 "$pre.log" | jq -r 'if .type=="assistant" then (.message.content[]?|if .type=="tool_use" then "· "+.name else empty end)
               elif .type=="tool_use" then "· "+(.part.tool//"tool") elif .type=="text" then .part.text else empty end' 2>/dev/null | tail -1)
       [ -n "$act" ] || act=$(tail -n 5 "$pre.log" | grep -v '^\s*$' | grep -v '^{' | tail -1)
     fi
-    act=$(tr -s '\n\t ' ' ' <<<"$act" | sed "s|$HOME/Code/[^ ]*/||g" | cut -c1-48)
-    local warn=""; ((el>3*3600)) && warn=" ${RE}⚠ ${T_FOR} $(dur $el)${R}"
-    out+=" ${C}●${R} $(printf '%-9s %-24s %-24s %-7s %-7s' "$id" "${lab}" "$ag ${mdl:-$T_DEFAULT}" "$(dur $el)" "$(gb "$mem")") ${D}${act}${R}${warn}\n"
+    act=$(tr -s '\n\t ' ' ' <<<"$act" | sed "s|$HOME/Code/[^ ]*/||g" | cut -c1-40)
+    local warn="" mp=$(( mem * 100 / cap )); ((el>3*3600)) && warn=" ${ERR}⚠ ${T_FOR} $(dur $el)${R}"
+    out+=" ${ACC}●${R} ${MUT}$(printf '%02d' $k)${R}  ${INK}$(printf '%-9s' "$id")${R} ${INK2}$(printf '%-22s' "$lab")${R} ${INK}$(printf '%-11s' "$ag")${R}${MUT}$(printf '%-17s' "${mdl:-$T_DEFAULT}")${R} ${INK}$(printf '%-7s' "$(dur $el)")${R} $(meter "$mp" 4) ${INK2}$(printf '%-6s' "$(gb "$mem")")${R} ${MUT}${act}${R}${warn}\n"
     echo "$id ${lab}|$(cat "$pre.pane" 2>/dev/null)" >> "$JUMPS"
   done < <(systemctl --user list-units --type=scope --state=running --no-legend --plain 'herdr-agent-*' 2>/dev/null | awk '{print $1}')
-  ((k==0)) && out+=" ${D}${T_NONE}${R}\n"
+  ((k==0)) && out+=" ${MUT}${T_NONE}${R}\n"
 
-  # Conductors: panes "conductor"; issues pelo herdr-claim; estado pelo herdr.
-  out+="\n${B} ${T_COND}${R}\n"
+  # MASTER — conductors: "conductor" panes; issues from herdr-claim; state from herdr.
+  out+="\n$(section MASTER "$T_COND")\n"
   local claims=""; for w in "${WSS[@]}"; do claims+=$(herdr-claim -w "$w" -l 2>/dev/null | grep '(alive)'); claims+=$'\n'; done
   while IFS=$'\t' read -r p st w; do
     local is name ic txt
     is=$(awk -v p="pane=$p" '$2==p{printf "%s ", $1}' <<<"$claims"); name=$(jq -r --arg w "$w" '.[$w] // $w' <<<"$wsl")
-    case $st in working) ic="${G}●"; txt=$T_WORKING;; blocked) ic="${RE}⚠"; txt=$T_ASKING;;
-      done) ic="${Y}⏸"; txt=$T_DONE;; idle) ic="${D}○"; txt=$T_IDLE;; *) ic="${D}?"; txt=$st;; esac
-    out+=" ${ic}${R} $(printf '%-8s %-22s %-26s' "$p" "${name:0:22}" "${is:-—}") ${ic} ${txt}${R}\n"
+    case $st in working) ic="${OK}●"; txt=$T_WORKING;; blocked) ic="${ERR}▲"; txt=$T_ASKING;;
+      done) ic="${WRN}■"; txt=$T_DONE;; idle) ic="${MUT}○"; txt=$T_IDLE;; *) ic="${MUT}?"; txt=$st;; esac
+    out+=" ${ic}${R} ${MUT}$(printf '%-8s' "$p")${R} ${INK}$(printf '%-22s' "${name:0:22}")${R} ${INK2}$(printf '%-26s' "${is:--}")${R} ${ic} ${txt}${R}\n"
     echo "conductor ${name} (${is:-—})|$p" >> "$JUMPS"
   done < <(jq -r '.[]|select(.label=="conductor")|[.pane_id,.agent_status,(.pane_id|split(":")[0])]|@tsv' <<<"$panes")
 
+  # MIXER — quota.
+  out+="\n$(section MIXER "$T_QUOTA")\n$(quota)\n"
   local nt; nt=$(jq '[.[]|select(.agent==null and .label!=null and (.label|test("^[A-Z]+-[0-9]+ ")))]|length' <<<"$panes")
-  out+="\n${B} ${T_QUOTA}${R}   $(quota)\n"
-  out+="\n${D} ${nt} ${T_FOOT}${R}"
+  out+="\n${RUL}$(hair $((COLS - 2)) ─)${R}\n ${MUT}${nt} ${T_TABS} · ${T_KEYS}${R}"
   # Jump to a verify: pane by the tab label.
   awk -F'|' '$2 !~ /:/' "$JUMPS" | while IFS='|' read -r t _; do
     set -- $t; pn=$(jq -r --arg l "$1 $2 $3" '[.[]|select(.label==$l)]|last|.pane_id // empty' <<<"$panes")
     [ -n "$pn" ] && echo "$t|$pn"; done > "$JUMPS.v"
   { grep ':' "$JUMPS" | awk -F'|' '$2 ~ /:/'; cat "$JUMPS.v"; } > "$JUMPS.all"
-  # \e[K at the end of each line: a shorter line leaves no leftovers from the previous frame.
-  { printf '\e[H'; printf '%b\n' "$out" | sed $'s/$/\e[K/'; printf '\e[J'; }
+  # Every line starts in the theme's base colors and \e[K paints the rest of the row with them (and clears leftovers
+  # from the previous frame); \e[J paints everything below.
+  { printf '%s\e[H' "$BASE"; printf '%b\n' "$out" | sed "s/^/$(printf '%s' "$BASE" | sed 's/[&/\]/\\&/g')/; s/\$/$(printf '\e[K')/"; printf '%s\e[J' "$BASE"; }
 }
 
 jump() {
@@ -149,12 +191,14 @@ jump() {
   tput civis
 }
 
-[ "${1:-}" = --once ] && { render; echo; rm -f "$JUMPS" "$JUMPS".*; exit 0; }
-trap 'tput cnorm; rm -f "$JUMPS" "$JUMPS".*; printf "\n"; exit 0' INT TERM EXIT
-tput civis; printf '\e[2J'
+[ "${1:-}" = --once ] && { render; printf '\e[0m\n'; rm -f "$JUMPS" "$JUMPS".*; exit 0; }
+trap 'printf "\e[0m"; tput cnorm; rm -f "$JUMPS" "$JUMPS".*; printf "\n"; exit 0' INT TERM EXIT
+tput civis; printf '%s\e[2J' "$BASE"
 while :; do
   render
   read -rsn1 -t "$INT" key || continue
   case $key in q) exit 0;; f) jump; printf '\e[2J';; r) rm -f "$QCACHE";;
-    l) "$(dirname "$(realpath "$0")")/orq-lang" toggle >/dev/null; exec env -u ORQ_LANG "$0" "$@";; esac
+    l) "$(dirname "$(realpath "$0")")/orq-lang" toggle >/dev/null; exec env -u ORQ_LANG "$0" "$@";;
+    t) nx=$(case $THEME in gunmetal) echo chrome;; chrome) echo lcd;; lcd) echo terminal;; *) echo gunmetal;; esac)
+       "$(dirname "$(realpath "$0")")/orq-set" ui theme "$nx"; exec env -u ORQ_THEME "$0" "$@";; esac
 done

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# orq-set — writes one string value into your orq config (~/.config/orq/config.toml or config.json), atomically.
+#
+#   orq-set <section> <key> <value>       e.g.  orq-set ui theme lcd
+# TOML: replaces `key = ...` inside [section], adds the key or the section if missing; everything else is kept.
+set -euo pipefail
+S=${1:?section}; K=${2:?key}; V=${3?value}
+CFG_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/orq
+F=${ORQ_CONFIG:-}; [ -n "$F" ] || { [ -f "$CFG_DIR/config.json" ] && [ ! -f "$CFG_DIR/config.toml" ] && F=$CFG_DIR/config.json || F=$CFG_DIR/config.toml; }
+mkdir -p "$(dirname "$F")"; [ -f "$F" ] || : > "$F"
+tmp=$(mktemp "$F.XXXX")
+if [ "${F##*.}" = json ]; then
+  jq --arg s "$S" --arg k "$K" --arg v "$V" '.[$s][$k] = $v' "$F" > "$tmp"
+else
+  awk -v sec="[$S]" -v k="$K" -v v="$V" '
+    function line() { return k " = \"" v "\"" }
+    function flush() { while (nb > 0) { print ""; nb-- } }
+    /^\[/ { if (in_s && !done) { print line(); done = 1 } flush(); in_s = ($0 == sec); print; next }
+    in_s && /^[[:space:]]*$/ { nb++; next }                         # hold blank lines inside the section
+    in_s && $0 ~ "^[[:space:]]*" k "[[:space:]]*=" { flush(); print line(); done = 1; next }
+    { flush(); print }
+    END { if (!done) { if (!in_s) { flush(); print "\n" sec } print line() } flush() }' "$F" > "$tmp"
+fi
+mv -f "$tmp" "$F"

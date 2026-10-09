@@ -36,7 +36,7 @@ DEFAULTS = {
         "max_rounds": 2,             # fix rounds before stopping and calling the user
         "review": "other-vendor",    # other-vendor | any
             },
-    "ui": {"lang": "auto"},          # auto (system locale) | en | pt — CLI messages and herdr-board
+    "ui": {"lang": "auto", "theme": "gunmetal"},   # lang: auto (system locale) | en | pt · theme: gunmetal | chrome | lcd | terminal
     "tracker": {"kind": "none"},     # plane | none
     "repos": {},                     # defined by the workspace
 }

@@ -130,7 +130,7 @@ orq-stats --days 30                              # scoreboard: delivery, approva
 orq-block antigravity --days 3                   # out of the picks (e.g. weekly quota gone, no collector for it)
 ```
 
-### Language
+### Language and theme
 orq speaks English and Portuguese: CLI messages, `herdr-board`, notices and `install.sh`. It follows
 `[ui] lang` in your config (`"auto"` = system locale, `"en"`, `"pt"`), or the `ORQ_LANG` environment variable.
 Switch it any time:
@@ -138,6 +138,10 @@ Switch it any time:
 - `l` inside `herdr-board`;
 - a herdr key: `install.sh` links the `orq` herdr plugin; bind its `orq.lang-toggle` action (snippet in
   `herdr-plugin/herdr-plugin.toml`) — e.g. `prefix+shift+l` — and `orq.board` to open the board as an overlay.
+
+`herdr-board` has its own look, from the [SYNTH.DECK](https://github.com/irythill/synth-deck-portfolio)
+portfolio: `[ui] theme = "gunmetal"` (default, dark graphite), `"chrome"` (light silver), `"lcd"` (phosphor green) or
+`"terminal"` (your terminal's colors). `t` inside the board cycles through them (`ORQ_THEME` overrides).
 
 Whatever is already running keeps its language. Conductors always talk to you in your own language. Docs:
 [Português](README.pt-BR.md).
@@ -182,6 +186,7 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 | `agent-quota` | Current quota of each agent and account |
 | `orq-config` · `orq-pick` · `orq-stats` · `orq-block` | Configuration, agent pick, scoreboard, manual blocks |
 | `orq-lang` | Shows or switches the language of orq's messages (en/pt) |
+| `orq-set <section> <key> <value>` | Writes one value into your orq config (e.g. `orq-set ui theme lcd`) |
 
 ## More
 

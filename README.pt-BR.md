@@ -133,7 +133,7 @@ orq-stats --days 30                              # scoreboard: delivery, approva
 orq-block antigravity --days 3                   # out of the picks (e.g. weekly quota gone, no collector for it)
 ```
 
-### Idioma
+### Idioma e tema
 O orq fala inglês e português: mensagens da CLI, `herdr-board`, avisos e `install.sh`. Ele segue `[ui] lang` na sua
 config (`"auto"` = idioma do sistema, `"en"`, `"pt"`) ou a variável de ambiente `ORQ_LANG`. Para trocar a qualquer
 momento:
@@ -141,6 +141,10 @@ momento:
 - a tecla `l` dentro do `herdr-board`;
 - uma tecla no herdr: o `install.sh` liga o plugin `orq` do herdr; associe a ação `orq.lang-toggle` (trecho pronto em
   `herdr-plugin/herdr-plugin.toml`) — por exemplo, `prefix+shift+l` — e a `orq.board` para abrir o painel por cima.
+
+O `herdr-board` tem visual próprio, inspirado no portfólio [SYNTH.DECK](https://github.com/irythill/synth-deck-portfolio):
+`[ui] theme = "gunmetal"` (padrão, grafite escuro), `"chrome"` (prata claro), `"lcd"` (verde fósforo) ou `"terminal"`
+(as cores do seu terminal). A tecla `t` dentro do painel alterna entre eles (`ORQ_THEME` tem prioridade).
 
 O que já está rodando continua no idioma em que começou. Os conductors sempre falam com você no seu idioma.
 
@@ -184,6 +188,7 @@ dois conductors peguem a mesma issue. Detalhes, atalhos e cenários: [docs/pt-BR
 | `agent-quota` | Quota atual de cada agente e conta |
 | `orq-config` · `orq-pick` · `orq-stats` · `orq-block` | Configuração, escolha de agente, placar, bloqueios manuais |
 | `orq-lang` | Mostra ou troca o idioma das mensagens do orq (en/pt) |
+| `orq-set <seção> <chave> <valor>` | Grava um valor na sua config do orq (ex.: `orq-set ui theme lcd`) |
 
 ## Mais
 
