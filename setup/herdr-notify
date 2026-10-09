@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Notifies the conductor (herdr pane) with ONE line; used by herdr-agent/herdr-baseline/herdr-verify when they finish.
+# If the conductor is in a dialog (blocked), waits for it to leave before typing (up to 30 min); retries 3 times.
+# Always shows a herdr notification too, so the notice isn't lost if the conductor isn't in herdr.
+#
+#   herdr-notify <conductor-pane|""> "<message>"
+P=${1:-}; MSG=${2:?message}
+# Pop-up (native to the OS with ui.toast.delivery = "system"): short title "✓/✗ <title>", details in the body.
+T=${MSG#\[HERDR-AGENT DONE\] }; TITLE=${T%% status=*}; ICON="✓"
+case $MSG in *status=ok*) ;; *status=*) ICON="✗";; *) ICON="•"; TITLE=$MSG;; esac
+BODY=${T#"$TITLE"}; BODY=${BODY# }
+herdr notification show "$ICON $TITLE" ${BODY:+--body "$BODY"} >/dev/null 2>&1 || true
+[ -n "$P" ] || exit 0
+for try in 1 2 3; do
+  st=$(herdr agent get "$P" 2>/dev/null | jq -r '.result.agent.agent_status // empty')
+  [ -n "$st" ] || { echo "[herdr-notify] conductor $P not found"; exit 1; }
+  [ "$st" = blocked ] && herdr agent wait "$P" --until idle --until done --until working --timeout 1800000 >/dev/null 2>&1
+  herdr agent prompt "$P" "$MSG" >/dev/null 2>&1 && exit 0
+  sleep 20
+done
+echo "[herdr-notify] aviso ao conductor $P falhou"; exit 1

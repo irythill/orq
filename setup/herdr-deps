@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# The worktree's node_modules = a LINK to the main repo's (never install in the worktree: ~1 GB and tens of thousands of
+# files per copy choke the disk). If the main repo's deps are behind origin/<base> and it is clean and on <base>:
+# fast-forward + ONE install there. Per-repo lock (flock): two conductors never install in the same repo at the same
+# time; the second waits and then only links.
+#
+#   herdr-deps -r <repo principal> -b <base> -w <worktree>
+#   exit 0 = linked · 3 = main repo dirty or not on <base>: ASK THE USER · other = error
+set -euo pipefail
+R=""; B=""; WT=""
+while getopts "r:b:w:" f; do
+  case $f in r) R=$OPTARG;; b) B=$OPTARG;; w) WT=$OPTARG;; *) sed -n '2,8p' "$0"; exit 2;; esac
+done
+for v in R B WT; do [ -n "${!v}" ] || { echo "missing -$(echo $v | tr A-Z a-z | cut -c1)"; exit 2; }; done
+R=$(cd "$R" && pwd); WT=$(cd "$WT" && pwd)
+GD=$(git -C "$R" rev-parse --path-format=absolute --git-common-dir)
+
+grep -qx node_modules "$GD/info/exclude" 2>/dev/null || echo node_modules >> "$GD/info/exclude"
+
+exec 9>"$GD/herdr-deps.lock"
+flock -n 9 || { echo "another conductor is installing dependencies in $(basename "$R"); waiting..."; flock 9; }
+
+git -C "$R" fetch -q origin "$B"
+LOCKS=package.json
+for l in bun.lock bun.lockb package-lock.json yarn.lock pnpm-lock.yaml; do [ -f "$R/$l" ] && LOCKS="$LOCKS $l"; done
+# shellcheck disable=SC2086
+if ! git -C "$R" diff --quiet HEAD "origin/$B" -- $LOCKS || [ ! -d "$R/node_modules" ]; then
+  BR=$(git -C "$R" branch --show-current)
+  if [ "$BR" != "$B" ] || [ -n "$(git -C "$R" status --porcelain --untracked-files=no)" ]; then
+    echo "deps are stale, but $(basename "$R") is on '$BR' or has changes: not touching it. Ask the user."; exit 3
+  fi
+  git -C "$R" merge -q --ff-only "origin/$B"
+  cd "$R"
+  if   [ -f bun.lock ] || [ -f bun.lockb ]; then CMD=(bun install)
+  elif [ -f pnpm-lock.yaml ]; then CMD=(pnpm install)
+  elif [ -f yarn.lock ]; then CMD=(yarn install)
+  else CMD=(npm install); fi
+  echo "installing dependencies in $(basename "$R") (${CMD[*]})..."
+  "${CMD[@]}" >/dev/null
+fi
+ln -sfn "$R/node_modules" "$WT/node_modules"
+echo "ok: $WT/node_modules -> $R/node_modules"

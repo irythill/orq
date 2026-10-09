@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(agent-quota:*)",
+      "Bash(herdr pane read:*)",
+      "Bash(herdr tab close:*)",
+      "Bash(herdr tab list:*)",
+      "Bash(herdr-agent:*)",
+      "Bash(herdr-baseline:*)",
+      "Bash(herdr-claim:*)",
+      "Bash(herdr-codex:*)",
+      "Bash(herdr-deps:*)",
+      "Bash(herdr-verify:*)",
+      "Bash(orq-config:*)",
+      "Bash(orq-pick:*)",
+      "Bash(orq-stats:*)",
+      "Bash(jq:*)",
+      "Read({{WORKSPACE}}/**)",
+      "Write({{WORKSPACE}}/.orquestra/**)",
+      "mcp__plane__label",
+      "mcp__plane__member",
+      "mcp__plane__module",
+      "mcp__plane__project",
+      "mcp__plane__state",
+      "mcp__plane__workitem",
+      "mcp__plane__workitem_comment",
+      "mcp__plane__workitem_relation"
+    ]
+  }
+}

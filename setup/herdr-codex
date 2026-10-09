@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Shortcut: herdr-agent with -a codex.
+exec "$(dirname "$(realpath "$0")")/herdr-agent" -a codex "$@"

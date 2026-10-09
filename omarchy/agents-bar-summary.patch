@@ -1,0 +1,37 @@
+--- a/Panel.qml	2026-09-30 10:48:32.927500037 -0300
++++ b/Panel.qml	2026-09-30 10:48:32.928448644 -0300
+@@ -132,6 +132,19 @@
+     return best
+   }
+ 
++  // Always-visible summary for the bar: highest window per provider, e.g. "C16% X71%".
++  readonly property string barSummary: {
++    var tags = { claude: "C", codex: "X" }
++    var parts = []
++    for (var i = 0; i < providers.length; i++) {
++      var w = bindingWindow(providers[i])
++      if (!w || !(w.percent >= 0)) continue
++      var id = providers[i].providerId
++      parts.push((tags[id] || id.charAt(0).toUpperCase()) + Math.round(w.percent * 100) + "%")
++    }
++    return parts.join(" ")
++  }
++
+   function resetMsFor(w) {
+     if (!w || w.resetAt === "") return -1
+     var ms = new Date(w.resetAt).getTime()
+@@ -335,11 +348,12 @@
+     function next(): string { root.selectProvider(root.providerIndex + 1); return "ok" }
+   }
+ 
+-  BarIconButton {
++  WidgetButton {
+     id: button
+     anchors.fill: parent
+     bar: root.bar
+-    text: "󱚣"
++    text: root.barSummary ? "󱚣 " + root.barSummary : "󱚣"
++    tooltipText: "Uso dos agentes (C = Claude, X = Codex) — clique para detalhes"
+     active: root.alarming
+     onPressed: function(buttonCode) {
+       if (buttonCode === Qt.RightButton) root.launchAgent()

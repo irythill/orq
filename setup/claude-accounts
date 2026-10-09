@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Claude accounts (one CLAUDE_CONFIG_DIR folder per account), in ~/.config/claude-accounts: lines "<name> <folder>".
+#
+#   claude-accounts            # lists "<name> <folder>" (folder with ~ expanded)
+#   claude-accounts <name>     # prints only the folder; unknown account → lists accounts on stderr and exits 1
+F=${CLAUDE_ACCOUNTS_FILE:-$HOME/.config/claude-accounts}
+[ -f "$F" ] || { echo "no $F (lines: <name> <folder>)" >&2; exit 2; }
+list() { sed -e 's/#.*//' -e "s|~|$HOME|" "$F" | awk 'NF>=2 {print $1, $2}'; }
+[ $# -eq 0 ] && { list; exit 0; }
+d=$(list | awk -v a="$1" '$1==a{print $2}')
+[ -n "$d" ] && { echo "$d"; exit 0; }
+{ echo "account '$1' does not exist. Accounts:"; list; } >&2; exit 1

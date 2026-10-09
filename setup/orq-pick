@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""orq-pick — picks agent and model for a role, from the config, the history and the current quota.
+
+  orq-pick <impl|fix|review|opinion> [--level simple|medium|heavy] [--impl-vendor <vendor>|--impl-agent <agent>]
+           [--exclude-agent <agent>]... [-w <workspace>] [--explain] [--no-record]
+
+Prints the arguments for herdr-agent, e.g. `-a codex -m gpt-6-sol -e low` (with an account: `-c work`).
+--explain shows every candidate's score (stderr). Each pick is recorded in $XDG_STATE_HOME/orq/picks.jsonl
+(that feeds the rotation); --no-record skips it (simulation).
+Exit 3 = no candidate (all out by role, vendor, block or quota): ask the user.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+STATE = Path(os.environ.get("XDG_STATE_HOME", "~/.local/state")).expanduser() / "orq"
+QCACHE = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "herdr-board.quota"
+
+
+def sh(*args):
+    return subprocess.run(args, capture_output=True, text=True).stdout
+
+
+def quota():
+    """{name: highest % of 5h and weekly; None = no data ('?'); -1 = no limit ('-')}"""
+    txt = QCACHE.read_text() if QCACHE.exists() and time.time() - QCACHE.stat().st_mtime < 600 else sh("agent-quota")
+    out = {}
+    for line in txt.splitlines():
+        p = line.split()
+        if len(p) < 3:
+            continue
+        vals = [re.sub(r".*=", "", x) for x in p[1:3]]
+        if any(v.startswith("?") for v in vals):
+            out[p[0]] = None
+        else:
+            nums = [int(v.rstrip("%")) for v in vals if v.rstrip("%").isdigit()]
+            out[p[0]] = max(nums) if nums else -1
+    return out
+
+
+def model_for(agent_cfg, role, level):
+    ms = (agent_cfg.get("models") or {}).get(role) or ((agent_cfg.get("models") or {}).get("impl") if role == "fix" else None) or {}
+    spec = ms.get(level) or ms.get("default") or ms.get("medium") or ms.get("simple")
+    if not spec:
+        return None, None
+    m, _, e = spec.partition("@")
+    return m, e or None
+
+
+def main(argv):
+    if not argv or argv[0] not in ("impl", "fix", "review", "opinion"):
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    role, argv = argv[0], argv[1:]
+    level, impl_vendor, impl_agent, ws, explain, record, excl = "medium", None, None, None, False, True, set()
+    while argv:
+        a = argv.pop(0)
+        if a == "--level": level = argv.pop(0)
+        elif a == "--impl-vendor": impl_vendor = argv.pop(0)
+        elif a == "--impl-agent": impl_agent = argv.pop(0)
+        elif a == "-w": ws = argv.pop(0)
+        elif a == "--explain": explain = True
+        elif a == "--no-record": record = False
+        elif a == "--exclude-agent": excl.add(argv.pop(0))
+    cfg = json.loads(sh(str(HERE / "orq-config"), *(["-w", ws] if ws else [])) or "{}")
+    agents, pol = cfg.get("agents") or {}, cfg.get("policy") or {}
+    w = {"quality": .4, "tokens": .45, "speed": .15, "rotation": .2, "reserve": .3, "explore": .1,
+         "min_samples": 8, "window": 6, **(pol.get("weights") or {})}
+    if impl_agent and not impl_vendor:
+        impl_vendor = (agents.get(impl_agent) or {}).get("vendor")
+    stats_ws = ws or cfg.get("_workspace") or str(Path.cwd())
+    rows = json.loads(sh(str(HERE / "orq-stats"), "-w", stats_ws, "--days", str(pol.get("history_days", 30)), "--json") or "[]")
+    stats = {(r["role"], r["agent"], r["model"]): r for r in rows}
+    q = quota()
+    # Manual blocks (orq-block): quota without a collector or a known outage. They apply to agents or accounts.
+    try:
+        blocks = {k for k, v in json.loads((STATE / "blocks.json").read_text()).items() if v.get("until", 0) > time.time()}
+    except (OSError, ValueError):
+        blocks = set()
+    STATE.mkdir(parents=True, exist_ok=True)
+    picks_f = STATE / "picks.jsonl"
+    recent = [json.loads(l) for l in picks_f.read_text().splitlines()[-200:]] if picks_f.exists() else []
+    recent = [p for p in recent if p.get("role") == role][-int(w["window"]):]
+
+    cands, notes = [], []
+    for name, a in agents.items():
+        if role not in (a.get("roles") or []):
+            continue
+        if name in excl:
+            notes.append(f"{name}: excluded (--exclude-agent)"); continue
+        if name in blocks:
+            notes.append(f"{name}: blocked (orq-block -l)"); continue
+        if role in ("review", "opinion") and pol.get("review", "other-vendor") == "other-vendor" and impl_vendor \
+                and a.get("vendor") == impl_vendor:
+            notes.append(f"{name}: same vendor as the implementer"); continue
+        m, e = model_for(a, role, level)
+        if not m:
+            notes.append(f"{name}: no model for {role}/{level}"); continue
+        # Quota: an agent with several accounts (claude) uses the least used one under the limit.
+        accs = [(n, q.get(n, -1)) for n in (a.get("quota") or []) if n not in blocks]
+        if a.get("quota") and not accs:
+            notes.append(f"{name}: all accounts blocked"); continue
+        usable = [(n, v) for n, v in accs if v is not None and v < pol.get("quota_limit", 90)]
+        if accs and not usable:
+            notes.append(f"{name}: quota >= {pol.get('quota_limit', 90)}% or no data ({', '.join(f'{n}={v}' for n, v in accs)})"); continue
+        acct = min(usable, key=lambda x: x[1])[0] if len(accs) > 1 else None
+        st = stats.get(("impl" if role == "fix" else role, name, m.split("/")[-1]))
+        n = st["n"] if st else 0
+        if role == "impl" and st and st.get("approved") is not None and st["n_appr"] >= 3:
+            deliv = st["approved"] / 100
+        else:
+            deliv = st["ok"] / 100 if st else None
+        cands.append(dict(agent=name, model=m, effort=e, acct=acct, n=n, deliv=deliv,
+                          tok=st["new"] if st and st["new"] else None, mins=st["min"] if st else None,
+                          prior=a.get("prior", .6), reserve=bool(a.get("reserve"))))
+    if not cands:
+        print("orq-pick: no candidate for " + role + ("; " + "; ".join(notes) if notes else ""), file=sys.stderr)
+        return 3
+    toks = [c["tok"] for c in cands if c["tok"] and c["n"] >= w["min_samples"]]
+    mins = [c["mins"] for c in cands if c["mins"] and c["n"] >= w["min_samples"]]
+    for c in cands:
+        few = c["n"] < w["min_samples"]
+        d = c["prior"] if few or c["deliv"] is None else c["deliv"]
+        t = c["prior"] if few or not c["tok"] or not toks else min(toks) / c["tok"]
+        s = c["prior"] if few or not c["mins"] or not mins else min(mins) / max(c["mins"], .1)
+        used = sum(1 for p in recent if p["agent"] == c["agent"])
+        c["score"] = (w["quality"] * d + w["tokens"] * t + w["speed"] * s - w["rotation"] * used
+                      - (w["reserve"] if c["reserve"] else 0) + (w["explore"] if few else 0))
+        c["why"] = f"delivery={d:.2f} economy={t:.2f} speed={s:.2f} rotation=-{used} " + \
+                   ("reserve " if c["reserve"] else "") + (f"few samples(n={c['n']})" if few else f"n={c['n']}")
+    cands.sort(key=lambda c: -c["score"])
+    best = cands[0]
+    if explain:
+        for c in cands:
+            print(f"{'→' if c is best else ' '} {c['score']:+.3f}  {c['agent']:12} {c['model']:24} {c['why']}", file=sys.stderr)
+        for nte in notes:
+            print(f"  out: {nte}", file=sys.stderr)
+    if record:
+        with picks_f.open("a") as f:
+            f.write(json.dumps({"t": int(time.time()), "role": role, "level": level, "agent": best["agent"],
+                                "model": best["model"]}) + "\n")
+    out = f"-a {best['agent']} -m {best['model']}" + (f" -e {best['effort']}" if best["effort"] else "") + \
+          (f" -c {best['acct']}" if best["acct"] else "")
+    print(out)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

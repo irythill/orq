@@ -1,0 +1,3 @@
+PLANE_API_KEY=plane_api_PUT_YOUR_KEY_HERE
+PLANE_WORKSPACE_SLUG=your-workspace-slug
+PLANE_BASE_URL=https://plane.example.com

@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Tests related to what changed in a worktree, run by the conductor and not by the child (the child hits its 4 GB cap
+# with jest/vitest). One verification at a time on the machine (flock queue), its own memory cap (VERIFY_MEM_MAX, 6G).
+# Runs in a herdr tab and doesn't block the conductor. Same protocol as herdr-agent: writes <prefix>.done and notifies
+# the calling pane (HERDR_PANE_ID) with "[HERDR-AGENT DONE] verify <repo> ..." via herdr-notify.
+#
+#   herdr-verify -w <workspace> -r <repo> -d <worktree> -b <base> -o <prefix> [-g <group>]
+#   output: <prefix>.txt — NEW failures and failures that already existed on the base. status=ok only with no new failure.
+#   On-demand baseline: only if some test fails, the SAME test files run in a temporary worktree at origin/<base>
+#   (fetched right then); whatever fails there is pre-existing. No full suite, no stale baseline.
+#   Supports jest (--findRelatedTests) and vitest (related), detected from the package.json "test" script.
+set -euo pipefail
+
+WS=""; R=""; WT=""; B=""; O=""; G=""; RUN=0
+while getopts "w:r:d:b:o:g:x" f; do
+  case $f in w) WS=$OPTARG;; r) R=$OPTARG;; d) WT=$OPTARG;; b) B=$OPTARG;; o) O=$OPTARG;; g) G=$OPTARG;; x) RUN=1;;
+    *) sed -n '2,10p' "$0"; exit 2;; esac
+done
+for v in WS R WT B O; do [ -n "${!v}" ] || { echo "missing -$(echo $v | tr A-Z a-z | cut -c1)"; sed -n '7,7p' "$0"; exit 2; }; done
+WT=$(cd "$WT" && pwd); mkdir -p "$(dirname "$O")"; O=$(realpath -m "$O")
+
+if [ $RUN = 0 ]; then
+  rm -f "$O.done" "$O.txt"
+  RUNSH=$O.run.sh
+  # When done the tab closes by itself (HERDR_CLOSE_DELAY, 20 s; HERDR_KEEP_TAB=1 keeps it); the result stays in the file.
+  CLOSE='[ "${HERDR_KEEP_TAB:-0}" = 1 ] || { sleep "${HERDR_CLOSE_DELAY:-20}"; herdr tab close "$(herdr pane get "$HERDR_PANE_ID" | jq -r .result.pane.tab_id)" >/dev/null 2>&1; }'
+  # Inside the tab, HERDR_PANE_ID is the tab itself: the conductor's pane goes explicitly in HERDR_NOTIFY_PANE.
+  printf '#!/usr/bin/env bash\nHERDR_NOTIFY_PANE=%q %q -x -w %q -r %q -d %q -b %q -o %q 2>&1 | tee %q\n%s\n' \
+    "${HERDR_PANE_ID:-}" "$(realpath "$0")" "$WS" "$R" "$WT" "$B" "$O" "$O.log" "$CLOSE" > "$RUNSH"
+  chmod +x "$RUNSH"
+  # Title "<ID> verify <repo>" (ID = the prefix's folder, .orquestra/<ID>/) so closing the issue finds the tab.
+  T="$(basename "$(dirname "$O")") verify $R"
+  PANE=$(herdr-tab "${G:-agents}" "$T" "$WT" "bash $(printf %q "$RUNSH")")
+  echo "[herdr-verify] $T → $PANE"
+  exit 0
+fi
+
+# Run mode (-x), inside the tab.
+st=fail; NEW=0
+finish() {
+  printf "status=%s new=%s at=%s\n" "$st" "$NEW" "$(date -Is)" > "$O.done"
+  herdr-notify "${HERDR_NOTIFY_PANE:-}" "[HERDR-AGENT DONE] verify $R status=$st new=$NEW answer: $O.txt" || true
+  echo "[verify finished: status=$st new=$NEW] $O.txt"
+}
+trap finish EXIT
+
+LOCK=${VERIFY_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/herdr-verify.lock}
+exec 9>"$LOCK"
+flock -n 9 || { echo "another verification is running; waiting for my turn..."; flock 9; }
+
+cd "$WT"
+mapfile -t FILES < <(git diff --name-only --diff-filter=d "origin/$B...HEAD" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$' || true)
+if [ ${#FILES[@]} -eq 0 ]; then
+  echo "# verify $R $(git rev-parse --short HEAD): no JS/TS file changed relative to origin/$B" > "$O.txt"
+  st=ok; exit 0
+fi
+TEST=$(jq -r '.scripts.test // ""' package.json)
+CAP="systemd-run --user --scope -q -p MemoryMax=${VERIFY_MEM_MAX:-6G} -p MemorySwapMax=1G --"
+# runtests <dir> <json> <mode: related|files> <files...> → "<relative file> :: <test>" for each failure on stdout
+runtests() {
+  local dir=$1 j=$2 mode=$3; shift 3
+  ( cd "$dir"
+    case $TEST in
+      *vitest*) if [ "$mode" = related ]; then set -- related "$@"; else set -- run "$@"; fi
+                $CAP npx vitest "$@" --run --passWithNoTests --reporter=json --outputFile="$j" --maxWorkers=2 || true ;;
+      *jest*)   if [ "$mode" = related ]; then set -- --findRelatedTests "$@"; else set -- --runTestsByPath "$@"; fi
+                $CAP npx jest "$@" --passWithNoTests --json --outputFile="$j" --maxWorkers=2 --workerIdleMemoryLimit=1G || true ;;
+      *) echo "unsupported runner: '$TEST'" >&2; return 1;;
+    esac ) >&2
+  [ -s "$j" ] || { echo "no JSON result in $dir (did the runner die? see $O.log)" >&2; return 1; }
+  jq -r --arg d "$dir/" '.testResults[] | .name as $f | .assertionResults[] | select(.status=="failed")
+    | "\($f | ltrimstr($d)) :: \(.fullName)"' "$j" | sort -u
+}
+J=$(mktemp --suffix=.json)
+FAILED=$(runtests "$WT" "$J" related "${FILES[@]}") || exit 1
+TOTAL=$(jq -r '.numTotalTests // 0' "$J"); rm -f "$J"
+BASEFAILED=""; BASEINFO="no failure on the branch: base not checked"
+if [ -n "$FAILED" ]; then
+  # Same test files on the current origin/<base> (only those that exist there; a new test can't fail on the base).
+  REPO=$WS/$R; BWT=$WS/.worktrees/verifybase-$R-$$; BJ=$(mktemp --suffix=.json)
+  git -C "$REPO" fetch -q origin "$B" || echo "WARNING: fetching origin/$B failed; using the local origin/$B"
+  git -C "$REPO" worktree add -q --detach "$BWT" "origin/$B"
+  trap 'git -C "$REPO" worktree remove --force "$BWT" 2>/dev/null || true; finish' EXIT
+  [ -e "$REPO/node_modules" ] && ln -sfn "$(readlink -f "$REPO/node_modules")" "$BWT/node_modules"
+  mapfile -t TF < <(printf '%s\n' "$FAILED" | sed 's/ :: .*//' | sort -u | while read -r f; do [ -f "$BWT/$f" ] && echo "$f"; done)
+  BASEINFO="${#TF[@]} failing file(s) run on origin/$B $(git -C "$REPO" rev-parse --short "origin/$B")"
+  if [ ${#TF[@]} -gt 0 ]; then BASEFAILED=$(runtests "$BWT" "$BJ" files "${TF[@]}") \
+    || { BASEFAILED=""; BASEINFO="WARNING: the base run failed (see $O.log); every failure counts as new"; }; fi
+  rm -f "$BJ"
+fi
+NEWLIST=$(comm -23 <(printf '%s\n' "$FAILED" | sed '/^$/d') <(printf '%s\n' "$BASEFAILED" | sed '/^$/d'))
+OLDLIST=$(comm -12 <(printf '%s\n' "$FAILED" | sed '/^$/d') <(printf '%s\n' "$BASEFAILED" | sed '/^$/d'))
+NEW=$(printf '%s' "$NEWLIST" | grep -c . || true)
+{
+  echo "# verify $R $(git rev-parse --short HEAD) $(date -I): $TOTAL tests related to ${#FILES[@]} changed files"
+  echo "# base: $BASEINFO"
+  echo; echo "## New failures ($NEW)"; printf '%s\n' "${NEWLIST:-none}"
+  echo; echo "## Already failing on origin/$B"; printf '%s\n' "${OLDLIST:-none}"
+} > "$O.txt"
+cat "$O.txt"
+[ "$NEW" = 0 ] && st=ok

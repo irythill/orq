@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""orq-config — reads the orq configuration and prints the merged result as JSON.
+
+Layers (each one overrides the previous, key by key):
+  1. built-in defaults (DEFAULTS, below)
+  2. personal:  $ORQ_CONFIG, or ~/.config/orq/config.toml | config.json
+  3. workspace: <workspace>/.orq/workspace.toml | workspace.json  (searched from -w or the current folder, upwards)
+
+Usage:
+  orq-config [-w <workspace>]                 everything, as JSON
+  orq-config [-w <workspace>] get <a.b.c>     one value (plain text if scalar; JSON if object/list)
+  orq-config [-w <workspace>] files           which files were read
+Exit 1 = missing key in `get`; 2 = configuration error.
+
+TOML needs Python 3.11+ (tomllib) or the `tomli` package; JSON works on any Python 3.
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+DEFAULTS = {
+    "machine": {
+        "agent_mem_max": "4G",       # memory cap per agent (cgroup on Linux/WSL)
+        "agent_swap_max": "1G",
+        "test_mem_max": "6G",        # cap per test suite (herdr-verify)
+        "test_slots": 1,             # test suites in parallel on the machine
+        "close_tab_after": 20,       # seconds until a finished child tab closes (0 = never)
+        "tui": False,                # children in the agent's own screen (-T) by default
+    },
+    "agents": {},                    # only agents declared here are available
+    "policy": {
+        "quota_limit": 90,           # quota % from which an agent/account is skipped
+        "max_rounds": 2,             # fix rounds before stopping and calling the user
+        "review": "other-vendor",    # other-vendor | any
+            },
+    "tracker": {"kind": "none"},     # plane | none
+    "repos": {},                     # defined by the workspace
+}
+
+
+def load(path: Path):
+    text = path.read_text(encoding="utf-8")
+    if path.suffix == ".json":
+        return json.loads(text)
+    try:
+        import tomllib  # Python 3.11+
+    except ModuleNotFoundError:
+        try:
+            import tomli as tomllib
+        except ModuleNotFoundError:
+            sys.exit(f"orq-config: {path} is TOML and this Python ({sys.version.split()[0]}) can't read TOML. "
+                     "Install `tomli` (pip install --user tomli) or use config.json.")
+    return tomllib.loads(text)
+
+
+def first(*candidates):
+    for c in candidates:
+        if c and Path(c).expanduser().is_file():
+            return Path(c).expanduser()
+    return None
+
+
+def merge(base, over):
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def expand(v):
+    """Expand ~ and $VAR in strings."""
+    if isinstance(v, dict):
+        return {k: expand(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [expand(x) for x in v]
+    if isinstance(v, str) and (v.startswith("~") or "$" in v):
+        return os.path.expandvars(os.path.expanduser(v))
+    return v
+
+
+def find_workspace(start: Path):
+    for d in [start, *start.parents]:
+        f = first(d / ".orq" / "workspace.toml", d / ".orq" / "workspace.json")
+        if f:
+            return d, f
+    return None, None
+
+
+def main(argv):
+    ws = None
+    if len(argv) >= 2 and argv[0] == "-w":
+        ws, argv = Path(argv[1]).expanduser().resolve(), argv[2:]
+    cfg_dir = Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser() / "orq"
+    user = first(os.environ.get("ORQ_CONFIG"), cfg_dir / "config.toml", cfg_dir / "config.json")
+    ws_root, ws_file = find_workspace(ws or Path.cwd().resolve())
+
+    files, cfg = [], DEFAULTS
+    try:
+        for f in (user, ws_file):
+            if f:
+                cfg = merge(cfg, load(f))
+                files.append(str(f))
+    except (ValueError, OSError) as e:  # TOMLDecodeError and JSONDecodeError inherit from ValueError
+        print(f"orq-config: error reading {f}: {e}", file=sys.stderr)
+        return 2
+    cfg = expand(cfg)
+    cfg["_workspace"] = str(ws_root) if ws_root else None
+
+    if not argv:
+        print(json.dumps(cfg, ensure_ascii=False, indent=2))
+    elif argv[0] == "files":
+        print("\n".join(files) if files else "(no file; defaults only)")
+    elif argv[0] == "get" and len(argv) == 2:
+        v = cfg
+        for part in argv[1].split("."):
+            if not isinstance(v, dict) or part not in v:
+                return 1
+            v = v[part]
+        print(v if isinstance(v, (str, int, float)) and not isinstance(v, bool) else json.dumps(v, ensure_ascii=False))
+    else:
+        print(__doc__.strip().split("Usage:")[1].split("Exit")[0].strip(), file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

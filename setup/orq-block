@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""orq-block — takes an agent (or account) out of orq-pick until a date. For quotas without a collector
+(Antigravity, Copilot, MiniMax) or any outage you know about before the agent fails.
+
+  orq-block <agent|account> [--until YYYY-MM-DD[THH:MM] | --days N] [--reason "text"]   default: 7 days
+  orq-block -r <agent|account>       unblock early
+  orq-block -l                       list active blocks (expired ones disappear by themselves)
+
+State in $XDG_STATE_HOME/orq/blocks.json.
+"""
+import json
+import os
+import sys
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+
+F = Path(os.environ.get("XDG_STATE_HOME", "~/.local/state")).expanduser() / "orq" / "blocks.json"
+
+
+def load():
+    try:
+        b = json.loads(F.read_text())
+    except (OSError, ValueError):
+        b = {}
+    return {k: v for k, v in b.items() if v.get("until", 0) > time.time()}
+
+
+def save(b):
+    F.parent.mkdir(parents=True, exist_ok=True)
+    tmp = F.with_suffix(".tmp")
+    tmp.write_text(json.dumps(b, indent=2, ensure_ascii=False))
+    tmp.replace(F)
+
+
+def main(a):
+    b = load()
+    if not a or a[0] in ("-h", "--help"):
+        print(__doc__.strip()); return 0
+    if a[0] == "-l":
+        for k, v in sorted(b.items()):
+            print(f"{k:14} until {datetime.fromtimestamp(v['until']):%Y-%m-%d %H:%M}  {v.get('reason', '')}")
+        if not b:
+            print("no active blocks")
+        return 0
+    if a[0] == "-r":
+        b.pop(a[1], None); save(b); print(f"{a[1]} unblocked"); return 0
+    name, a = a[0], a[1:]
+    until, reason = datetime.now() + timedelta(days=7), ""
+    while a:
+        o = a.pop(0)
+        if o == "--until": until = datetime.fromisoformat(a.pop(0))
+        elif o == "--days": until = datetime.now() + timedelta(days=float(a.pop(0)))
+        elif o == "--reason": reason = a.pop(0)
+    b[name] = {"until": until.timestamp(), "reason": reason}
+    save(b)
+    print(f"{name} out of orq-pick until {until:%Y-%m-%d %H:%M}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

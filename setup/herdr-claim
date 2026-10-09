@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Owner of each issue among conductors of the same workspace: .orquestra/<ID>/owner keeps the pane of the conductor that took it.
+# Another conductor is refused while the owner is alive in herdr; dead owner (pane closed) → taken over automatically.
+#
+#   herdr-claim [-w <workspace>] <ID>       claims the issue (or confirms it's yours)     exit 1 = owned by another conductor
+#   herdr-claim [-w <workspace>] -f <ID>    takes it from another conductor (account switch, only with the user's OK)
+#   herdr-claim [-w <workspace>] -r <ID>    releases it (when closing the issue)
+#   herdr-claim [-w <workspace>] -l         lists issues with an owner
+# Default workspace: the current folder. The pane is the caller's HERDR_PANE_ID (the conductor).
+set -euo pipefail
+WS=$PWD; MODE=claim
+while getopts "w:frl" f; do
+  case $f in w) WS=$OPTARG;; f) MODE=force;; r) MODE=release;; l) MODE=list;; *) sed -n '2,9p' "$0"; exit 2;; esac
+done
+shift $((OPTIND - 1))
+O=$WS/.orquestra
+alive() { herdr agent get "$1" >/dev/null 2>&1; }
+field() { sed -n "s/.*$1=\([^ ]*\).*/\1/p" "$2"; }
+
+if [ $MODE = list ]; then
+  for f in "$O"/*/owner; do
+    [ -f "$f" ] || continue
+    p=$(field pane "$f"); s=alive; alive "$p" || s=dead
+    echo "$(basename "$(dirname "$f")") $(cat "$f") ($s)"
+  done
+  exit 0
+fi
+
+ID=${1:?give the issue ID}; ME=${HERDR_PANE_ID:?run inside herdr (conductor)}
+mkdir -p "$O/$ID"; F=$O/$ID/owner
+exec 9>"$O/.claims.lock"; flock 9
+
+if [ $MODE = release ]; then
+  [ -f "$F" ] && [ "$(field pane "$F")" != "$ME" ] && { echo "$ID belongs to $(field pane "$F"); not releasing it"; exit 1; }
+  rm -f "$F"; echo "$ID liberada"; exit 0
+fi
+if [ -f "$F" ] && [ $MODE = claim ]; then
+  OWNER=$(field pane "$F")
+  [ "$OWNER" = "$ME" ] && { echo "$ID is already yours"; exit 0; }
+  if alive "$OWNER"; then
+    echo "$ID is owned by another conductor ($(cat "$F")). Do not run it; tell the user (-f only with their OK)."; exit 1
+  fi
+  echo "previous owner ($OWNER) is gone; taking over $ID"
+fi
+printf 'pane=%s account=%s at=%s\n' "$ME" "$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}")" "$(date -Is)" > "$F"
+echo "$ID is yours ($ME)"

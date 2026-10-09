@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Test baseline of the base branch: which tests ALREADY fail on origin/<BASE>.
+# Runs in a temporary worktree detached at origin/<BASE> (node_modules = link to the main clone), in a herdr tab
+# (doesn't block the conductor). Same protocol as herdr-agent: when done writes <output>.done and notifies the calling pane
+# (HERDR_PANE_ID, the conductor) with "[HERDR-AGENT DONE] baseline <repo> ..." via herdr-notify.
+#
+#   Outside the issue flow (herdr-verify checks the base on demand): manual use, for a snapshot of the base.
+#   herdr-baseline -w <workspace> -r <repo> -b <base> [-g <group>]   (-p is accepted and ignored)
+#   output: <workspace>/.orquestra/baseline/<repo>-<base>.txt  (1st line: "# sha <sha> <date>"; then 1 test per line)
+#   Supports jest (--json) and vitest (--reporter=json), detected from the package.json "test" script.
+set -euo pipefail
+
+P=""; WS=""; R=""; B=""; G=""; RUN=0
+while getopts "p:w:r:b:g:x" f; do
+  case $f in p) P=$OPTARG;; w) WS=$OPTARG;; r) R=$OPTARG;; b) B=$OPTARG;; g) G=$OPTARG;; x) RUN=1;; *) sed -n '2,9p' "$0"; exit 2;; esac
+done
+for v in WS R B; do [ -n "${!v}" ] || { echo "missing -$(echo $v | tr A-Z a-z | cut -c1)"; sed -n '6,8p' "$0"; exit 2; }; done
+REPO=$WS/$R; OUTDIR=$WS/.orquestra/baseline; OUT=$OUTDIR/$R-$B.txt
+mkdir -p "$OUTDIR"
+
+if [ $RUN = 0 ]; then
+  # Launch mode: creates the tab and returns right away.
+  git -C "$REPO" fetch -q origin "$B"
+  SHA=$(git -C "$REPO" rev-parse --short origin/"$B")
+  if [ -f "$OUT" ] && head -1 "$OUT" | grep -q "sha $SHA "; then echo "baseline already up to date ($SHA): $OUT"; exit 0; fi
+  rm -f "$OUT.done"
+  # When done the tab closes by itself (HERDR_CLOSE_DELAY, 20 s; HERDR_KEEP_TAB=1 keeps it); the result stays in the file.
+  CLOSE='[ "${HERDR_KEEP_TAB:-0}" = 1 ] || { sleep "${HERDR_CLOSE_DELAY:-20}"; herdr tab close "$(herdr pane get "$HERDR_PANE_ID" | jq -r .result.pane.tab_id)" >/dev/null 2>&1; }'
+  # Inside the tab, HERDR_PANE_ID is the tab itself: the conductor's pane goes explicitly in HERDR_NOTIFY_PANE.
+  RUNSH=$OUTDIR/$R-$B.run.sh
+  printf '#!/usr/bin/env bash\nHERDR_NOTIFY_PANE=%q %q -x -w %q -r %q -b %q 2>&1 | tee %q\n%s\n' \
+    "${HERDR_PANE_ID:-}" "$(realpath "$0")" "$WS" "$R" "$B" "$OUT.log" "$CLOSE" > "$RUNSH"
+  chmod +x "$RUNSH"
+  PANE=$(herdr-tab "${G:-agents}" "baseline $R $B" "$REPO" "bash $(printf %q "$RUNSH")")
+  echo "[herdr-baseline] baseline $R $B → $PANE"
+  exit 0
+fi
+
+# Run mode (-x), inside the tab.
+SHA=$(git -C "$REPO" rev-parse --short origin/"$B")
+WT=$WS/.worktrees/baseline-$R
+st=fail
+finish() {
+  git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
+  printf "status=%s sha=%s at=%s\n" "$st" "$SHA" "$(date -Is)" > "$OUT.done"
+  herdr-notify "${HERDR_NOTIFY_PANE:-}" "[HERDR-AGENT DONE] baseline $R $B status=$st sha=$SHA answer: $OUT" || true
+  echo "[baseline finished: status=$st] $OUT"
+}
+trap finish EXIT
+# Same queue as herdr-verify: one test suite at a time on the machine (each may use up to 6 GB).
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/herdr-verify.lock"
+flock -n 9 || { echo "another verification is running; waiting for my turn..."; flock 9; }
+# An identical baseline may have finished while this one waited: check again before running the full suite.
+git -C "$REPO" fetch -q origin "$B" || true; SHA=$(git -C "$REPO" rev-parse --short origin/"$B")
+if [ -f "$OUT" ] && head -1 "$OUT" | grep -q "sha $SHA "; then echo "baseline already up to date ($SHA)"; st=ok; exit 0; fi
+git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
+git -C "$REPO" worktree add -q --detach "$WT" origin/"$B"
+ln -sfn "$REPO/node_modules" "$WT/node_modules"
+cd "$WT"
+J=$(mktemp --suffix=.json)
+TEST=$(jq -r '.scripts.test // ""' package.json)
+CAP="systemd-run --user --scope -q -p MemoryMax=${VERIFY_MEM_MAX:-6G} -p MemorySwapMax=1G --"
+case $TEST in
+  *vitest*) $CAP npx vitest run --reporter=json --outputFile="$J" --maxWorkers=2 >/dev/null 2>&1 || true
+            FILTER='.testResults[] | .name as $f | .assertionResults[] | select(.status=="failed") | "\($f|sub(".*/baseline-'"$R"'/";"")) :: \(.fullName)"' ;;
+  *jest*)   $CAP npx jest --json --outputFile="$J" --maxWorkers=2 --workerIdleMemoryLimit=1G >/dev/null 2>&1 || true
+            FILTER='.testResults[] | .name as $f | .assertionResults[] | select(.status=="failed") | "\($f|sub(".*/baseline-'"$R"'/";"")) :: \(.fullName)"' ;;
+  *) echo "unsupported runner: '$TEST'"; exit 1;;
+esac
+[ -s "$J" ] || { echo "no JSON result"; exit 1; }
+DEPS=""; git -C "$REPO" diff --quiet HEAD origin/"$B" -- package.json package-lock.json bun.lock 2>/dev/null \
+  || DEPS=" (WARNING: the main clone's node_modules is behind origin/$B)"
+{ echo "# sha $SHA $(date -I) — tests already failing on origin/$B$DEPS"; jq -r "$FILTER" "$J" | sort -u; } > "$OUT.tmp"
+mv "$OUT.tmp" "$OUT"; rm -f "$J"
+echo "$(($(wc -l < "$OUT") - 1)) tests failing on the base"
+st=ok

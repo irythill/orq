@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# Runs a headless agent (`claude -p`, `codex exec`, `opencode run`, `agy -p`, `copilot -p`) with its own memory cap
+# (AGENT_MEM_MAX, 4G) and writes <prefix>.out.md (final answer) /.log /.id (session, for -R) /.done /.pane. Runs in a
+# herdr tab: workspace = group (-g, created if missing), tab = title. Completion signal: writes <prefix>.done and
+# notifies the calling pane (HERDR_PANE_ID, the conductor) with ONE line "[HERDR-AGENT DONE] ..." via herdr-notify
+# (waits for the conductor to leave a dialog, retries 3 times and always shows a herdr notification).
+#
+#   herdr-agent -a claude|codex|opencode|antigravity|copilot [-g <group>] -t "<title>" -d <dir> -o <prefix> [-m model] [-e effort] [-c account] [-i file]... [-b base] [-r] [-R <id>] [-T] -- <prompt.md>
+#
+#   -g  herdr workspace (label; default "agents")  -p  ignored
+#   -a  agent (default codex)                       -d  working folder (worktree or repo)
+#   -o  file prefix: <prefix>.out.md (final answer) / .log / .id (agent session, for -R)
+#   -r  read only (review/investigation)            -R  continue a previous agent session (follow-up)
+#   -m  model (claude: claude-sonnet-5 | codex: gpt-6-sol | opencode: provider/model | antigravity: `agy models` |
+#       copilot: "auto" = plan default)
+#   -e  effort (codex: model_reasoning_effort, default low | opencode: --variant | antigravity: --effort | copilot)
+#   -i  append a file's content to the prompt (repeatable) — for sandboxed agents that can't read outside -d
+#   -b  append the diff of origin/<base>...HEAD to the prompt (use on every review)
+#   -c  Claude account (only -a claude): a name from `claude-accounts`; default ~/.claude
+#   -T  TUI: the agent's own screen in the tab instead of the log (same memory cap, same signal). Every end of turn
+#       (agent hook) writes .out.md/.id/.done and notifies; the screen stays open until the tab closes. With -R and
+#       the tab still open, the follow-up is typed into it (herdr agent prompt); tab closed → reopens the session.
+#       HERDR_AGENT_TUI=1 in the environment makes -T the default.
+# The tab closes by itself HERDR_CLOSE_DELAY s (20) after the end (TUI: when the screen exits); HERDR_KEEP_TAB=1 keeps it.
+set -euo pipefail
+
+A=${AGENT:-codex}; P=""; G=""; T=""; D=""; O=""; M=""; E=""; RO=0; RESUME=""; ACC=""; INC=(); TUI=${HERDR_AGENT_TUI:-0}
+BASEDIFF=""
+while getopts "a:p:g:t:d:o:m:e:c:i:rR:Tb:" f; do
+  case $f in a) A=$OPTARG;; p) P=$OPTARG;; g) G=$OPTARG;; t) T=$OPTARG;; d) D=$OPTARG;; o) O=$OPTARG;;
+    m) M=$OPTARG;; e) E=$OPTARG;; c) ACC=$OPTARG;; i) INC+=("$(realpath "$OPTARG")");; r) RO=1;; R) RESUME=$OPTARG;; T) TUI=1;; b) BASEDIFF=$OPTARG;; *) sed -n '2,21p' "$0"; exit 2;; esac
+done
+shift $((OPTIND - 1)); [ "${1:-}" = "--" ] && shift
+PROMPT=${1:?give the prompt file}
+for v in T D O; do [ -n "${!v}" ] || { echo "missing -$(echo $v | tr A-Z a-z)"; exit 2; }; done
+D=$(cd "$D" && pwd); PROMPT=$(realpath "$PROMPT"); mkdir -p "$(dirname "$O")"; O=$(realpath -m "$O")
+# -b <base>: attaches `git diff origin/<base>...HEAD` (review without running git; required for Antigravity).
+if [ -n "$BASEDIFF" ]; then
+  git -C "$D" diff "origin/$BASEDIFF...HEAD" > "$O.diff" || { echo "could not build the diff against origin/$BASEDIFF"; exit 2; }
+  INC+=("$O.diff")
+fi
+# Follow-ups (-R) reuse the prefix: remove the previous round's result so ".done exists" means "this one finished".
+rm -f "$O.done" "$O.out.md"
+PARENT=${HERDR_PANE_ID:-}
+if [ ${#INC[@]} -gt 0 ]; then
+  { cat "$PROMPT"; for f in "${INC[@]}"; do printf '\n--- %s ---\n' "$(basename "$f")"; cat "$f"; printf '\n--- end of %s ---\n' "$(basename "$f")"; done; } > "$O.prompt.md"
+  PROMPT="$O.prompt.md"
+fi
+q() { printf '%q' "$1"; }
+# -T with -R and the screen still open: the follow-up goes straight into it; the end-of-turn hook writes .done again.
+if [ $TUI = 1 ] && [ -n "$RESUME" ] && [ -s "$O.pane" ] && herdr pane get "$(cat "$O.pane")" >/dev/null 2>&1; then
+  herdr agent prompt "$(cat "$O.pane")" "$(cat "$PROMPT")" >/dev/null
+  echo "[herdr-agent] $T → $(cat "$O.pane") (follow-up typed into the open screen)"; exit 0
+fi
+# Memory cap per agent (own cgroup): if it blows up (e.g. jest with 15 workers), only that agent dies — not everything.
+UNIT="herdr-agent-$(date +%s)-$$"
+# --expand-environment=no: without it systemd-run expands ${...} in its arguments (the prompt!) and wipes JS template
+# strings and GitHub Actions expressions ("Invalid environment variable name..."). Only in systemd >= 254.
+NOEXP=$(systemd-run --help 2>/dev/null | grep -q -- --expand-environment && echo --expand-environment=no)
+CAP="systemd-run --user --scope -q $NOEXP --unit=$UNIT -p MemoryMax=${AGENT_MEM_MAX:-4G} -p MemorySwapMax=1G --"
+MSG="\"\$(cat $(q "$PROMPT"))\""
+
+case $A in
+codex)
+  E=${E:-low}; NOMCP=(-c mcp_servers.plane.enabled=false -c mcp_servers.shadcn.enabled=false)
+  # Codex treats any `.git` inside a writable root as read only, even with --add-dir on the .git itself.
+  # Grant the folders a commit needs (the worktree's gitdir, objects, refs, logs) as separate roots.
+  gitroots() { local gd wg; gd=$(git -C "$D" rev-parse --path-format=absolute --git-common-dir); wg=$(git -C "$D" rev-parse --absolute-git-dir)
+    printf '%s\n' "$wg" "$gd/objects" "$gd/refs" "$gd/logs" | sort -u; }
+  if [ -n "$RESUME" ]; then
+    ROOTS=$(gitroots | jq -Rsc 'split("\n")|map(select(length>0))')
+    CMD=(codex exec resume "$RESUME" -c "model_reasoning_effort=$E" -c "sandbox_workspace_write.writable_roots=$ROOTS")
+  elif [ $RO = 1 ]; then
+    # Review: Codex's read-only sandbox doesn't even let jest write its cache (EROFS). It runs in workspace-write on a
+    # throwaway worktree (detached copy of HEAD, linked node_modules): free to test without touching the real one.
+    RDIR="$D.review-$$"
+    PRE="git -C $(q "$D") worktree add -q --detach $(q "$RDIR") HEAD && { [ ! -e $(q "$D/node_modules") ] || ln -sfn \"\$(readlink -f $(q "$D/node_modules"))\" $(q "$RDIR/node_modules"); }"
+    POST="git -C $(q "$D") worktree remove --force $(q "$RDIR") 2>/dev/null || true"
+    CMD=(codex exec -m "${M:-gpt-6-sol}" -c "model_reasoning_effort=$E" -s workspace-write -C "$RDIR" --skip-git-repo-check)
+  else
+    CMD=(codex exec -m "${M:-gpt-6-sol}" -c "model_reasoning_effort=$E" -s workspace-write -C "$D" --skip-git-repo-check)
+    while read -r r; do CMD+=(--add-dir "$r"); done < <(gitroots)
+  fi
+  CMD+=("${NOMCP[@]}" -o "$O.out.md")
+  RUNLINE="$CAP $(printf '%q ' "${CMD[@]}")$MSG 2>&1 | tee $(q "$O.log")"
+  IDLINE="grep -m1 'session id' $(q "$O.log") | awk '{print \$NF}' > $(q "$O.id") || true"
+  ;;
+opencode)
+  # Permissions via OPENCODE_CONFIG_CONTENT (merged into opencode.json; also turns MCPs off). Headless has nobody to
+  # approve: every "ask" becomes a denial, and the "plan" agent can't even run `git diff` — so reviews don't use it.
+  # Outside the folder only the repo's .git (commits in the worktree), the linked node_modules target and /tmp.
+  # Read (-r): like Codex, a throwaway worktree with bash allowed and the edit tool denied.
+  # Write: --auto approves the rest — that is why implementation only happens in a worktree.
+  GD=$(git -C "$D" rev-parse --path-format=absolute --git-common-dir); NM=$(readlink -f "$D/node_modules" 2>/dev/null || true)
+  if [ $RO = 1 ] && [ -z "$RESUME" ]; then
+    RDIR="$D.review-$$"
+    PRE="git -C $(q "$D") worktree add -q --detach $(q "$RDIR") HEAD && { [ ! -e $(q "$D/node_modules") ] || ln -sfn \"\$(readlink -f $(q "$D/node_modules"))\" $(q "$RDIR/node_modules"); }"
+    POST="git -C $(q "$D") worktree remove --force $(q "$RDIR") 2>/dev/null || true"
+  fi
+  CMD=(opencode run --pure --format json --dir "${RDIR:-$D}")
+  [ -n "$M" ] && CMD+=(-m "$M"); [ -n "$E" ] && CMD+=(--variant "$E")
+  [ -n "$RESUME" ] && CMD+=(-s "$RESUME")
+  [ $RO = 1 ] || CMD+=(--auto)
+  OCCFG=$(jq -nc --arg g "$GD" --arg n "$NM" --argjson ro $RO '
+    {mcp: ({plane:{enabled:false}, shadcn:{enabled:false}, "linear-server":{enabled:false}}),
+     permission: ({bash:"allow", question:"deny", webfetch:"deny",
+       external_directory: ({"*":"deny", ($g+"/*"):"allow", "/tmp/*":"allow"} + (if $n=="" then {} else {($n+"/*"):"allow"} end))}
+       + (if $ro==1 then {edit:"deny"} else {edit:"allow"} end))}')
+  ENVP="env OPENCODE_CONFIG_CONTENT=$(q "$OCCFG")"
+  RUNLINE="$CAP $ENVP $(printf '%q ' "${CMD[@]}")$MSG 2>&1 | tee $(q "$O.log") | jq -r --unbuffered 'if .type==\"text\" then .part.text elif .type==\"tool_use\" then \"· \"+(.part.tool//\"tool\") else empty end' 2>/dev/null"
+  # OpenCode sometimes doesn't exit after its final event (helper processes hold the pipe): a watcher stops the
+  # agent's group when the last event is step_finish/stop and the log has been idle for 30 s.
+  WATCH="( while sleep 10; do systemctl --user is-active -q $UNIT.scope || break; tail -1 $(q "$O.log") 2>/dev/null | jq -e 'select(.type==\"step_finish\" and .part.reason==\"stop\")' >/dev/null 2>&1 && [ \$(( \$(date +%s) - \$(stat -c %Y $(q "$O.log")) )) -ge 30 ] && { echo '[herdr-agent] opencode finished but did not exit; stopping its group'; systemctl --user stop $UNIT.scope; break; }; done ) &"
+  IDLINE="jq -r 'select(.sessionID) .sessionID' $(q "$O.log") | tail -1 > $(q "$O.id"); jq -rs '[.[]|select(.type==\"text\")|.part.text]|last // \"\"' $(q "$O.log") > $(q "$O.out.md")"
+  ;;
+antigravity|agy)
+  # Antigravity CLI (agy). No --dangerously-skip-permissions: --sandbox (restricted terminal) + accept-edits (approves
+  # only edits). Headless denies any command outside agy's own allowlist, so in practice it only reviews. Read: --mode
+  # plan on a throwaway worktree, like Codex/OpenCode. MCPs can't be turned off per run: configured ones start too.
+  A=antigravity
+  if [ $RO = 1 ] && [ -z "$RESUME" ]; then
+    RDIR="$D.review-$$"
+    PRE="git -C $(q "$D") worktree add -q --detach $(q "$RDIR") HEAD && { [ ! -e $(q "$D/node_modules") ] || ln -sfn \"\$(readlink -f $(q "$D/node_modules"))\" $(q "$RDIR/node_modules"); }"
+    POST="git -C $(q "$D") worktree remove --force $(q "$RDIR") 2>/dev/null || true"
+  fi
+  CMD=(agy --output-format stream-json --sandbox)   # no --disable-slash-commands: it cancels --mode
+  [ -n "$M" ] && CMD+=(--model "$M"); [ -n "$E" ] && CMD+=(--effort "$E")
+  [ -n "$RESUME" ] && CMD+=(--conversation "$RESUME")
+  if [ $RO = 1 ]; then CMD+=(--mode plan); else CMD+=(--mode accept-edits --add-dir "$(git -C "$D" rev-parse --path-format=absolute --git-common-dir)"); fi
+  # The prompt goes in a file inside its folder and -p only says "read it" (keeps long prompts and ${...} out of the
+  # command line). The file is excluded from git (info/exclude) and removed at the end.
+  PF=.herdr-agent-prompt.md; AGYP="Read the file $PF (in the current folder, with your file-reading tool): it holds your complete instructions for this task. Follow them. $PF is not part of the code: don't review or edit it."
+  PRE="${PRE:+$PRE && }cp $(q "$PROMPT") $(q "${RDIR:-$D}/$PF") && { grep -qxF $PF \"\$(git -C $(q "${RDIR:-$D}") rev-parse --git-path info/exclude)\" 2>/dev/null || echo $PF >> \"\$(git -C $(q "${RDIR:-$D}") rev-parse --git-path info/exclude)\"; }"
+  POST="rm -f $(q "${RDIR:-$D}/$PF")${POST:+; $POST}"
+  RUNLINE="cd $(q "${RDIR:-$D}") && $CAP $(printf '%q ' "${CMD[@]}")-p $(q "$AGYP") 2>&1 | tee $(q "$O.log") | jq -r --unbuffered 'if .event==\"step_update\" then (.step_update | if .step_type==\"agent_response\" then (.text_delta // empty) elif .step_type==\"tool\" and .state==\"DONE\" then \"\\n· tool\\n\" else empty end) else empty end' 2>/dev/null | tr -d '\\r'"
+  IDLINE="grep '^{' $(q "$O.log") | jq -r 'select(.event==\"result\") .result.conversation_id' | tail -1 > $(q "$O.id"); grep '^{' $(q "$O.log") | jq -rs '[.[]|select(.event==\"result\")|.result.response]|last // \"\"' > $(q "$O.out.md"); if grep -h '^jetski: ' $(q "$O.log") >> $(q "$O.out.md"); then rc=3; fi"  # erro do agy (ex.: comando negado) = falha
+  ;;
+copilot)
+  # Copilot CLI: second opinion, always read only (small allowance). No MCP; allowed tools = git reads.
+  # Anything else is denied by -p without asking. Fixed session UUID for the follow-up (-R).
+  [ $RO = 1 ] || { echo "copilot only runs read only (-r)"; exit 2; }
+  if [ -n "$RESUME" ]; then SID=$RESUME; CMD=(copilot --resume="$SID"); else SID=$(cat /proc/sys/kernel/random/uuid); CMD=(copilot --session-id="$SID"); fi
+  CMD+=(-s -C "$D" --disable-builtin-mcps --disable-mcp-server plane
+        --allow-tool 'shell(git diff:*)' --allow-tool 'shell(git log:*)' --allow-tool 'shell(git show:*)' --deny-tool write)
+  [ -n "$M" ] && [ "$M" != auto ] && CMD+=(--model "$M"); [ -n "$E" ] && CMD+=(--reasoning-effort "$E")
+  RUNLINE="$CAP $(printf '%q ' "${CMD[@]}")-p $MSG 2>$(q "$O.log") | tee $(q "$O.out.md")"
+  IDLINE="echo $SID > $(q "$O.id")"
+  ;;
+claude)
+  # -p headless; stream-json to show live progress; fixed --session-id so the follow-up (-R) can --resume.
+  # Write: --permission-mode auto (classifier); read: plan. No MCP (--strict-mcp-config).
+  CMD=(claude -p --strict-mcp-config --output-format stream-json --verbose)
+  [ -n "$M" ] && CMD+=(--model "$M"); CMD+=(--effort "${E:-low}")
+  if [ -n "$RESUME" ]; then CMD+=(--resume "$RESUME"); SID=$RESUME
+  else SID=$(cat /proc/sys/kernel/random/uuid); CMD+=(--session-id "$SID"); fi
+  ACCENV=""
+  if [ -n "$ACC" ]; then
+    CD=$(claude-accounts "$ACC") || exit 2
+    ACCENV="CLAUDE_CONFIG_DIR=$(q "$CD") "
+  fi
+  if [ $RO = 1 ]; then CMD+=(--permission-mode plan); else CMD+=(--permission-mode auto --add-dir "$(git -C "$D" rev-parse --path-format=absolute --git-common-dir)"); fi
+  # No HERDR_PANE_ID: the child Claude must not report state on the conductor's pane.
+  RUNLINE="$CAP env -u HERDR_PANE_ID $ACCENV$(printf '%q ' "${CMD[@]}")< $(q "$PROMPT") 2>&1 | tee $(q "$O.log") | jq -r --unbuffered 'if .type==\"assistant\" then (.message.content[]? | if .type==\"text\" then .text elif .type==\"tool_use\" then \"· \"+.name else empty end) else empty end' 2>/dev/null"
+  IDLINE="echo $SID > $(q "$O.id"); jq -rs '[.[]|select(.type==\"result\")|.result]|last // \"\"' $(q "$O.log") > $(q "$O.out.md")"
+  ;;
+*) echo "unknown agent: $A (use codex, opencode, claude, antigravity or copilot)"; exit 2;;
+esac
+[ -n "$ACC" ] && [ "$A" != claude ] && { echo "-c only applies to -a claude"; exit 2; }
+
+[ $TUI = 1 ] && { [ $A = antigravity ] || [ $A = copilot ]; } && { echo "-T does not support $A (no end-of-turn hook)"; exit 2; }
+if [ $TUI = 1 ]; then
+  # End-of-turn hook shared by the three: writes answer/session, .done and notifies the conductor (in the background,
+  # so the agent's screen isn't held while herdr-notify waits for the conductor to leave a dialog).
+  HOOK="$O.hook.sh"
+  cat > "$HOOK" <<HK
+#!/usr/bin/env bash
+# herdr-agent -T end of turn (generated). codex: \$2 = notify JSON | claude: JSON on stdin (Stop) | opencode: \$2 id, \$3 text
+O=$(q "$O")
+case \$1 in
+codex) [ "\$(jq -r .type <<<"\$2")" = agent-turn-complete ] || exit 0
+  jq -r '.["last-assistant-message"] // ""' <<<"\$2" > "\$O.out.md"; jq -r '.["thread-id"] // empty' <<<"\$2" > "\$O.id" ;;
+claude) j=\$(cat); [ "\$(jq -r '.stop_hook_active // false' <<<"\$j")" = true ] && exit 0
+  jq -r .session_id <<<"\$j" > "\$O.id"; jq -r '.last_assistant_message // empty' <<<"\$j" > "\$O.out.md"
+  [ -s "\$O.out.md" ] || jq -rs '[.[]|select(.type=="assistant")|.message.content[]?|select(.type=="text")|.text]|last // ""' "\$(jq -r .transcript_path <<<"\$j")" > "\$O.out.md" ;;
+opencode) echo "\$2" > "\$O.id"; mv -f "\$3" "\$O.out.md" ;;
+esac
+st=fail; grep -q "[^[:space:]]" "\$O.out.md" 2>/dev/null && st=ok
+printf "status=%s rc=0 at=%s mode=tui\n" "\$st" "\$(date -Is)" > "\$O.done"
+setsid herdr-notify $(q "$PARENT") "[HERDR-AGENT DONE] $T status=\$st rc=0 answer: $O.out.md" >/dev/null 2>&1 </dev/null &
+exit 0
+HK
+  chmod +x "$HOOK"
+  P0="\"\$(cat $(q "$PROMPT"))\""
+  # The TUI asks "trust this folder?" (headless doesn't): the repo must have been approved beforehand, once, by you.
+  case $A in
+  codex)
+    # TUI without approvals (nobody to approve), same sandbox as exec; notify = end-of-turn hook.
+    TC=(-c "model_reasoning_effort=$E" -s workspace-write -a never "${NOMCP[@]}" -c "notify=$(jq -nc --arg h "$HOOK" '["bash",$h,"codex"]')")
+    if [ -n "$RESUME" ]; then TC=(codex resume "$RESUME" "${TC[@]}" -c "sandbox_workspace_write.writable_roots=$ROOTS")
+    elif [ $RO = 1 ]; then TC=(codex -m "${M:-gpt-6-sol}" "${TC[@]}" -C "$RDIR")
+    else TC=(codex -m "${M:-gpt-6-sol}" "${TC[@]}" -C "$D"); while read -r r; do TC+=(--add-dir "$r"); done < <(gitroots); fi
+    RUNLINE="$CAP $(printf '%q ' "${TC[@]}")$P0" ;;
+  claude)
+    TC=(claude --strict-mcp-config); [ -n "$M" ] && TC+=(--model "$M"); TC+=(--effort "${E:-low}")
+    if [ -n "$RESUME" ]; then TC+=(--resume "$RESUME"); else TC+=(--session-id "$SID"); fi
+    if [ $RO = 1 ]; then TC+=(--permission-mode plan); else TC+=(--permission-mode auto --add-dir "$(git -C "$D" rev-parse --path-format=absolute --git-common-dir)"); fi
+    TC+=(--settings "$(jq -nc --arg c "bash $(q "$HOOK") claude" '{hooks:{Stop:[{hooks:[{type:"command",command:$c}]}]}}')")
+    RUNLINE="$CAP env -u HERDR_PANE_ID $ACCENV$(printf '%q ' "${TC[@]}")$P0" ;;
+  opencode)
+    # End of turn via plugin (session.idle of the main session). No --auto in the TUI: "ask" shows up on screen for you.
+    PLUG="$O.plugin.mjs"
+    cat > "$PLUG" <<JS
+import { writeFileSync } from "fs"; import { spawn } from "child_process";
+let last = "";
+export const HerdrAgentDone = async ({ client }) => ({
+  event: async ({ event }) => {
+    const idle = event.type === "session.idle" || (event.type === "session.status" && event.properties?.status?.type === "idle");
+    if (!idle) return;
+    const id = event.properties.sessionID;
+    const s = await client.session.get({ path: { id } }); if (s.data?.parentID) return;
+    const msgs = ((await client.session.messages({ path: { id } })).data ?? []).filter(m => m.info.role === "assistant");
+    const m = msgs.at(-1); if (!m || m.info.id === last) return; last = m.info.id;
+    const f = $(jq -nc --arg o "$O" '$o+".turn.md"');
+    writeFileSync(f, m.parts.filter(p => p.type === "text").map(p => p.text).join("\\n"));
+    spawn("bash", [$(jq -nc --arg h "$HOOK" '$h'), "opencode", id, f], { detached: true, stdio: "ignore" }).unref();
+  },
+});
+JS
+    OCCFG=$(jq -c --arg p "file://$PLUG" '.plugin = [$p]' <<<"$OCCFG")
+    TC=(opencode "${RDIR:-$D}"); [ -n "$M" ] && TC+=(-m "$M"); [ -n "$RESUME" ] && TC+=(-s "$RESUME")
+    RUNLINE="$CAP env OPENCODE_CONFIG_CONTENT=$(q "$OCCFG") $(printf '%q ' "${TC[@]}")--prompt $P0"
+    WATCH="" ;;
+  esac
+  RUN="$O.run.sh"
+  { echo '#!/usr/bin/env bash'; echo "cd $(q "$D")"; [ -n "${PRE:-}" ] && echo "$PRE"; echo "$RUNLINE"; [ -n "${POST:-}" ] && echo "$POST"
+    echo 'echo; echo "['"$A"' (TUI) exited] answer: '"$O"'.out.md"'; echo '[ "${HERDR_KEEP_TAB:-0}" = 1 ] || { sleep "${HERDR_CLOSE_DELAY:-20}"; herdr tab close "$(herdr pane get "$HERDR_PANE_ID" | jq -r .result.pane.tab_id)" >/dev/null 2>&1; }'; } > "$RUN"
+  chmod +x "$RUN"
+  PANE=$(herdr-tab "${G:-agents}" "$T" "$D" "bash $(q "$RUN")")
+  echo "$PANE" > "$O.pane"; echo "[herdr-agent] $T → $PANE (TUI)"; exit 0
+fi
+
+RUN="$O.run.sh"
+{
+  echo '#!/usr/bin/env bash'
+  echo "cd $(q "$D")"
+  [ -n "${PRE:-}" ] && echo "$PRE"
+  [ -n "${WATCH:-}" ] && echo "$WATCH"
+  echo "$RUNLINE"
+  echo 'rc=${PIPESTATUS[0]}'
+  [ -n "${POST:-}" ] && echo "$POST"
+  echo "$IDLINE"
+  echo 'st=fail; [ "$rc" = 0 ] && grep -q "[^[:space:]]" '"$(q "$O.out.md")"' 2>/dev/null && st=ok   # whitespace-only answer = failure'
+  echo 'printf "status=%s rc=%s at=%s\n" "$st" "$rc" "$(date -Is)" > '"$(q "$O.done")"
+  echo 'herdr-notify '"$(q "$PARENT")"' "[HERDR-AGENT DONE] '"$T"' status=$st rc=$rc answer: '"$O"'.out.md" || true'
+  echo 'echo; echo "['"$A"' finished: exit $rc status=$st] answer: '"$O"'.out.md"'
+  echo '# Close our own tab (the result stays in .out.md/.log). HERDR_KEEP_TAB=1 keeps it open.'
+  echo '[ "${HERDR_KEEP_TAB:-0}" = 1 ] || { sleep "${HERDR_CLOSE_DELAY:-20}"; herdr tab close "$(herdr pane get "$HERDR_PANE_ID" | jq -r .result.pane.tab_id)" >/dev/null 2>&1; }'
+} > "$RUN"
+chmod +x "$RUN"
+
+PANE=$(herdr-tab "${G:-agents}" "$T" "$D" "bash $(q "$RUN")")
+echo "$PANE" > "$O.pane"
+echo "[herdr-agent] $T → $PANE"

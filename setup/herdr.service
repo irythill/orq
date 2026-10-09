@@ -1,0 +1,17 @@
+# herdr server always up: agent panes survive closing the terminal and the conductor/herdr-agent always find the
+# socket. Install: ln -sfn "$PWD/setup/herdr.service" ~/.config/systemd/user/herdr.service
+#   systemctl --user daemon-reload && systemctl --user enable --now herdr
+[Unit]
+Description=herdr server (agent runtime)
+
+[Service]
+ExecStart=%h/.local/bin/herdr server
+ExecStop=%h/.local/bin/herdr server stop
+Restart=on-failure
+RestartSec=3
+# Agents have their own cap (systemd-run --scope in herdr-agent); this protects the server from systemd-oomd.
+OOMScoreAdjust=-500
+ManagedOOMPreference=avoid
+
+[Install]
+WantedBy=default.target

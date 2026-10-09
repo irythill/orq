@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""orq-stats — agent scoreboard from the .orquestra/ history (what each agent delivered and what it cost).
+
+  orq-stats [-w <workspace>] [--days N] [--json]
+
+Per run (<prefix>.run.sh + .log + .done + .out.md): agent, model, role (impl | fix | review | other), status,
+duration, tokens. "New" tokens = excluding cache reads (what actually weighs on quota); Codex without a session
+file only reports the total.
+Implementation delivery = the first review of the same repo in the issue said APPROVED.
+Limitation: follow-ups (-R) reuse the implementation prefix, so the "impl" row shows the last round of that prefix.
+"""
+import json
+import re
+import subprocess
+import sys
+import time
+from collections import defaultdict
+from pathlib import Path
+from statistics import median
+
+ROLE = re.compile(r"^(impl|fix\d*|review\d*|[a-z]+-review\d*)-?")
+
+
+def agent_model(run: str, log: str):
+    m = re.search(r"\b(codex exec|codex resume|codex|claude -p|claude|opencode run|opencode|agy)\b", run)
+    agent = {"agy": "antigravity"}.get(m.group(1).split()[0], m.group(1).split()[0]) if m else "?"
+    mm = re.search(r"(?:\s-m|--model)\s+'?([^\s']+)", run)
+    model = mm.group(1) if mm else None
+    if agent == "codex" and not model:
+        lm = re.search(r"^model: (\S+)", log, re.M)
+        model = lm.group(1) if lm else "default"
+    return agent, (model or "default").split("/")[-1]
+
+
+def tokens(agent: str, log: str, sid: str = ""):
+    """(new, total) — new excludes cache reads."""
+    new = tot = 0
+    if agent == "codex":
+        # The Codex session (~/.codex/sessions/.../rollout-*-<id>.jsonl) has usage with cache split out.
+        if sid:
+            for f in Path.home().glob(f".codex/sessions/*/*/*/rollout-*-{sid}.jsonl"):
+                last = None
+                for line in f.read_text(errors="replace").splitlines():
+                    if '"total_token_usage"' in line:
+                        last = line
+                if last:
+                    u = json.loads(re.search(r'"total_token_usage":(\{[^}]*\})', last).group(1))
+                    return u["total_tokens"] - u.get("cached_input_tokens", 0), u["total_tokens"]
+        m = re.findall(r"tokens used\s*\n\s*([\d,]+)", log)
+        if m:
+            tot = new = int(m[-1].replace(",", ""))
+        return new, tot
+    for line in log.splitlines():
+        if not line.startswith("{"):
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if agent == "claude" and e.get("type") == "result":
+            u = e.get("usage") or {}
+            cr = u.get("cache_read_input_tokens", 0)
+            n = u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0) + u.get("output_tokens", 0)
+            new, tot = n, n + cr
+        elif agent == "opencode" and e.get("type") == "step_finish":
+            t = (e.get("part") or {}).get("tokens") or {}
+            cr = (t.get("cache") or {}).get("read", 0)
+            new += t.get("total", 0) - cr
+            tot += t.get("total", 0)
+        elif agent == "antigravity" and e.get("event") == "result":
+            u = (e.get("result") or {}).get("usage") or {}
+            cr = u.get("cache_read_tokens", 0)
+            new, tot = u.get("total_tokens", 0), u.get("total_tokens", 0) + cr   # agy's total excludes cache
+    return new, tot
+
+
+def collect(ws: Path, days: int):
+    cutoff = time.time() - days * 86400
+    runs = []
+    for run in ws.glob(".orquestra/*/*.run.sh"):
+        pre = run.with_suffix("").with_suffix("")
+        done = Path(f"{pre}.done")
+        if run.stat().st_mtime < cutoff or not done.exists():
+            continue
+        txt = run.read_text(errors="replace")
+        if "herdr-verify" in txt or "herdr-baseline" in txt:
+            continue
+        log = Path(f"{pre}.log").read_text(errors="replace") if Path(f"{pre}.log").exists() else ""
+        agent, model = agent_model(txt, log)
+        name = pre.name
+        rm = ROLE.match(name)
+        role = "review" if rm and "review" in rm.group(1) else ("fix" if name.startswith("fix") or "-R " in txt
+                                                                 or " resume " in txt or "--resume" in txt else
+                                                                 ("impl" if name.startswith("impl") else "other"))
+        st = done.read_text()
+        out = Path(f"{pre}.out.md")
+        idf = Path(f"{pre}.id")
+        new, tot = tokens(agent, log, idf.read_text().strip() if idf.exists() else "")
+        runs.append(dict(issue=pre.parent.name, name=name, agent=agent, model=model, role=role,
+                         ok="status=ok" in st and out.exists() and out.read_text(errors="replace").strip() != "",
+                         secs=max(0, int(done.stat().st_mtime - run.stat().st_mtime)), new=new, tot=tot,
+                         repo=name.split("-", 1)[1] if "-" in name else ""))
+    # Implementation delivery: the first review of the same repo in the issue.
+    for r in runs:
+        if r["role"] != "impl":
+            continue
+        rv = Path(ws, ".orquestra", r["issue"], f"review-{r['repo']}.out.md")
+        if rv.exists():
+            t = rv.read_text(errors="replace")[:4000].upper()
+            # "non-blocking suggestion" shows up in approved reviews: the verdict is the word APPROVED (APROVADO in older runs).
+            r["approved"] = ("APPROVED" in t or "APROVADO" in t) and not any(x in t for x in ("NOT APPROVED", "REPROVADO", "NÃO APROVADO"))
+    return runs
+
+
+def fmt_k(n):
+    return f"{n/1000:.0f}k" if n >= 1000 else str(n)
+
+
+def main(argv):
+    # Default workspace: orq-config's (nearest .orq/ upwards), else the current folder.
+    cfg_ws = subprocess.run([str(Path(__file__).resolve().parent / "orq-config"), "get", "_workspace"],
+                            capture_output=True, text=True).stdout.strip()
+    ws, days, as_json = Path(cfg_ws) if cfg_ws not in ("", "null") else Path.cwd(), 30, False
+    while argv:
+        a = argv.pop(0)
+        if a == "-w":
+            ws = Path(argv.pop(0)).expanduser()
+        elif a == "--days":
+            days = int(argv.pop(0))
+        elif a == "--json":
+            as_json = True
+    runs = collect(ws, days)
+    groups = defaultdict(list)
+    for r in runs:
+        groups[(r["role"], r["agent"], r["model"])].append(r)
+    rows = []
+    for (role, agent, model), rs in sorted(groups.items()):
+        withtok = [r for r in rs if r["tot"]]
+        appr = [r["approved"] for r in rs if "approved" in r]
+        rows.append(dict(role=role, agent=agent, model=model, n=len(rs),
+                         ok=round(100 * sum(r["ok"] for r in rs) / len(rs)),
+                         approved=round(100 * sum(appr) / len(appr)) if appr else None, n_appr=len(appr),
+                         min=round(median(r["secs"] for r in rs) / 60, 1),
+                         new=int(median(r["new"] for r in withtok)) if withtok else None,
+                         tot=int(median(r["tot"] for r in withtok)) if withtok else None))
+    if as_json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    print(f"Scoreboard for the last {days} days in {ws} ({len(runs)} runs; medians per run)\n")
+    hdr = f"{'role':7} {'agent':12} {'model':22} {'n':>4} {'ok%':>5} {'approved%':>12} {'min':>6} {'new tok':>10} {'total tok':>10}"
+    print(hdr); print("-" * len(hdr))
+    for x in sorted(rows, key=lambda x: (["impl", "fix", "review", "other"].index(x["role"]), -x["n"])):
+        ap = f"{x['approved']}% ({x['n_appr']})" if x["approved"] is not None else "-"
+        print(f"{x['role']:7} {x['agent']:12} {x['model'][:22]:22} {x['n']:>4} {x['ok']:>5} {ap:>12} {x['min']:>6} "
+              f"{fmt_k(x['new']) if x['new'] is not None else '-':>10} {fmt_k(x['tot']) if x['tot'] is not None else '-':>10}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

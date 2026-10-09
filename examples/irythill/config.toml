@@ -1,0 +1,90 @@
+# ~/.config/orq/config.toml — a real example (irythill). Copy it and adjust: nothing here is mandatory for anyone else.
+
+[machine]
+agent_mem_max = "4G"      # 14 GB of RAM and 3–5 tasks in parallel
+test_mem_max  = "6G"
+test_slots    = 1
+close_tab_after = 20
+
+# ---------------------------------------------------------------------------------------------------------------
+# Agents. Only the ones declared here exist for orq. Fields:
+#   vendor   provider (cross review requires a vendor different from the implementer's)
+#   roles    what the agent may do: impl | fix | review | opinion   (the conductor model stays out of here)
+#   quota    name(s) in `agent-quota` output whose quota limits this agent
+#   models.<role>.<level>  "model[@effort]"; level = simple | medium | heavy | default
+#   prior    starting score (0–1) while the history has few runs
+#   reserve  true = only when the others don't fit (e.g. it shares quota with the conductor)
+# ---------------------------------------------------------------------------------------------------------------
+[agents.codex]
+vendor = "openai"
+roles  = ["impl", "fix", "review"]
+quota  = ["codex"]
+prior  = 0.8
+[agents.codex.models.impl]
+simple = "gpt-6-sol@low"
+medium = "gpt-6-sol@low"
+heavy  = "gpt-6.1-sol@medium"
+[agents.codex.models.review]
+default = "gpt-6-sol@low"
+heavy   = "gpt-6.1-sol@low"
+
+[agents.claude]
+vendor = "anthropic"
+roles  = ["impl", "fix", "review"]
+quota  = ["work", "personal"]   # accounts from `claude-accounts`; the least used one is suggested
+prior  = 0.8
+reserve = true            # shares quota with the conductors (Opus): only when the others don't fit
+[agents.claude.models.impl]
+default = "claude-sonnet-5@low"
+heavy   = "claude-sonnet-5@medium"
+[agents.claude.models.review]
+default = "claude-sonnet-5@low"
+
+[agents.opencode]
+vendor = "minimax"
+roles  = ["review"]       # implementing hit bottlenecks and spent ~10x the tokens
+quota  = ["opencode"]
+prior  = 0.7
+[agents.opencode.models.review]
+default = "minimax/MiniMax-M3"
+
+[agents.antigravity]
+vendor = "google"
+roles  = ["review"]       # headless denies commands outside its allowlist: it only reads (diff attached)
+quota  = ["antigravity"]
+prior  = 0.6
+[agents.antigravity.models.review]
+default = "gemini-3.8-flash-high"
+heavy   = "gemini-3.1-pro-high"
+
+[agents.copilot]
+vendor = "github"
+roles  = ["opinion"]      # small Pro allowance: second opinion on heavy issues or when impl and review disagree
+quota  = ["copilot"]
+prior  = 0.6
+[agents.copilot.models.opinion]
+default = "auto"          # "auto" = the plan's default model
+
+# ---------------------------------------------------------------------------------------------------------------
+# Pick policy (orq-pick). Each candidate's score:
+#   quality * delivery + tokens * economy + speed * quickness − rotation * (times picked in the last `window` picks)
+#   delivery  = impl: approved on the first review; review/opinion: answered (status ok with text)
+#   economy   = the lowest median of new tokens among candidates ÷ this candidate's (1 = the cheapest)
+#   quickness = the same, with the median duration
+# With fewer than `min_samples` runs, delivery/economy/quickness use `prior` and the candidate gets the `explore` bonus.
+# ---------------------------------------------------------------------------------------------------------------
+[policy]
+quota_limit = 90          # ≥ this (5h or weekly) → candidate out
+max_rounds  = 2
+review      = "other-vendor"   # other-vendor | any
+history_days = 30
+
+[policy.weights]
+quality  = 0.40
+tokens   = 0.45           # 3–5 tasks in parallel: saving tokens is the priority
+speed    = 0.15
+rotation = 0.20
+reserve  = 0.30           # penalty for agents with reserve = true
+explore  = 0.10
+min_samples = 8
+window      = 6

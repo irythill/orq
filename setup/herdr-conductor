@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Opens the conductor (Claude) in the current herdr pane, with the conductor instructions and the chosen account/model.
+# Must run INSIDE herdr: its pane is what receives the children's [HERDR-AGENT DONE] notices.
+#
+#   herdr-conductor                    # default account (~/.claude), Claude's default model
+#   herdr-conductor work               # an account from `claude-accounts`
+#   herdr-conductor work opus          # account + model (sonnet | opus | haiku | full id)
+#   herdr-conductor - opus             # model only ("-" = default account)
+#
+# Workspace: the current folder if it has .orquestra-conductor.md (created by new-conductor.sh); otherwise CONDUCTOR_WS.
+# The session name is conductor-<workspace folder>.
+set -euo pipefail
+if [ -f "$PWD/.orquestra-conductor.md" ]; then WS=$PWD
+else WS=${CONDUCTOR_WS:?"no .orquestra-conductor.md here: cd into a workspace (see new-conductor.sh) or set CONDUCTOR_WS"}; fi
+F=${CONDUCTOR_FILE:-$WS/.orquestra-conductor.md}
+[ "${HERDR_ENV:-}" = 1 ] || { echo "run it inside a herdr pane (open 'herdr' and call herdr-conductor there)"; exit 2; }
+[ -f "$F" ] || { echo "conductor instructions not found: $F"; exit 2; }
+
+ACC=${1:-}; MODEL=${2:-}
+case $MODEL in
+  sonnet) MODEL=claude-sonnet-5 ;;
+  opus)   MODEL=claude-opus-5-5 ;;
+  haiku)  MODEL=claude-haiku-4-5-20251001 ;;
+esac
+ENVV=()
+if [ -n "$ACC" ] && [ "$ACC" != "-" ]; then
+  CD=$(claude-accounts "$ACC") || exit 1
+  ENVV=(CLAUDE_CONFIG_DIR="$CD")
+fi
+
+herdr pane rename "$HERDR_PANE_ID" conductor >/dev/null 2>&1 || true
+cd "$WS"
+exec env "${ENVV[@]}" claude -n "conductor-$(basename "$WS")" ${MODEL:+--model "$MODEL"} --append-system-prompt "$(cat "$F")"
