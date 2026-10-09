@@ -58,11 +58,22 @@ curl -fsSL https://herdr.dev/install.sh -o /tmp/herdr-install.sh && less /tmp/he
 
 # 2. orq
 git clone https://github.com/irythill/orq ~/Code/orq && cd ~/Code/orq
-./install.sh            # 🚧 links in ~/.local/bin, herdr service, skills for Claude
+./install.sh            # links in ~/.local/bin, herdr service, skills for Claude
 ```
 
-Then, inside Claude: **`/orq-setup`** 🚧 — it detects the installed agents, tests each one headless, asks about
-accounts, repos, base branches and verification commands, and writes the two configs below. Plane:
+`install.sh` checks the requirements (table of what's found and missing), then **symlinks** (never copies) the
+scripts into `~/.local/bin`, `setup/herdr.service` into `~/.config/systemd/user/` (and enables it), and every skill
+into `~/.claude/skills/` plus each account folder listed in `~/.config/claude-accounts`. Idempotent: re-run it after
+a `git pull` or a new account. It never overwrites a real file (warns and skips) and never writes your config.
+
+| Flag | What it does |
+|---|---|
+| `--dry-run` | print what it would do, change nothing |
+| `--uninstall` | remove only the links it creates, and only those pointing into this repo (config and history stay) |
+
+Then, inside Claude: **`/orq-setup`** — it detects the installed agents, tests each one headless, asks about roles,
+models, accounts, repos, base branches and verification commands, writes `~/.config/orq/config.toml` and fills the
+workspace `CLAUDE.md`. Plane:
 [docs/plane.md](docs/plane.md).
 
 ## Configuration
@@ -138,7 +149,7 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 | Skill | What for | Status |
 |---|---|---|
 | `/issue <ID>` | Full flow: issue → implementation → tests → review → Plane | ready |
-| `/orq-setup` | Guided setup: agents, accounts, repos, verification | 🚧 |
+| `/orq-setup` | Guided setup: agents, accounts, repos, verification | ready |
 | `/review <PR or branch>` | Cross review of something finished (e.g. a teammate's PR), no implementation | 🚧 |
 | `/investigate <question>` | A read-only agent investigates a bug or piece of code and reports | 🚧 |
 | `/orq-status` | Summary in chat: queue, running agents, scoreboard and quota | 🚧 |
