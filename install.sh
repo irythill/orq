@@ -108,7 +108,7 @@ for c in git jq python3 node npm; do
   else row "${R}MISSING${N}" "$c" "$(m "required: install it with your package manager" "obrigatório: instale pelo gerenciador de pacotes")"; ERRORS=$((ERRORS + 1)); fi
 done
 if command -v node >/dev/null; then
-  if node -e 'process.exit(+process.versions.node.split(".")[0] < 20)'; then row "${G}ok${N}" "node >= 20" "$(node -v)"
+  if node -e 'process.exit(+process.versions.node.split(".")[0] < 20 ? 1 : 0)'; then row "${G}ok${N}" "node >= 20" "$(node -v)"
   else row "${R}MISSING${N}" "node >= 20" "$(node -v): $(m "too old, update it" "antigo demais, atualize")"; ERRORS=$((ERRORS + 1)); fi
 fi
 if command -v python3 >/dev/null; then
