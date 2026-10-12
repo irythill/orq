@@ -51,8 +51,8 @@ You declare only the ones you have, and the roles each may take.
 
 Linux or **Windows with WSL2** (Ubuntu 22.04+ with systemd enabled). macOS: no per-agent memory cap.
 
-**Requirements:** `git`, `jq`, `python3` (3.11+ for TOML config; older → JSON config or `pip install --user tomli`),
-user `systemd`, Node if your repos are JS/TS, and at least one agent from the table above, logged in.
+**Requirements:** `git`, `jq`, Node 20+ with `npm` (the `orq` CLI is built on install), `python3` (3.11+ for TOML config; older → JSON config or `pip install --user tomli`),
+user `systemd`, and at least one agent from the table above, logged in.
 
 ```bash
 # 1. herdr (tested on 0.9.3)
@@ -63,7 +63,7 @@ git clone https://github.com/irythill/orq ~/Code/orq && cd ~/Code/orq
 ./install.sh            # links in ~/.local/bin, herdr service, skills for Claude
 ```
 
-`install.sh` checks the requirements (table of what's found and missing), then **symlinks** (never copies) the
+`install.sh` checks the requirements (table of what's found and missing), builds the `orq` CLI (`src/` → `dist/`), then **symlinks** (never copies) the
 scripts into `~/.local/bin`, `setup/herdr.service` into `~/.config/systemd/user/` (and enables it), and every skill
 into `~/.claude/skills/` plus each account folder listed in `~/.config/claude-accounts`. Idempotent: re-run it after
 a `git pull` or a new account. It never overwrites a real file (warns and skips) and never writes your config.
@@ -183,7 +183,8 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 | `herdr-claim` | Owner of each issue among conductors |
 | `herdr-deps` | Links the worktree's dependencies to the main repo's (no reinstall) |
 | `herdr-baseline` | Manual snapshot of the tests failing on the base (outside the flow) |
-| `agent-quota` | Current quota of each agent and account |
+| `orq <config\|set\|lang\|block\|quota>` | The cross-platform CLI (TypeScript); the `orq-*` and `agent-quota` names below call it |
+| `agent-quota` | Current quota of each agent and account; on a failed reading, the last good one until its window resets |
 | `orq-config` · `orq-pick` · `orq-stats` · `orq-block` | Configuration, agent pick, scoreboard, manual blocks |
 | `orq-lang` | Shows or switches the language of orq's messages (en/pt) |
 | `orq-set <section> <key> <value>` | Writes one value into your orq config (e.g. `orq-set ui theme lcd`) |
@@ -196,6 +197,8 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 - [docs/herdr.md](docs/herdr.md) — herdr day to day, shortcuts, several issues at once
 - [docs/troubleshooting.md](docs/troubleshooting.md) — known problems and fixes
 - [docs/omarchy.md](docs/omarchy.md) — extras for Omarchy users
+- [docs/portability.md](docs/portability.md) — the plan for Linux, macOS and native Windows
+- [CHANGELOG.md](CHANGELOG.md) — what changed, release by release
 - `examples/` — real configurations to copy
 
 ## License

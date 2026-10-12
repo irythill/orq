@@ -52,8 +52,8 @@ Você declara só os que tem, e os papéis que cada um pode assumir.
 
 Linux ou **Windows com WSL2** (Ubuntu 22.04+ com systemd habilitado). macOS: sem limite de memória por agente.
 
-**Requisitos:** `git`, `jq`, `python3` (3.11+ para config em TOML; mais antigo → config em JSON ou
-`pip install --user tomli`), `systemd` de usuário, Node se seus repos forem JS/TS, e pelo menos um agente da tabela
+**Requisitos:** `git`, `jq`, Node 20+ com `npm` (o CLI `orq` é compilado na instalação), `python3` (3.11+ para config em TOML; mais antigo → config em JSON ou
+`pip install --user tomli`), `systemd` de usuário, e pelo menos um agente da tabela
 acima, logado.
 
 ```bash
@@ -65,7 +65,7 @@ git clone https://github.com/irythill/orq ~/Code/orq && cd ~/Code/orq
 ./install.sh            # links in ~/.local/bin, herdr service, skills for Claude
 ```
 
-O `install.sh` confere os requisitos (tabela do que foi encontrado e do que falta) e depois cria **symlinks** (nunca
+O `install.sh` confere os requisitos (tabela do que foi encontrado e do que falta), compila o CLI `orq` (`src/` → `dist/`) e depois cria **symlinks** (nunca
 copia) dos scripts em `~/.local/bin`, do `setup/herdr.service` em `~/.config/systemd/user/` (e habilita o serviço), e
 de cada skill em `~/.claude/skills/` e em cada pasta de conta listada em `~/.config/claude-accounts`. É idempotente:
 rode de novo depois de um `git pull` ou de uma conta nova. Nunca sobrescreve um arquivo de verdade (avisa e pula) e
@@ -185,7 +185,8 @@ dois conductors peguem a mesma issue. Detalhes, atalhos e cenários: [docs/pt-BR
 | `herdr-claim` | Dono de cada issue entre os conductors |
 | `herdr-deps` | Liga as dependências do worktree às do repo principal (sem reinstalar) |
 | `herdr-baseline` | Snapshot manual dos testes que falham na base (fora do fluxo) |
-| `agent-quota` | Quota atual de cada agente e conta |
+| `orq <config\|set\|lang\|block\|quota>` | O CLI multiplataforma (TypeScript); os nomes `orq-*` e `agent-quota` abaixo chamam ele |
+| `agent-quota` | Quota atual de cada agente e conta; se a leitura falha, vale a última boa até a janela resetar |
 | `orq-config` · `orq-pick` · `orq-stats` · `orq-block` | Configuração, escolha de agente, placar, bloqueios manuais |
 | `orq-lang` | Mostra ou troca o idioma das mensagens do orq (en/pt) |
 | `orq-set <seção> <chave> <valor>` | Grava um valor na sua config do orq (ex.: `orq-set ui theme lcd`) |
@@ -198,6 +199,8 @@ dois conductors peguem a mesma issue. Detalhes, atalhos e cenários: [docs/pt-BR
 - [docs/pt-BR/herdr.md](docs/pt-BR/herdr.md) — herdr no dia a dia, atalhos, várias issues ao mesmo tempo
 - [docs/pt-BR/troubleshooting.md](docs/pt-BR/troubleshooting.md) — problemas conhecidos e soluções
 - [docs/pt-BR/omarchy.md](docs/pt-BR/omarchy.md) — extras para quem usa Omarchy
+- [docs/pt-BR/portability.md](docs/pt-BR/portability.md) — o plano para Linux, macOS e Windows nativo
+- [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md) — o que mudou, versão a versão
 - `examples/` — configurações reais para copiar
 
 ## Licença
