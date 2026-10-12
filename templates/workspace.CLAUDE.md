@@ -5,7 +5,7 @@ rules — read the repo's own before touching it. This file only holds the map a
 
 ## Orchestration (read by the `/issue` skill)
 - **Workspace:** `{{WORKSPACE}}`
-- **Conductor (herdr):** opened with `herdr-conductor [account] [model]` in a herdr pane, in this folder
+- **Conductor (herdr):** opened with `herdr-conductor [account] [model] [-r <session-id>]` in a herdr pane, in this folder
   (instructions in `.orquestra-conductor.md`); the **Group** in the table below is the herdr workspace (`-g`).
   Tests from the Verification column (jest/vitest) **don't run in the child**: the conductor runs `herdr-verify`
   (one at a time on the machine); the child does lint + `tsc` (`NODE_OPTIONS=--max-old-space-size=2048`).

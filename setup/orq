@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# orq — the TypeScript CLI (src/, built to dist/ by install.sh). On any OS without bash: npm i -g, then `orq`.
+exec node "$(dirname "$(realpath "$0")")/../dist/cli.js" "$@"

@@ -170,7 +170,7 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 | `/orq-setup` | Guided setup: agents, accounts, repos, verification | ready |
 | `/review <PR or branch>` | Cross review of something finished (e.g. a teammate's PR), no implementation | 🚧 |
 | `/investigate <question>` | A read-only agent investigates a bug or piece of code and reports | 🚧 |
-| `/orq-status` | Summary in chat: queue, running agents, scoreboard and quota | 🚧 |
+| `/orq-status` | Summary in chat: queue, running agents, scoreboard and quota | ready |
 
 ## Commands
 

@@ -60,7 +60,7 @@ unlink_ours() {
 # --- what we link -------------------------------------------------------------------------------------------------
 scripts() {
   local f
-  for f in "$ROOT"/setup/herdr-* "$ROOT"/setup/agent-quota "$ROOT"/setup/claude-accounts "$ROOT"/setup/orq-*; do
+  for f in "$ROOT"/setup/herdr-* "$ROOT"/setup/agent-quota "$ROOT"/setup/claude-accounts "$ROOT"/setup/orq "$ROOT"/setup/orq-*; do
     [ -f "$f" ] && [ -x "$f" ] && echo "$f"
   done
 }
@@ -103,10 +103,14 @@ say "${B}$(m "orq install" "instalação do orq")${N} (repo: $ROOT)$([ "$DRY" = 
 say ""
 say "${B}$(m requirements "pré-requisitos")${N}"
 ERRORS=0
-for c in git jq python3; do
+for c in git jq python3 node npm; do
   if command -v "$c" >/dev/null; then row "${G}ok${N}" "$c" "$(command -v "$c")"
   else row "${R}MISSING${N}" "$c" "$(m "required: install it with your package manager" "obrigatório: instale pelo gerenciador de pacotes")"; ERRORS=$((ERRORS + 1)); fi
 done
+if command -v node >/dev/null; then
+  if node -e 'process.exit(+process.versions.node.split(".")[0] < 20)'; then row "${G}ok${N}" "node >= 20" "$(node -v)"
+  else row "${R}MISSING${N}" "node >= 20" "$(node -v): $(m "too old, update it" "antigo demais, atualize")"; ERRORS=$((ERRORS + 1)); fi
+fi
 if command -v python3 >/dev/null; then
   pyv=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
   if python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then row "${G}ok${N}" "python TOML" "python $pyv (tomllib)"
@@ -129,8 +133,20 @@ done
 [ "$AGENTS" = 0 ] && warn "$(m "no agent CLI found: install and log in to at least one (claude is needed for the conductor)" "nenhum agente encontrado: instale e faça login em pelo menos um (o claude é necessário para o conductor)")"
 command -v claude >/dev/null || warn "$(m "claude not found: the conductor and /orq-setup run inside Claude Code" "claude não encontrado: o conductor e o /orq-setup rodam dentro do Claude Code")"
 if [ "$ERRORS" -gt 0 ]; then
-  echo "${R}$(m error erro)${N}: $(m "$ERRORS required tool(s) missing (git, jq, python3). Install them and re-run." "faltam $ERRORS ferramenta(s) obrigatória(s) (git, jq, python3). Instale e rode de novo.")" >&2
+  echo "${R}$(m error erro)${N}: $(m "$ERRORS required tool(s) missing (git, jq, python3, node >= 20, npm). Install them and re-run." "faltam $ERRORS ferramenta(s) obrigatória(s) (git, jq, python3, node >= 20, npm). Instale e rode de novo.")" >&2
   exit 1
+fi
+
+# --- orq CLI (TypeScript) -----------------------------------------------------------------------------------------
+# Built into dist.new and swapped in with mv: scripts in use never see a half-built dist/.
+say ""
+say "${B}$(m "orq CLI (build)" "CLI do orq (build)")${N}"
+if [ "$DRY" = 1 ]; then echo "  [dry-run] npm ci && tsc --outDir dist.new && mv dist.new dist"
+elif (cd "$ROOT" && npm ci --no-audit --no-fund --loglevel=error >/dev/null && rm -rf dist.new       && npx --no-install tsc --outDir dist.new); then
+  rm -rf "$ROOT/dist.old"; [ -d "$ROOT/dist" ] && mv "$ROOT/dist" "$ROOT/dist.old"; mv "$ROOT/dist.new" "$ROOT/dist"; rm -rf "$ROOT/dist.old"
+  echo "  ok      $ROOT/dist"
+else
+  echo "${R}$(m error erro)${N}: $(m "build failed (see above)" "o build falhou (veja acima)")" >&2; exit 1
 fi
 
 # --- scripts ------------------------------------------------------------------------------------------------------

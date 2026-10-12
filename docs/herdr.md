@@ -19,7 +19,8 @@ herdr                                        # opens the window (the server is a
 Inside herdr:
 1. Create the conductor's space: `prefix Shift+C`, then `prefix Shift+R` and name it (e.g. `acme-1`).
 2. In its pane: `agent-quota` to see which account has room, then
-   `cd ~/Code/acme-platform && herdr-conductor work opus` (account and model).
+   `cd ~/Code/acme-platform && herdr-conductor work opus` (account and model). After a reboot, add `-r <session-id>`
+   to resume the same conversation with the same account and instructions.
 3. The first time on an account, Claude asks whether you trust the folder → *Yes*.
 4. Send `/issue DEMO-123`. The conductor claims the issue, creates the worktree, dispatches the child and stops (one
    line of answer).

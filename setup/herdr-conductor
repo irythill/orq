@@ -6,6 +6,7 @@
 #   herdr-conductor work               # an account from `claude-accounts`
 #   herdr-conductor work opus          # account + model (sonnet | opus | haiku | full id)
 #   herdr-conductor - opus             # model only ("-" = default account)
+#   herdr-conductor work opus -r <id>  # resume that conversation (e.g. after a reboot), same account and instructions
 #
 # Workspace: the current folder if it has .orquestra-conductor.md (created by new-conductor.sh); otherwise CONDUCTOR_WS.
 # The session name is conductor-<workspace folder>.
@@ -17,7 +18,9 @@ F=${CONDUCTOR_FILE:-$WS/.orquestra-conductor.md}
 [ "${HERDR_ENV:-}" = 1 ] || { echo "$(m "run it inside a herdr pane (open 'herdr' and call herdr-conductor there)" "rode dentro de um pane do herdr (abra o 'herdr' e chame o herdr-conductor lá)")"; exit 2; }
 [ -f "$F" ] || { echo "$(m "conductor instructions not found" "instruções do conductor não encontradas"): $F"; exit 2; }
 
-ACC=${1:-}; MODEL=${2:-}
+RESUME=""; ARGS=()
+while [ $# -gt 0 ]; do case $1 in -r|--resume) RESUME=${2:?"$(m "give the session id" "informe o id da sessão")"}; shift 2 ;; *) ARGS+=("$1"); shift ;; esac; done
+ACC=${ARGS[0]:-}; MODEL=${ARGS[1]:-}
 case $MODEL in
   sonnet) MODEL=claude-sonnet-5 ;;
   opus)   MODEL=claude-opus-5-5 ;;
@@ -31,4 +34,4 @@ fi
 
 herdr pane rename "$HERDR_PANE_ID" conductor >/dev/null 2>&1 || true
 cd "$WS"
-exec env "${ENVV[@]}" claude -n "conductor-$(basename "$WS")" ${MODEL:+--model "$MODEL"} --append-system-prompt "$(cat "$F")"
+exec env "${ENVV[@]}" claude ${RESUME:+--resume "$RESUME"} -n "conductor-$(basename "$WS")" ${MODEL:+--model "$MODEL"} --append-system-prompt "$(cat "$F")"

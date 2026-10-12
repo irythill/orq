@@ -20,7 +20,8 @@ herdr                                        # opens the window (the server is a
 Dentro do herdr:
 1. Crie o space do conductor: `prefix Shift+C`, depois `prefix Shift+R` e dê um nome (ex.: `acme-1`).
 2. No pane dele: `agent-quota` para ver qual conta tem folga, depois
-   `cd ~/Code/acme-platform && herdr-conductor work opus` (conta e modelo).
+   `cd ~/Code/acme-platform && herdr-conductor work opus` (conta e modelo). Depois de um reboot, acrescente
+   `-r <id-da-sessão>` para retomar a mesma conversa, com a mesma conta e as mesmas instruções.
 3. Na primeira vez numa conta, o Claude pergunta se você confia na pasta → *Yes*.
 4. Mande `/issue DEMO-123`. O conductor reivindica a issue, cria o worktree, despacha o filho e para (uma linha de
    resposta).

@@ -151,8 +151,8 @@ O que já está rodando continua no idioma em que começou. Os conductors sempre
 ## Uso diário
 
 ```bash
-herdr                                    # opens the window (the server runs as a service)
-cd ~/Code/<workspace> && herdr-conductor # inside a herdr pane: opens the conductor (account and model optional)
+herdr                                    # abre a janela (o servidor roda como serviço)
+cd ~/Code/<workspace> && herdr-conductor # dentro de um pane do herdr: abre o conductor (conta e modelo opcionais)
 ```
 No conductor: **`/issue DEMO-123`**. Ele responde numa linha e segue sozinho a cada `[HERDR-AGENT DONE]`. Você só volta
 quando ele pede uma decisão ou avisa que terminou.
@@ -172,7 +172,7 @@ dois conductors peguem a mesma issue. Detalhes, atalhos e cenários: [docs/pt-BR
 | `/orq-setup` | Setup guiado: agentes, contas, repos, verificação | pronta |
 | `/review <PR or branch>` | Review cruzada de algo pronto (ex.: PR de um colega), sem implementação | 🚧 |
 | `/investigate <question>` | Um agente só-leitura investiga um bug ou trecho de código e reporta | 🚧 |
-| `/orq-status` | Resumo no chat: fila, agentes rodando, placar e quota | 🚧 |
+| `/orq-status` | Resumo no chat: fila, agentes rodando, placar e quota | pronta |
 
 ## Comandos
 
