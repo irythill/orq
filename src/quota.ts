@@ -1,6 +1,10 @@
 // Quota per agent/account, from the sources in the [quota] config section:
 //   "builtin"            claude: the account's usage (Anthropic OAuth usage endpoint, same login Claude Code uses)
 //                        codex:  the rate_limits Codex writes into its latest session file
+//                        antigravity: per-model quota from Cloud Code (fetchAvailableModels), with the login agy keeps
+//                                 in the system keyring (Linux: Secret Service via secret-tool)
+//                        copilot: premium requests left this month (`gh api /copilot_internal/user`; a monthly
+//                                 allowance, shown in the week slot)
 //   false                left out of the list entirely
 //   "none"               no collector: never skipped for quota; use `orq block` when it runs out
 //   { command = "..." }  any command printing lines "<name> 5h=NN% week=NN% [note]"
@@ -148,6 +152,78 @@ export function codexQuota(): QuotaLine {
   return { name: "codex", ...q, note: m(`from the last session, ${age} min ago`, `da última sessão, há ${age} min`) };
 }
 
+// --- antigravity ----------------------------------------------------------------------------------------------------
+interface ModelQuota { quotaInfo?: { remainingFraction?: number; resetTime?: string } }
+
+/** Worst usage per window across models: a reset within 6 h belongs to the 5h window, a later one to the week. */
+export function antigravityFromModels(models: Record<string, ModelQuota>, now = Date.now()): { five: Cached; week: Cached } {
+  const five: Cached = { pct: "-" }, week: Cached = { pct: "-" };
+  for (const { quotaInfo: q } of Object.values(models ?? {})) {
+    if (typeof q?.remainingFraction !== "number" || !q.resetTime) continue;
+    const at = Date.parse(q.resetTime); if (Number.isNaN(at)) continue;
+    const w = at - now <= 6 * 3600_000 ? five : week;
+    const used = Math.round((1 - q.remainingFraction) * 100);
+    if (w.pct === "-" || used > (w.pct as number)) { w.pct = used; w.resetsAt = q.resetTime; }
+  }
+  return { five, week };
+}
+
+function agyToken(): { access?: string; expiry?: string } | undefined {
+  // agy (go-keyring) keeps {"token": {access_token, expiry, ...}} under service "gemini", user "antigravity".
+  const r = spawnSync("secret-tool", ["lookup", "service", "gemini", "username", "antigravity"],
+    { encoding: "utf8", timeout: 10_000 });
+  if (r.error || r.status !== 0 || !r.stdout.trim()) return undefined;
+  try {
+    const t = JSON.parse(r.stdout).token;
+    return { access: t?.access_token, expiry: t?.expiry };
+  } catch { return undefined; }
+}
+
+export async function antigravityQuota(): Promise<QuotaLine> {
+  const name = "antigravity";
+  const t = agyToken();
+  if (!t?.access) return noData(name, m("no agy login in the keyring", "sem login do agy no chaveiro"));
+  // Never refresh it here (that is agy's login): an expired one just means "run agy once" (`agy models` is enough).
+  const expired = m("login expired: run `agy models`", "login expirado: rode `agy models`");
+  if (t.expiry && Date.parse(t.expiry) < Date.now()) return fromCache(name, expired);
+  try {
+    const r = await fetch("https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", {
+      method: "POST", body: "{}",
+      // The endpoint answers 403 without a client User-Agent.
+      headers: { Authorization: `Bearer ${t.access}`, "Content-Type": "application/json", "User-Agent": "antigravity" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (r.status === 401) return fromCache(name, expired);
+    if (!r.ok) return fromCache(name, `HTTP ${r.status}`);
+    const j = await r.json() as { models?: Record<string, ModelQuota> };
+    const { five, week } = antigravityFromModels(j.models ?? {});
+    return remember(name, five, week);
+  } catch (e) {
+    return fromCache(name, m("collector failed", "coletor falhou") + `: ${(e as Error).message}`);
+  }
+}
+
+// --- copilot --------------------------------------------------------------------------------------------------------
+/** Premium requests used this month, from the snapshot `gh api /copilot_internal/user` returns. No 5h window. */
+export function copilotFromUser(j: unknown): QuotaLine {
+  const u = j as { quota_snapshots?: { premium_interactions?: { percent_remaining?: number; unlimited?: boolean } };
+    quota_reset_date?: string };
+  const p = u?.quota_snapshots?.premium_interactions;
+  if (!p) return noData("copilot", m("no premium request data", "sem dados de requisições premium"));
+  if (p.unlimited) return { name: "copilot", five: "-", week: "-", note: m("unlimited", "ilimitado") };
+  if (typeof p.percent_remaining !== "number") return noData("copilot", m("no premium request data", "sem dados de requisições premium"));
+  const reset = u.quota_reset_date ? m(`, resets ${u.quota_reset_date}`, `, renova em ${u.quota_reset_date}`) : "";
+  return { name: "copilot", five: "-", week: Math.max(0, 100 - p.percent_remaining),
+    note: m("monthly premium requests", "requisições premium do mês") + reset };
+}
+
+export function copilotQuota(): QuotaLine {
+  const r = spawnSync("gh", ["api", "/copilot_internal/user"], { encoding: "utf8", timeout: 15_000 });
+  if (r.error || r.status !== 0) return noData("copilot", m("gh api failed (gh auth login?)", "gh api falhou (gh auth login?)"));
+  try { return copilotFromUser(JSON.parse(r.stdout)); }
+  catch { return noData("copilot", m("collector failed", "coletor falhou")); }
+}
+
 // --- command ----------------------------------------------------------------------------------------------------------
 function commandQuota(name: string, cmd: string): string[] {
   const r = spawnSync(cmd, { shell: true, encoding: "utf8", timeout: 30_000 });
@@ -170,6 +246,8 @@ export async function collect(sources: Record<string, Source>, want: string[] = 
       return (await Promise.all(accs.map((a) => claudeQuota(a.name, a.dir)))).map(format);
     }
     if (name === "codex") return wanted(name) ? [format(codexQuota())] : [];
+    if (name === "antigravity") return wanted(name) ? [format(await antigravityQuota())] : [];
+    if (name === "copilot") return wanted(name) ? [format(copilotQuota())] : [];
     return wanted(name) ? [format(noData(name, m("no builtin collector: use \"none\" or a command",
       "sem coletor embutido: use \"none\" ou um comando")))] : [];
   });

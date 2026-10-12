@@ -20,6 +20,13 @@ English: [CHANGELOG.md](CHANGELOG.md).
   e exige Node 20+ e npm.
 - `.gitattributes` mantém fim de linha LF nos scripts em qualquer SO.
 
+### Alterado
+- Painel: a quota mostra uma coluna por conta com as duas janelas (5h e, embaixo, a semana); agentes sem coletor
+  numa linha só.
+- `orq quota`: Antigravity tem coletor embutido (cota por modelo do Cloud Code, login lido do chaveiro do sistema no
+  Linux), ligado por padrão.
+- `orq quota`: Copilot tem coletor embutido (requisições premium usadas no mês, via `gh api`), ligado por padrão.
+
 ### Corrigido
 - `orq quota`: quando o endpoint de uso falha ou responde HTTP 429, vale a última leitura boa, janela por janela, até
   aquela janela resetar — uma conta esgotada não vira mais `?` nem é escolhida.

@@ -28,7 +28,7 @@ export const DEFAULTS: Obj = {
   ui: { lang: "auto", theme: "gunmetal" }, // lang: auto | en | pt · theme: gunmetal | chrome | lcd | terminal
   // Where quota comes from, per agent: "builtin" | "none" | false | { command = "..." } (see src/quota.ts).
   // "claude" covers every account in claude-accounts.
-  quota: { claude: "builtin", codex: "builtin", opencode: "none", antigravity: "none", copilot: "none" },
+  quota: { claude: "builtin", codex: "builtin", opencode: "none", antigravity: "builtin", copilot: "builtin" },
   tracker: { kind: "none" }, // plane | none
   repos: {}, // defined by the workspace
 };

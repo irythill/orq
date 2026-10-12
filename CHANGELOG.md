@@ -19,6 +19,13 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   requires Node 20+ and npm.
 - `.gitattributes` keeps LF line endings for scripts on every OS.
 
+### Changed
+- Board: quota shows one column per account with both windows (5h, then week below it); agents with no collector
+  on one line.
+- `orq quota`: Antigravity has a builtin collector (per-model quota from Cloud Code, login read from the system
+  keyring on Linux), on by default.
+- `orq quota`: Copilot has a builtin collector (premium requests used this month, via `gh api`), on by default.
+
 ### Fixed
 - `orq quota`: when the usage endpoint fails or answers HTTP 429, the last good reading is used, window by window,
   until that window resets — an exhausted account no longer turns into `?` and gets picked.

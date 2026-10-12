@@ -13,7 +13,7 @@ set -uo pipefail
 . "$(dirname "$(realpath "$0")")/orq-i18n.sh"
 # Labels computed once (the board redraws every few seconds). Section names are DAW terms, the same in both languages.
 T_QUEUE=$(m "test queue" "fila de testes"); T_AGENTS=$(m agents agentes); T_COND=conductors
-T_QUOTA=$(m quota cota); T_EMPTY=$(m empty vazia); T_NONE=$(m none nenhum); T_RUN=$(m running rodando)
+T_QUOTA=$(m quota cota); T_WEEK=$(m wk sem); T_NOCOLL=$(m "no quota collector" "sem coletor de cota"); T_EMPTY=$(m empty vazia); T_NONE=$(m none nenhum); T_RUN=$(m running rodando)
 T_WAIT=$(m "waiting" "esperando"); T_FULL=$(m "full suite" "suíte inteira"); T_ORPHAN=$(m "no .run.sh (orphan?)" "sem .run.sh (órfão?)")
 T_FOR=$(m for há); T_DEFAULT=$(m default padrão); T_SESSION=$(m session sessão); T_AGO=$(m ago atrás)
 T_COLLECT=$(m "collecting..." "coletando..."); T_JUMP=$(m "jump to..." "pular para...")
@@ -79,15 +79,28 @@ quota() {
       </dev/null >/dev/null 2>&1 &
   fi
   [ -s "$QCACHE" ] || { echo " ${MUT}${T_COLLECT}${R}"; return; }
-  local name f1 f2 v1 v2 p line=" "
+  # One column per account/agent: its name, then the 5h window, then the week below it. As many columns per row as
+  # fit. Agents with no data in either window go to one muted line at the end.
+  local name f1 f2 v names=() fives=() weeks=() idle=()
+  win() { v=${1#*=}; v=${v%\%}   # always 17 visible columns
+    if [[ $v =~ ^[0-9]+$ ]]; then printf '%s%-3s%s %s %s%3s%%%s' "$MUT" "$2" "$R" "$(meter "$v" 6)" "$INK" "$v" "$R"
+    else printf '%s%-3s %-8s %3s %s' "$MUT" "$2" "" "$v" "$R"; fi; }
   while read -r name f1 f2 _; do
-    v1=${f1#*=}; v1=${v1%\%}; v2=${f2#*=}; v2=${v2%\%}
-    if [[ $v1 == "?" || $v2 == "?" ]]; then line+="${MUT}${name} ?${R}   "; continue; fi
-    p=0; [[ $v1 =~ ^[0-9]+$ ]] && p=$v1; [[ $v2 =~ ^[0-9]+$ ]] && ((v2 > p)) && p=$v2
-    if [[ ! $v1 =~ ^[0-9]+$ && ! $v2 =~ ^[0-9]+$ ]]; then line+="${INK2}${name}${R} ${MUT}–${R}   "; continue; fi
-    line+="${INK2}${name}${R} $(meter "$p" 6) ${INK}$(printf '%3s' "$p")%${R}   "
+    [[ ${f1#*=} == - && ${f2#*=} == - ]] && { idle+=("$name"); continue; }
+    names+=("$name"); fives+=("$(win "$f1" 5h)"); weeks+=("$(win "$f2" "$T_WEEK")")
   done < "$QCACHE"
-  echo "$line"
+  local cw=21 per i j l1 l2 l3
+  per=$(( (COLS - 1) / cw )); ((per < 1)) && per=1
+  for ((i = 0; i < ${#names[@]}; i += per)); do
+    l1=" "; l2=" "; l3=" "
+    for ((j = i; j < i + per && j < ${#names[@]}; j++)); do
+      l1+="${B}${INK2}$(printf "%-${cw}s" "${names[j]:0:$((cw - 2))}")${R}"
+      l2+="${fives[j]}    "; l3+="${weeks[j]}    "
+    done
+    ((i)) && echo
+    printf '%s\n%s\n%s\n' "$l1" "$l2" "$l3"
+  done
+  ((${#idle[@]})) && echo " ${MUT}${T_NOCOLL}: ${idle[*]}${R}"
   echo " ${MUT}$(dur $(( $(date +%s) - m ))) ${T_AGO}${R}"
 }
 

@@ -67,10 +67,15 @@ Configurável por usuário (ver §3). Fontes embutidas:
   (`<pasta da conta>/.credentials.json`, ou o Keychain no macOS). Uma linha por conta do `claude-accounts`. O orq
   nunca renova o token: expirado → `?` + "abra o claude uma vez".
 - `codex` — os `rate_limits` que o Codex grava nos arquivos de sessão (já é o plano B hoje).
+- `antigravity` — cota por modelo do Cloud Code (`fetchAvailableModels`), com o login que o agy guarda no chaveiro
+  do sistema (Linux: Secret Service via `secret-tool`; macOS/Windows: a fazer). Pior modelo por janela; nunca renova
+  o login do agy: expirado → última leitura + "rode `agy models`".
+- `copilot` — requisições premium usadas no mês (`gh api /copilot_internal/user`, precisa de `gh auth login`); é uma
+  franquia mensal, então ocupa o lugar da semana e o 5h fica `-`.
 - `command` — qualquer comando que imprima `<nome> 5h=NN% week=NN%` (cobre os coletores do Omarchy ou algo próprio).
 - `false` — fica fora da lista.
-- `none` — sem dados; o agente nunca é pulado por cota, use `orq block` quando acabar (Antigravity, Copilot e
-  MiniMax hoje).
+- `none` — sem dados; o agente nunca é pulado por cota, use `orq block` quando acabar (MiniMax pago
+  por uso hoje).
 
 ### Lock — fila de testes
 Um arquivo de trava no diretório de estado do orq (no estilo `proper-lockfile`, funciona nos três SOs) mais um
@@ -93,8 +98,8 @@ terminal      = "auto"     # NOVO: auto | herdr | plain   (auto = herdr se insta
 [quota]                    # NOVO: de quais agentes o orq lê a cota, e como
 claude      = "builtin"
 codex       = "builtin"
-copilot     = "none"
-antigravity = "none"
+copilot     = "builtin"
+antigravity = "builtin"
 opencode    = "none"
 # qualquer agente: { command = "meu-coletor" }   → imprime "<nome> 5h=NN% week=NN%"
 # false = deixa de fora. O coletor do Omarchy, se preferir ele para o Codex:

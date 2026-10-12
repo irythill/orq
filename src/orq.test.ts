@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { merge } from "./config.js";
 import { parseLocal } from "./commands/block.js";
 import { setTomlString } from "./toml-set.js";
-import { fromCache } from "./quota.js";
+import { antigravityFromModels, copilotFromUser, fromCache } from "./quota.js";
 
 process.env.ORQ_LANG = "en"; // messages checked below are the English ones
 const CLI = fileURLToPath(new URL("./cli.js", import.meta.url));
@@ -131,4 +131,24 @@ test("quota: a failed reading falls back to the last good one, window by window"
     assert.equal(fromCache("acc", "x", at + h).five, 50);               // no reset time: kept up to 5 h
     assert.equal(fromCache("acc", "x", at + 6 * h).five, "?");
   } finally { if (old === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = old; }
+});
+
+test("quota: copilot premium requests become the monthly figure in the week slot", () => {
+  const q = copilotFromUser({ quota_snapshots: { premium_interactions: { percent_remaining: 77, unlimited: false } },
+    quota_reset_date: "2026-11-01" });
+  assert.equal(q.five, "-"); assert.equal(q.week, 23); assert.match(q.note!, /2026-11-01/);
+  assert.equal(copilotFromUser({ quota_snapshots: { premium_interactions: { unlimited: true } } }).week, "-");
+  assert.equal(copilotFromUser({}).week, "?");
+});
+
+test("quota: antigravity takes the worst model per window (reset within 6 h = 5h window, later = week)", () => {
+  const now = Date.parse("2026-10-12T17:00:00Z");
+  const q = antigravityFromModels({
+    a: { quotaInfo: { remainingFraction: 0.75, resetTime: "2026-10-12T22:00:00Z" } },
+    b: { quotaInfo: { remainingFraction: 0.4, resetTime: "2026-10-19T17:00:00Z" } },
+    c: { quotaInfo: { remainingFraction: 0.9, resetTime: "2026-10-19T17:00:00Z" } },
+    d: { quotaInfo: { remainingFraction: 1 } },
+  }, now);
+  assert.equal(q.five.pct, 25); assert.equal(q.week.pct, 60); assert.equal(q.week.resetsAt, "2026-10-19T17:00:00Z");
+  assert.equal(antigravityFromModels({}, now).five.pct, "-");
 });
