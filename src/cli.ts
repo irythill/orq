@@ -4,19 +4,33 @@
 import { ConfigError, getPath, loadConfig } from "./config.js";
 import { detectLang, m, setLang } from "./i18n.js";
 import { block, USAGE as BLOCK } from "./commands/block.js";
+import { claim, USAGE as CLAIM } from "./commands/claim.js";
 import { config, USAGE as CONFIG } from "./commands/config.js";
+import { deps, USAGE as DEPS } from "./commands/deps.js";
 import { lang, USAGE as LANG } from "./commands/lang.js";
+import { lock, USAGE as LOCK } from "./commands/lock.js";
+import { pick, USAGE as PICK } from "./commands/pick.js";
 import { quota, USAGE as QUOTA } from "./commands/quota.js";
+import { run, USAGE as RUN } from "./commands/run.js";
 import { set, USAGE as SET } from "./commands/set.js";
+import { setup, USAGE as SETUP } from "./commands/setup.js";
+import { stats, USAGE as STATS } from "./commands/stats.js";
 
-const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = { config, set, lang, block, quota };
+const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = { config, set, lang, block, quota, pick, stats, setup, lock, claim, deps, run };
 
 const usage = () => `orq <command> [args]
 
+${SETUP}
 ${CONFIG}
 ${SET}
 ${LANG}
 ${QUOTA}
+${PICK}
+${STATS}
+${LOCK}
+${RUN}
+${CLAIM}
+${DEPS}
 ${BLOCK.split("\n")[0]}
   (orq block --help ${m("for more", "para mais")})`;
 

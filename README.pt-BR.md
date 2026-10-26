@@ -199,7 +199,7 @@ dois conductors peguem a mesma issue. Detalhes, atalhos e cenários: [docs/pt-BR
 - [docs/pt-BR/herdr.md](docs/pt-BR/herdr.md) — herdr no dia a dia, atalhos, várias issues ao mesmo tempo
 - [docs/pt-BR/troubleshooting.md](docs/pt-BR/troubleshooting.md) — problemas conhecidos e soluções
 - [docs/pt-BR/omarchy.md](docs/pt-BR/omarchy.md) — extras para quem usa Omarchy
-- [docs/pt-BR/portability.md](docs/pt-BR/portability.md) — o plano para Linux, macOS e Windows nativo
+- [docs/pt-BR/portability.md](docs/pt-BR/portability.md) — o roadmap: Linux, macOS e Windows nativo, qualquer agente como conductor, papéis definidos pelo usuário, setup guiado
 - [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md) — o que mudou, versão a versão
 - `examples/` — configurações reais para copiar
 

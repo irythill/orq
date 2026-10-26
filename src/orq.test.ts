@@ -152,3 +152,124 @@ test("quota: antigravity takes the worst model per window (reset within 6 h = 5h
   assert.equal(q.five.pct, 25); assert.equal(q.week.pct, 60); assert.equal(q.week.resetsAt, "2026-10-19T17:00:00Z");
   assert.equal(antigravityFromModels({}, now).five.pct, "-");
 });
+
+test("roles: legacy agents.roles become an auto pool; [roles] fixed and pool win", async () => {
+  const { resolveRole } = await import("./roles.js");
+  const agents = { codex: { roles: ["impl", "review"] }, claude: { roles: ["impl"] }, agy: { roles: ["review"] } };
+  assert.deepEqual(resolveRole({ agents }, "worker"), { mode: "auto", pool: ["codex", "claude"], rule: "other-vendor", section: undefined });
+  const cfg = { agents, policy: { review: "any" },
+    roles: { primary: { agent: "codex", fallback: ["claude"] }, reviewer: { pick: "auto", pool: ["agy"], rule: "other-vendor" } } };
+  assert.deepEqual(resolveRole(cfg, "impl"), { mode: "fixed", order: ["codex", "claude"], rule: "any", section: "primary" });
+  assert.equal(resolveRole(cfg, "worker").mode, "fixed"); // no [roles.workers] → the primary's
+  assert.deepEqual(resolveRole(cfg, "review"), { mode: "auto", pool: ["agy"], rule: "other-vendor", section: "reviewer" });
+});
+
+test("pick: fixed role takes the first usable agent in order, never one outside the list", async () => {
+  const { pick, parseQuota } = await import("./pick.js");
+  const agents = {
+    codex: { quota: ["codex"], models: { impl: { default: "gpt-6-sol@low" } } },
+    claude: { quota: ["work", "home"], models: { impl: { default: "claude-sonnet-5" } } },
+    opencode: { vendor: "minimax", models: { impl: { default: "minimax/MiniMax-M3" }, review: { default: "minimax/MiniMax-M3" } } },
+  };
+  const base = { level: "medium", exclude: new Set<string>(), stats: [], blocks: new Set<string>(), recent: [] };
+  const cfg = { agents, roles: { primary: { agent: "codex", fallback: ["claude"] } } };
+  const quota = parseQuota("codex 5h=95% week=10%\nwork 5h=50% week=60%\nhome 5h=? week=?\n");
+  assert.deepEqual(quota, { codex: 95, work: 60, home: null });
+  const r = pick({ ...base, cfg, role: "impl", quota });
+  assert.equal(r.mode, "fixed");
+  assert.deepEqual([r.best?.agent, r.best?.acct], ["claude", "work"]);
+  assert.match(r.notes[0], /^codex: quota >= 90%/);
+  const none = pick({ ...base, cfg, role: "impl", quota: { codex: 95, work: 95, home: 95 } });
+  assert.equal(none.best, undefined); // opencode is not in the list: no silent swap
+  const auto = pick({ ...base, cfg: { agents, roles: { reviewer: { pool: ["claude", "opencode"] } } }, role: "review",
+    implVendor: "anthropic", quota: {} });
+  assert.equal(auto.best?.agent, "opencode"); // claude: same vendor (built-in vendor)
+});
+
+test("suggestRoles: the maintainer's setup comes out of plain answers", async () => {
+  const { suggestRoles } = await import("./suggest.js");
+  const p = suggestRoles({ conductor: "claude", parallel: 4, ramGB: 14, agents: {
+    claude: { plan: "large" }, codex: { plan: "large", trust: true }, opencode: { plan: "payg", vendor: "minimax" },
+    antigravity: { plan: "free" }, copilot: { plan: "small" } } });
+  assert.deepEqual(p.roles.primary, { agent: "codex", fallback: ["claude"] });
+  assert.deepEqual(p.roles.reviewer, { pick: "auto", pool: ["claude", "opencode", "antigravity"], rule: "other-vendor" });
+  assert.deepEqual(p.roles.opinion, { pick: "auto", pool: ["copilot"] });
+  assert.equal(p.agents.claude.reserve, true);
+  assert.deepEqual(p.agents.antigravity.roles, ["review"]);
+  assert.deepEqual(p.machine, { agent_mem_max: "4G", test_mem_max: "5G" });
+  assert.equal(p.weights.tokens, 0.45);
+});
+
+test("suggestRoles: one agent, one vendor, two vendors", async () => {
+  const { suggestRoles } = await import("./suggest.js");
+  const one = suggestRoles({ conductor: "codex", parallel: 1, ramGB: 8, agents: { codex: { plan: "large" } } });
+  assert.deepEqual(one.roles.reviewer, { pick: "auto", pool: ["codex"], rule: "any" });
+  assert.match(one.notices[0], /second agent/);
+  assert.equal(one.weights.quality, 0.55);
+  const same = suggestRoles({ conductor: "other", parallel: 2, ramGB: 16,
+    agents: { claude: { plan: "large" }, mine: { plan: "large", vendor: "anthropic" } } });
+  assert.equal(same.roles.reviewer.rule, "any");
+  assert.match(same.notices[0], /cross-vendor review is off/);
+  const two = suggestRoles({ conductor: "claude", parallel: 2, ramGB: 16,
+    agents: { claude: { plan: "large" }, codex: { plan: "large" } } });
+  assert.equal(two.roles.primary.agent, "codex"); // keeps the conductor's quota free
+  assert.deepEqual(two.roles.reviewer.pool, ["claude"]);
+});
+
+test("lock: FIFO with slots, re-entrant, dead holders are swept", async () => {
+  const { acquire, release, status } = await import("./lock.js");
+  const { spawn } = await import("node:child_process");
+  const st = mkdtempSync(join(tmpdir(), "orq-l-"));
+  const old = process.env.XDG_STATE_HOME; process.env.XDG_STATE_HOME = st;
+  const kid = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"]);
+  try {
+    await acquire("t", kid.pid!, "kid", 1, undefined, 20);
+    await acquire("t", kid.pid!, "kid", 1, undefined, 20); // same process again: no deadlock
+    let waited = 0, got = false;
+    const me = acquire("t", process.pid, "me", 1, (n) => { waited = n; }, 20).then(() => { got = true; });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(got, false);
+    assert.equal(waited, 1);
+    assert.deepEqual(status("t").waiters.map((e) => e.label), ["me"]);
+    kid.kill(); await new Promise((r) => kid.once("exit", r)); // the holder dies without releasing
+    await me;
+    assert.deepEqual(status("t").holders.map((e) => e.label), ["me"]);
+    release("t", process.pid);
+    assert.deepEqual(status("t"), { holders: [], waiters: [] });
+    await acquire("two", process.pid, "a", 2, undefined, 20); // 2 slots: a second process would not wait
+    assert.equal(status("two").holders.length, 1);
+  } finally {
+    kid.kill();
+    if (old === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = old;
+  }
+});
+
+test("claim: claim, refuse, release, take over a stale owner", () => {
+  const { root, env, run } = sandbox();
+  const as = (who: string, ...a: string[]) => spawnSync(process.execPath, [CLI, "claim", "-w", root, ...a],
+    { env: { ...env, HERDR_PANE_ID: "", ORQ_CONDUCTOR_ID: who }, encoding: "utf8" });
+  delete (env as Record<string, string | undefined>).HERDR_PANE_ID;
+  assert.match(as("a", "X-1").stdout, /X-1 is yours \(a\)/);
+  assert.match(as("a", "X-1").stdout, /already yours/);
+  const r = as("b", "X-1");
+  assert.equal(r.status, 1); assert.match(r.stdout, /owned by another conductor/);
+  const f = join(root, ".orquestra", "X-1", "owner");
+  writeFileSync(f, "pane=a kind=id account=x at=2000-01-01T00:00:00Z\n");
+  assert.match(as("b", "X-1").stdout, /previous owner \(a\) is gone/);
+  assert.equal(as("a", "-r", "X-1").status, 1);
+  assert.equal(as("b", "-r", "X-1").status, 0);
+  void run;
+});
+
+test("process: sizes, tree memory, and the watchdog kills a tree over the cap", async () => {
+  const { parseSize, treeMem, runCapped } = await import("./process.js");
+  assert.equal(parseSize("4G"), 4 * 2 ** 30); assert.equal(parseSize("512M"), 512 * 2 ** 20);
+  assert.equal(parseSize("1.5g"), 1.5 * 2 ** 30); assert.equal(parseSize("off"), undefined);
+  assert.throws(() => parseSize("lots"));
+  const t = new Map<number, [number, number]>([[1, [0, 10]], [2, [1, 5]], [3, [2, 1]], [4, [9, 100]]]);
+  assert.equal(treeMem(1, t), 16); assert.equal(treeMem(2, t), 6);
+  const hog = "const a=[];setInterval(()=>a.push(Buffer.alloc(50e6,1)),100);setTimeout(()=>process.exit(0),20000)";
+  assert.equal(await runCapped(process.execPath, ["-e", hog], { cap: 300 * 2 ** 20, mode: "watchdog", intervalMs: 300 }), 137);
+  assert.equal(await runCapped(process.execPath, ["-e", "process.exit(3)"], { cap: 2 ** 30, mode: "watchdog" }), 3);
+  assert.equal(await runCapped(process.execPath, ["-e", "0"], { mode: "auto" }), 0); // no cap
+});

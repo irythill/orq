@@ -30,17 +30,23 @@ write first. Never handle API keys or tokens yourself: tell the user where to pu
   command (`claude`, `codex login`, `opencode auth login`, `agy`, `copilot` then `/login`) and offer to retest. Only
   agents that passed (or that the user insists on) go into the config.
 
-## 2. Agents, roles and models
-For each working agent, ask (AskUserQuestion where the options are known):
-- **Roles:** `impl` (implements), `fix` (fix rounds, usually same as impl), `review`, `opinion` (rare second opinion).
-  Remind them: reviews must come from a **vendor different** from the implementer's, so at least two vendors with
-  `review` or `impl` make the flow work. Claude is also the conductor: suggest `reserve = true` for it.
-- **Vendor:** defaults — claude `anthropic`, codex `openai`, opencode = the provider they use (e.g. `minimax`),
-  antigravity `google`, copilot `github`.
-- **Models per role and level** (`simple | medium | heavy | default`, value `"model[@effort]"`). Offer the values in
-  `$ORQ/examples/irythill/config.toml` as defaults, saying clearly **they are one person's choices**, not
-  recommendations; the user may have other models or plans. Ask the CLI for its model list when unsure.
-- **quota names:** what `agent-quota` prints for that agent (run it and show the names).
+## 2. Agents and roles — `orq setup` suggests, the user decides
+Don't ask "which roles should this agent take?": newcomers can't answer that. Ask what they know (AskUserQuestion)
+and let `orq setup` apply the rules (src/suggest.ts):
+- per working agent: **plan** — `free` · `small` (Pro, Copilot Pro, monthly allowance) · `large` (Max, high tiers) ·
+  `payg` (API, MiniMax); its **vendor** only for agents orq doesn't know (opencode: the provider, e.g. `minimax`);
+- which one they **trust most** to write code (optional);
+- where they will **talk to orq** (the conductor): an agent name, or `other`;
+- how many tasks they usually run **in parallel**; how much **RAM** agents may use (suggest total RAM).
+Then write the answers to a temp file and show the proposal:
+```bash
+orq setup --answers /tmp/orq-answers.json      # {"agents":{"codex":{"plan":"large","trust":true},...},"conductor":"claude","parallel":3,"ramGB":16}
+```
+Explain each `# Why:` line in plain words and ask what to change. Whatever they fix becomes `[roles.<role>] agent = ...`;
+the rest stays `auto`. Presets for those who want no questions: `--preset economy | quality | single-agent`.
+**Models** (`models.<role>.<level> = "model[@effort]"`): optional — without them each CLI uses its default model.
+Offer `$ORQ/examples/irythill/config.toml` as an example, saying clearly **it is one person's choices**.
+**quota names:** what `orq quota` prints for that agent.
 
 ## 3. Claude accounts
 - `claude-accounts` lists them. None and the user has more than one account → offer to create
@@ -52,10 +58,10 @@ For each working agent, ask (AskUserQuestion where the options are known):
 ## 4. Policy
 Explain simply, then suggest the example's values and ask if they want to change any:
 - `quota_limit` (90): an agent at or above this % of its 5h/weekly quota is left out.
-- weights — `quality` (did it deliver?), `tokens` (spent little?), `speed` (finished fast?), `rotation` (penalty for
-  being picked recently, spreads the work). Several issues in parallel → favor `tokens`; few, important issues →
-  favor `quality`.
-- `max_rounds` (2) review rounds before handing back; `machine.agent_mem_max` (4G) — suggest less on <16 GB RAM.
+- weights — already suggested by `orq setup` from the parallel tasks: `quality` (did it deliver?), `tokens` (spent
+  little?), `speed` (finished fast?), `rotation` (penalty for being picked recently, spreads the work).
+- `max_rounds` (2) review rounds before handing back; `machine.agent_mem_max` / `test_mem_max` come from `orq setup`
+  (RAM and parallel tasks) — the user may change them.
 - **Language** of orq's messages (board, notices, CLI): `[ui] lang = "auto" | "en" | "pt"` (auto = system locale).
   Suggest the language the user is talking to you in. Mention they can switch any time with `orq-lang toggle`, the
   `l` key in `herdr-board`, or a herdr key bound to the `orq.lang-toggle` action (see the comments in
@@ -64,9 +70,9 @@ Explain simply, then suggest the example's values and ask if they want to change
   Light terminal → suggest `chrome`; they can cycle with `t` inside `herdr-board`.
 
 ## 5. Write and validate
-- Show the full TOML (same layout and comments as the example, only the agents they enabled). After the OK:
-  `mkdir -p ~/.config/orq`; existing file → `cp ~/.config/orq/config.toml ~/.config/orq/config.toml.bak-$(date +%Y%m%d%H%M%S)`;
-  then write it. Python < 3.11 without `tomli` → write `config.json` instead.
+- Show the full TOML (the proposal plus the changes they asked for). After the OK: `orq setup --answers <file> --write`
+  (backs up an existing config as `config.toml.bak-<timestamp>`), then apply their edits with `orq set` or by editing
+  the file.
 - Validate: `orq-config files` and `orq-config` (exit 2 = error: fix and retry).
 - Show the picks: `orq-pick impl --level medium --explain --no-record` and
   `orq-pick review --impl-agent <their main implementer> --explain --no-record`. Exit 3 = no candidate: explain why

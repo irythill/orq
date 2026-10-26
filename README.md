@@ -197,7 +197,7 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 - [docs/herdr.md](docs/herdr.md) — herdr day to day, shortcuts, several issues at once
 - [docs/troubleshooting.md](docs/troubleshooting.md) — known problems and fixes
 - [docs/omarchy.md](docs/omarchy.md) — extras for Omarchy users
-- [docs/portability.md](docs/portability.md) — the plan for Linux, macOS and native Windows
+- [docs/portability.md](docs/portability.md) — the roadmap: Linux, macOS and native Windows, any agent as conductor, user-defined roles, guided setup
 - [CHANGELOG.md](CHANGELOG.md) — what changed, release by release
 - `examples/` — real configurations to copy
 

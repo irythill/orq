@@ -4,6 +4,27 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 [Keep a Changelog](https://keepachangelog.com/pt-BR/); as versões seguem o `package.json`.
 English: [CHANGELOG.md](CHANGELOG.md).
 
+## [Não lançado]
+### Adicionado
+- `[roles]` no config: `conductor`, `primary`, `workers`, `reviewer`, `opinion`, cada um **fixo** (`agent`, depois
+  `fallback` em ordem, nunca trocado por um agente fora da lista) ou **auto** (`pool`, com a pontuação de antes); `rule`
+  por papel. Sem `[roles]`, `agents.<nome>.roles` continua funcionando. `vendor` é opcional para os agentes embutidos.
+- `orq pick` (novo papel `worker`) e `orq stats` em TypeScript; `orq-pick` e `orq-stats` agora chamam eles.
+- `orq setup`: primeira configuração guiada em qualquer terminal — detecta as CLIs de agentes, pergunta plano,
+  confiança, conductor, tarefas em paralelo e RAM, e sugere papéis, pesos e limites de memória com o motivo de cada um
+  (`--answers` para conductors, `--preset economy|quality|single-agent`). O `/orq-setup` usa ele. Agentes sem `models`
+  usam o modelo padrão da CLI.
+- `orq lock`: a fila de testes sem `flock` nem `/proc/locks` — uma fila FIFO de arquivos no diretório de estado, com
+  `test_slots` vagas; a entrada de um processo morto é limpa sozinha. `herdr-verify`, `herdr-baseline` e o board usam ela.
+- `orq claim` (era `herdr-claim`): funciona fora do herdr também — o id do conductor é `HERDR_PANE_ID`,
+  `ORQ_CONDUCTOR_ID` ou `<usuário>@<host>`; fora do herdr um dono conta como vivo por `ORQ_CLAIM_TTL_H` horas (24).
+- `orq deps` (era `herdr-deps`): mesmo fluxo; no Windows o `node_modules` é ligado com junction (sem admin).
+- `orq run`: roda um comando com limite de memória em qualquer SO — escopo do systemd onde houver, senão um vigia que
+  mede a árvore de processos a cada segundo e a encerra acima do limite (saída 137). `machine.mem_enforce = auto |
+  kernel | watchdog | off`, `agents.<nome>.mem_max` por agente, `"off"` desliga. `herdr-verify` e `herdr-baseline` usam ele.
+- CI no Linux, macOS e Windows (Node 20 e 24).
+- Roadmap v2 em [docs/pt-BR/portability.md](docs/pt-BR/portability.md).
+
 ## [0.1.0] — 2026-10-12
 
 ### Adicionado

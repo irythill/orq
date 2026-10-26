@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Live orchestration board, to keep in a pinned herdr tab: test queue (herdr-verify/-baseline), running agents
 # (herdr-agent-* scopes), conductors ("conductor" panes) with their issues, memory and quota.
-# Read only: /proc/locks, systemd --user, `herdr pane list`, .orquestra/ and the agent-quota cache.
+# Read only: `orq lock status`, systemd --user, `herdr pane list`, .orquestra/ and the agent-quota cache.
 #
 #   herdr-board --once     prints once (to check)
 #   herdr-board            refreshes every HERDR_BOARD_INTERVAL s (default 3)
@@ -50,7 +50,6 @@ meter() { local p=${1:-0} n=${2:-10} f c=$OK; ((p >= 90)) && c=$ERR || { ((p >= 
 
 _ws=$(orq-config get _workspace 2>/dev/null); [ -n "$_ws" ] && [ "$_ws" != null ] || _ws=$PWD
 WSS=(${HERDR_BOARD_WS:-$_ws}); INT=${HERDR_BOARD_INTERVAL:-3}
-LOCK=${VERIFY_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/herdr-verify.lock}
 QCACHE=${XDG_RUNTIME_DIR:-/tmp}/herdr-board.quota; QTTL=300
 JUMPS=${XDG_RUNTIME_DIR:-/tmp}/herdr-board.$$.jumps
 
@@ -59,11 +58,6 @@ dur() { local s=${1:-0}; if ((s<60)); then echo "${s}s"; elif ((s<3600)); then p
   elif ((s<86400)); then printf '%dh%02dm' $((s/3600)) $((s%3600/60)); else printf '%dd%02dh' $((s/86400)) $((s%86400/3600)); fi; }
 gb() { awk -v b="${1:-0}" 'BEGIN{ if (b+0>0) printf "%.1f GB", b/1073741824; else printf "-" }'; }
 age() { ps -o etimes= -p "$1" 2>/dev/null | tr -d ' '; }
-# Walk up the parents to the herdr-verify/-baseline process (the lock may sit in a child that inherited the fd).
-script_of() { local p=$1 i; for i in 1 2 3 4 5 6 7 8; do
-    [ -r /proc/$p/cmdline ] || return 1
-    tr '\0' ' ' </proc/$p/cmdline | grep -qE 'herdr-(verify|baseline) -x' && { echo "$p"; return 0; }
-    p=$(ps -o ppid= -p "$p" | tr -d ' '); [ -n "$p" ] && [ "$p" -gt 1 ] || return 1; done; return 1; }
 arg() { tr '\0' '\n' </proc/$1/cmdline | grep -A1 -x -- "$2" | tail -1; }
 # Memory of the (systemd-run) scope where some descendant of $1 runs.
 scope_mem() { local q=($1) p f; while [ ${#q[@]} -gt 0 ]; do p=${q[0]}; q=("${q[@]:1}")
@@ -117,12 +111,9 @@ render() {
   out+="${SURF}${B}${ACC} ORQ"$'\e[22m'"${SURF}${INK2}  ${WSS[*]/#$HOME/\~}$(printf '%*s' $((COLS - ${#left} - ${#right})) '')${MUT}${right}\n"
   out+=" ${MUT}MEM${R}  $(meter "$pct" 24) ${INK}$(gb $used)${R} ${MUT}/ $(gb $((mt*1024)))${R}\n\n"
 
-  # TRANSPORT — test queue: holder and waiters in kernel order (/proc/locks: holder without "->", waiters with "->").
+  # TRANSPORT — test queue: holders and waiters in order, from `orq lock status` (pids of herdr-verify/-baseline).
   out+="$(section TRANSPORT "$T_QUEUE")\n"
-  local ino n=0 line pid sp o kind id repo top=() waiting=" " shown=0; ino=$(stat -c %i "$LOCK" 2>/dev/null)
-  # /proc/locks records the pid of the `flock` that took the lock (and exited): the holder is the script with no waiting `flock` child.
-  for sp in $(pgrep -f 'setup/herdr-(verify|baseline) -x'); do
-    pid=$(ps -o ppid= -p "$sp" | tr -d ' '); tr '\0' ' ' </proc/$pid/cmdline 2>/dev/null | grep -qE 'herdr-(verify|baseline) -x' || top+=("$sp"); done
+  local n=0 sp qj shown=0; qj=$(orq lock status verify --json 2>/dev/null || echo '{}')
   qline() { local sp=$1 st=$2 w=${3:-} kind=verify repo o id
     tr '\0' ' ' </proc/$sp/cmdline | grep -q herdr-baseline && kind=baseline
     repo=$(arg "$sp" -r); o=$(arg "$sp" -o); id=$([ $kind = verify ] && basename "$(dirname "$o")" || echo "—")
@@ -131,14 +122,8 @@ render() {
       [ $kind = baseline ] && out+="  ${WRN}${T_FULL}${R}"; out+="\n"
     else out+=" ${MUT}‖ $(printf '%02d' "$w")${R}   ${INK}$(printf '%-9s' "$id")${R} ${INK2}$(printf '%-8s %-18s' "$kind" "$repo")${R} ${MUT}${T_WAIT} $(dur "$(age "$sp")")${R}\n"; fi
     echo "$id $kind $repo|$id $kind $repo" >> "$JUMPS"; }
-  if [ -n "$ino" ]; then
-    while read -r line; do   # queue in kernel order
-      pid=$(awk '{for(i=1;i<=NF;i++) if($i=="WRITE"){print $(i+1); exit}}' <<<"$line")
-      sp=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' '); [ -n "$sp" ] && waiting+="$sp "
-    done < <(grep ":$ino " /proc/locks | grep -- '->')
-    for sp in "${top[@]}"; do [[ $waiting == *" $sp "* ]] || { qline "$sp" run; shown=1; }; done
-    for sp in $waiting; do n=$((n+1)); qline "$sp" wait "$n"; shown=1; done
-  fi
+  for sp in $(jq -r '.holders[]?.pid' <<<"$qj"); do qline "$sp" run; shown=1; done
+  for sp in $(jq -r '.waiters[]?.pid' <<<"$qj"); do n=$((n+1)); qline "$sp" wait "$n"; shown=1; done
   ((shown)) || out+=" ${MUT}${T_EMPTY}${R}\n"
 
   # TRACKS — agents: live herdr-agent-* scopes ↔ the <prefix>.run.sh that created them.

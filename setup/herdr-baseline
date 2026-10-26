@@ -43,14 +43,14 @@ WT=$WS/.worktrees/baseline-$R
 st=fail
 finish() {
   git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
+  orq lock release verify --pid $$ || true
   printf "status=%s sha=%s at=%s\n" "$st" "$SHA" "$(date -Is)" > "$OUT.done"
   herdr-notify "${HERDR_NOTIFY_PANE:-}" "[HERDR-AGENT DONE] baseline $R $B status=$st sha=$SHA answer: $OUT" || true
   echo "[baseline $(m finished terminou): status=$st] $OUT"
 }
 trap finish EXIT
 # Same queue as herdr-verify: one test suite at a time on the machine (each may use up to 6 GB).
-exec 9>"${XDG_RUNTIME_DIR:-/tmp}/herdr-verify.lock"
-flock -n 9 || { echo "$(m "another verification is running; waiting for my turn..." "outra verificação em andamento; aguardando a vez...")"; flock 9; }
+orq lock wait verify --pid $$ --label "baseline — $R"
 # An identical baseline may have finished while this one waited: check again before running the full suite.
 git -C "$REPO" fetch -q origin "$B" || true; SHA=$(git -C "$REPO" rev-parse --short origin/"$B")
 if [ -f "$OUT" ] && head -1 "$OUT" | grep -q "sha $SHA "; then echo "$(m "baseline already up to date" "baseline já está atual") ($SHA)"; st=ok; exit 0; fi
@@ -60,7 +60,8 @@ ln -sfn "$REPO/node_modules" "$WT/node_modules"
 cd "$WT"
 J=$(mktemp --suffix=.json)
 TEST=$(jq -r '.scripts.test // ""' package.json)
-CAP="systemd-run --user --scope -q -p MemoryMax=${VERIFY_MEM_MAX:-6G} -p MemorySwapMax=1G --"
+# Memory cap on any OS (orq run: systemd scope where available, else a watchdog); machine.test_mem_max, VERIFY_MEM_MAX wins.
+CAP="orq run --test ${VERIFY_MEM_MAX:+--mem $VERIFY_MEM_MAX} --"
 case $TEST in
   *vitest*) $CAP npx vitest run --reporter=json --outputFile="$J" --maxWorkers=2 >/dev/null 2>&1 || true
             FILTER='.testResults[] | .name as $f | .assertionResults[] | select(.status=="failed") | "\($f|sub(".*/baseline-'"$R"'/";"")) :: \(.fullName)"' ;;

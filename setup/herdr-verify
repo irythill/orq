@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests related to what changed in a worktree, run by the conductor and not by the child (the child hits its 4 GB cap
-# with jest/vitest). One verification at a time on the machine (flock queue), its own memory cap (VERIFY_MEM_MAX, 6G).
+# with jest/vitest). One verification at a time on the machine (orq lock queue), its own memory cap (orq run: machine.test_mem_max, or VERIFY_MEM_MAX).
 # Runs in a herdr tab and doesn't block the conductor. Same protocol as herdr-agent: writes <prefix>.done and notifies
 # the calling pane (HERDR_PANE_ID) with "[HERDR-AGENT DONE] verify <repo> ..." via herdr-notify.
 #
@@ -39,15 +39,15 @@ fi
 # Run mode (-x), inside the tab.
 st=fail; NEW=0
 finish() {
+  orq lock release verify --pid $$ || true
   printf "status=%s new=%s at=%s\n" "$st" "$NEW" "$(date -Is)" > "$O.done"
   herdr-notify "${HERDR_NOTIFY_PANE:-}" "[HERDR-AGENT DONE] verify $R status=$st new=$NEW answer: $O.txt" || true
   echo "[verify $(m finished terminou): status=$st new=$NEW] $O.txt"
 }
 trap finish EXIT
 
-LOCK=${VERIFY_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/herdr-verify.lock}
-exec 9>"$LOCK"
-flock -n 9 || { echo "$(m "another verification is running; waiting for my turn..." "outra verificação em andamento; aguardando a vez...")"; flock 9; }
+# The test queue (orq lock): this script's pid holds the slot; freed in finish, or by itself if the script dies.
+orq lock wait verify --pid $$ --label "verify $(basename "$(dirname "$O")") $R"
 
 cd "$WT"
 mapfile -t FILES < <(git diff --name-only --diff-filter=d "origin/$B...HEAD" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$' || true)
@@ -56,7 +56,8 @@ if [ ${#FILES[@]} -eq 0 ]; then
   st=ok; exit 0
 fi
 TEST=$(jq -r '.scripts.test // ""' package.json)
-CAP="systemd-run --user --scope -q -p MemoryMax=${VERIFY_MEM_MAX:-6G} -p MemorySwapMax=1G --"
+# Memory cap on any OS (orq run: systemd scope where available, else a watchdog); machine.test_mem_max, VERIFY_MEM_MAX wins.
+CAP="orq run --test ${VERIFY_MEM_MAX:+--mem $VERIFY_MEM_MAX} --"
 # runtests <dir> <json> <mode: related|files> <files...> → "<relative file> :: <test>" for each failure on stdout
 runtests() {
   local dir=$1 j=$2 mode=$3; shift 3

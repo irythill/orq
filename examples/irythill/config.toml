@@ -3,6 +3,8 @@
 [machine]
 agent_mem_max = "4G"      # 14 GB of RAM and 3–5 tasks in parallel
 test_mem_max  = "6G"
+mem_enforce   = "auto"    # auto (systemd scope where available, else watchdog) | kernel | watchdog | off
+#                           per agent: [agents.<name>] mem_max = "6G" (or "off")
 test_slots    = 1
 close_tab_after = 20
 
@@ -64,6 +66,20 @@ quota  = ["copilot"]
 prior  = 0.6
 [agents.copilot.models.opinion]
 default = "auto"          # "auto" = the plan's default model
+
+# ---------------------------------------------------------------------------------------------------------------
+# Roles (optional). Without [roles], each agent's `roles` list above makes an auto pool. With it, each role is
+#   fixed:  agent = "codex"  fallback = ["claude"]   → the first usable one, in order; never one outside the list
+#   auto:   pick = "auto"    pool = ["a", "b"]        → scored with the policy below
+# Roles: conductor · primary (impl/fix) · workers (extra tasks; default = primary) · reviewer · opinion.
+# `rule = "other-vendor" | "any"` per role overrides policy.review.
+# [roles.primary]
+# agent    = "codex"
+# fallback = ["claude"]
+# [roles.reviewer]
+# pick = "auto"
+# pool = ["antigravity", "opencode", "claude"]
+# ---------------------------------------------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------------------------------------------
 # Pick policy (orq-pick). Each candidate's score:
