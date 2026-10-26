@@ -2,6 +2,7 @@
 // orq — one CLI for the orchestration. Subcommands are being ported from setup/ one by one
 // (docs/portability.md); the old names (orq-config, orq-set, orq-lang, orq-block) call into this.
 import { ConfigError, getPath, loadConfig } from "./config.js";
+import { banner, infoLines, version } from "./banner.js";
 import { detectLang, m, setLang } from "./i18n.js";
 import { block, USAGE as BLOCK } from "./commands/block.js";
 import { claim, USAGE as CLAIM } from "./commands/claim.js";
@@ -39,6 +40,10 @@ async function main(argv: string[]): Promise<number> {
     setLang(detectLang(getPath(loadConfig().cfg, "ui.lang")));
   } catch { /* a broken config is reported by the command itself */ }
   const [cmd, ...rest] = argv;
+  // The orc greets only a person at a terminal; scripts and conductors (no TTY) get the plain output.
+  const hello = () => { try { process.stdout.write(banner(infoLines(loadConfig().cfg)) + (process.stdout.isTTY ? "\n" : "")); } catch { /* broken config: skip */ } };
+  if (cmd === "-v" || cmd === "--version") { if (process.stdout.isTTY) hello(); else console.log(version()); return 0; }
+  if (!cmd && process.stdout.isTTY) { hello(); console.log(usage()); return 0; }
   if (!cmd || cmd === "-h" || cmd === "--help") { console.log(usage()); return cmd ? 0 : 2; }
   const run = COMMANDS[cmd];
   if (!run) { console.error(`${m("unknown command", "comando desconhecido")}: ${cmd}\n\n${usage()}`); return 2; }

@@ -1,5 +1,7 @@
 [English](README.md) · **Português**
 
+<p align="center"><img src="docs/img/orq-logo.svg" alt="orq — um orc de fraque erguendo a batuta de maestro" width="304"></p>
+
 # orq — orquestrando agentes de código com o herdr
 
 Você descreve o trabalho numa issue do Plane. Um **conductor** (Claude, de preferência Opus) lê a issue, escolhe o

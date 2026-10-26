@@ -1,5 +1,7 @@
 **English** · [Português](README.pt-BR.md)
 
+<p align="center"><img src="docs/img/orq-logo.svg" alt="orq — an orc in a tailcoat raising a conductor's baton" width="304"></p>
+
 # orq — orchestrating coding agents with herdr
 
 You describe the work in a Plane issue. A **conductor** (Claude, ideally Opus) reads it, picks the right agent for

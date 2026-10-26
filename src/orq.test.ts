@@ -268,8 +268,28 @@ test("process: sizes, tree memory, and the watchdog kills a tree over the cap", 
   assert.throws(() => parseSize("lots"));
   const t = new Map<number, [number, number]>([[1, [0, 10]], [2, [1, 5]], [3, [2, 1]], [4, [9, 100]]]);
   assert.equal(treeMem(1, t), 16); assert.equal(treeMem(2, t), 6);
-  const hog = "const a=[];setInterval(()=>a.push(Buffer.alloc(50e6,1)),100);setTimeout(()=>process.exit(0),20000)";
+  const hog = "const a=[];setInterval(()=>a.push(Buffer.alloc(50e6,1)),100);setTimeout(()=>process.exit(0),90000)";
   assert.equal(await runCapped(process.execPath, ["-e", hog], { cap: 300 * 2 ** 20, mode: "watchdog", intervalMs: 300 }), 137);
   assert.equal(await runCapped(process.execPath, ["-e", "process.exit(3)"], { cap: 2 ** 30, mode: "watchdog" }), 3);
   assert.equal(await runCapped(process.execPath, ["-e", "0"], { mode: "auto" }), 0); // no cap
+});
+
+test("banner: only in a terminal, plain ASCII without color, roles beside the orc", async () => {
+  const { banner, colorMode, infoLines, ORC } = await import("./banner.js");
+  assert.equal(banner(["x"], "none", false), ""); // piped: nothing, ever
+  const plain = banner(infoLines({ agents: { codex: {} }, roles: { primary: { agent: "codex" }, reviewer: { pool: ["claude"] } } }), "none", true);
+  assert.doesNotMatch(plain, /\x1b/);
+  assert.ok(ORC.every((l) => /^[\x20-\x7e]*$/.test(l))); // pure ASCII: renders in any console
+  assert.match(plain, /primary  codex/); assert.match(plain, /reviewer    auto \(claude\)/);
+  assert.match(banner(["x"], "true", true), /\x1b\[38;2;155;209;74m/);
+  assert.equal(colorMode({ NO_COLOR: "1" }, true), "none");
+  assert.equal(colorMode({ COLORTERM: "truecolor" }, true), "true");
+  assert.equal(colorMode({}, true), "basic");
+  assert.equal(colorMode({ COLORTERM: "truecolor" }, false), "none");
+});
+
+test("cli: --version is plain when piped; bare orq without a terminal keeps exit 2", () => {
+  const { run } = sandbox();
+  assert.match(run("--version").stdout, /^\d+\.\d+\.\d+\n$/);
+  assert.equal(run().status, 2);
 });

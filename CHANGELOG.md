@@ -6,6 +6,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Added
+- The orc conductor: ASCII art with the version and who plays which role, shown by `orq`, `orq --version` and
+  `orq setup` in a real terminal only (never when the output is piped); 24-bit or basic colors, `NO_COLOR` respected.
+  Pixel-art logo in `docs/img/orq-logo.svg`, on top of the READMEs.
 - `[roles]` in the config: `conductor`, `primary`, `workers`, `reviewer`, `opinion`, each **fixed** (`agent`, then
   `fallback` in order, never swapped for an agent outside the list) or **auto** (`pool`, scored as before); `rule`
   per role. Without `[roles]`, `agents.<name>.roles` keeps working. `vendor` is optional for the built-in agents.

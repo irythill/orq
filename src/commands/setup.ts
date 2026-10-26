@@ -9,6 +9,7 @@ import { totalmem } from "node:os";
 import { delimiter, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { writeAtomic } from "../fsutil.js";
+import { banner, infoLines } from "../banner.js";
 import { m } from "../i18n.js";
 import { userConfigFile } from "../paths.js";
 import { type Answers, type Plan, suggestRoles, toToml } from "../suggest.js";
@@ -51,8 +52,13 @@ function show(a: Answers): string {
 }
 
 async function interactive(preset?: Answers["preset"]): Promise<number> {
+  process.stdout.write(banner([...infoLines({}).slice(0, 3), m("setup — let's build your orchestra", "setup — vamos montar sua orquestra")]));
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const ask = async (q: string, def = "") => ((await rl.question(def ? `${q} [${def}] ` : `${q} `)).trim() || def);
+  // Input closed mid-question (Ctrl+D, empty stdin): cancel cleanly instead of hanging.
+  const closed = new Promise<never>((_, rej) => rl.once("close", () => rej(new Error("closed"))));
+  closed.catch(() => {});
+  const ask = async (q: string, def = "") =>
+    ((await Promise.race([rl.question(def ? `${q} [${def}] ` : `${q} `), closed])).trim() || def);
   const yes = async (q: string, def = "n") => /^[ysYS]/.test(await ask(`${q} (y/n)`, def));
   try {
     const found = detect();
@@ -88,6 +94,10 @@ async function interactive(preset?: Answers["preset"]): Promise<number> {
     if (await yes(m(`Write this to ${userConfigFile()}?`, `Gravar em ${userConfigFile()}?`)))
       console.log(m(`written: ${write(toml)}`, `gravado: ${write(toml)}`));
     return 0;
+  } catch (e) {
+    if ((e as Error).message !== "closed") throw e;
+    console.log("\n" + m("setup cancelled — nothing was written", "setup cancelado — nada foi gravado"));
+    return 1;
   } finally { rl.close(); }
 }
 

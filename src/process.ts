@@ -6,7 +6,7 @@
 //   off       no cap
 // mode "auto" = kernel when available, else watchdog. (Windows Job Objects need a native addon: later, if the
 // watchdog proves too coarse.)
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { m } from "./i18n.js";
 
 export type MemMode = "auto" | "kernel" | "watchdog" | "off";
@@ -33,15 +33,25 @@ export function resolveMode(mode: MemMode, cap: number | undefined): "kernel" | 
   return "watchdog";
 }
 
+const LIST: [string, string[]] = process.platform === "win32"
+  ? ["powershell", ["-NoProfile", "-NonInteractive", "-Command",
+    "Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,WorkingSetSize | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId) $($_.WorkingSetSize)\" }"]]
+  : ["ps", ["-A", "-o", "pid=,ppid=,rss="]];
+
 /** pid → [ppid, bytes] for every process (ps on Linux/macOS, CIM on Windows). */
 export function processTable(): Map<number, [number, number]> {
+  return parseTable(spawnSync(LIST[0], LIST[1], { encoding: "utf8", timeout: 15_000 }).stdout ?? "");
+}
+
+/** Same, without blocking: PowerShell takes seconds on Windows and the watchdog must keep running meanwhile. */
+export function processTableAsync(): Promise<Map<number, [number, number]>> {
+  return new Promise((res) => execFile(LIST[0], LIST[1], { encoding: "utf8", timeout: 15_000, windowsHide: true },
+    (_e, out) => res(parseTable(out ?? ""))));
+}
+
+function parseTable(text: string): Map<number, [number, number]> {
   const t = new Map<number, [number, number]>();
-  const r = process.platform === "win32"
-    ? spawnSync("powershell", ["-NoProfile", "-Command",
-      "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId) $($_.WorkingSetSize)\" }"],
-      { encoding: "utf8", timeout: 15_000 })
-    : spawnSync("ps", ["-A", "-o", "pid=,ppid=,rss="], { encoding: "utf8", timeout: 15_000 });
-  for (const line of (r.stdout ?? "").split(/\r?\n/)) {
+  for (const line of text.split(/\r?\n/)) {
     const [pid, ppid, mem] = line.trim().split(/\s+/).map(Number);
     if (pid) t.set(pid, [ppid, process.platform === "win32" ? mem : mem * 1024]);
   }
@@ -89,10 +99,13 @@ export function runCapped(cmd: string, args: string[], o: RunOpts = {}): Promise
   const fwd = (sig: NodeJS.Signals) => () => { try { process.kill(-child.pid!, sig); } catch { child.kill(sig); } };
   const onInt = fwd("SIGINT"), onTerm = fwd("SIGTERM");
   if (!win) { process.on("SIGINT", onInt); process.on("SIGTERM", onTerm); }
-  let killed = false;
-  const timer = setInterval(() => {
-    const used = treeMem(child.pid!);
-    if (used > o.cap!) {
+  let killed = false, sampling = false;
+  const timer = setInterval(async () => {
+    if (sampling || killed) return; // a slow sample (Windows) never overlaps the next
+    sampling = true;
+    const used = treeMem(child.pid!, await processTableAsync());
+    sampling = false;
+    if (used > o.cap! && !killed) {
       killed = true;
       console.error(m(`orq: memory ${gb(used)} over the cap (${gb(o.cap!)}): killing the process tree`,
         `orq: memória ${gb(used)} acima do limite (${gb(o.cap!)}): encerrando a árvore de processos`));

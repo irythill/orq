@@ -6,6 +6,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Não lançado]
 ### Adicionado
+- O orc maestro: arte ASCII com a versão e quem faz qual papel, mostrada por `orq`, `orq --version` e `orq setup`
+  só num terminal de verdade (nunca quando a saída vai para outro programa); cores 24-bit ou básicas, respeita
+  `NO_COLOR`. Logo em pixel-art em `docs/img/orq-logo.svg`, no topo dos READMEs.
 - `[roles]` no config: `conductor`, `primary`, `workers`, `reviewer`, `opinion`, cada um **fixo** (`agent`, depois
   `fallback` em ordem, nunca trocado por um agente fora da lista) ou **auto** (`pool`, com a pontuação de antes); `rule`
   por papel. Sem `[roles]`, `agents.<nome>.roles` continua funcionando. `vendor` é opcional para os agentes embutidos.
