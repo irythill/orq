@@ -268,7 +268,8 @@ test("process: sizes, tree memory, and the watchdog kills a tree over the cap", 
   assert.throws(() => parseSize("lots"));
   const t = new Map<number, [number, number]>([[1, [0, 10]], [2, [1, 5]], [3, [2, 1]], [4, [9, 100]]]);
   assert.equal(treeMem(1, t), 16); assert.equal(treeMem(2, t), 6);
-  const hog = "const a=[];setInterval(()=>a.push(Buffer.alloc(50e6,1)),100);setTimeout(()=>process.exit(0),90000)";
+  // The hog stops at ~1 GB: unbounded growth starved the (slow) Windows sampler on CI runners and the test flaked.
+  const hog ="const a=[];setInterval(()=>a.length<20&&a.push(Buffer.alloc(50e6,1)),100);setTimeout(()=>process.exit(0),90000)";
   assert.equal(await runCapped(process.execPath, ["-e", hog], { cap: 300 * 2 ** 20, mode: "watchdog", intervalMs: 300 }), 137);
   assert.equal(await runCapped(process.execPath, ["-e", "process.exit(3)"], { cap: 2 ** 30, mode: "watchdog" }), 3);
   assert.equal(await runCapped(process.execPath, ["-e", "0"], { mode: "auto" }), 0); // no cap
@@ -292,4 +293,70 @@ test("cli: --version is plain when piped; bare orq without a terminal keeps exit
   const { run } = sandbox();
   assert.match(run("--version").stdout, /^\d+\.\d+\.\d+\n$/);
   assert.equal(run().status, 2);
+});
+
+test("instructions: SKILL.md for Claude, an AGENTS.md block that keeps the user's text", () => {
+  const { root, run } = sandbox();
+  const ws = join(root, "ws");
+  assert.equal(run("instructions", "claude", "-w", ws).status, 0);
+  assert.match(readFileSync(join(ws, ".claude", "skills", "issue", "SKILL.md"), "utf8"), /^---\r?\nname: issue/);
+  mkdirSync(ws, { recursive: true });
+  writeFileSync(join(ws, "AGENTS.md"), "# Mine\nkeep me\n");
+  assert.equal(run("instructions", "agents", "-w", ws).status, 0);
+  assert.equal(run("instructions", "agents", "-w", ws).status, 0);
+  const a = readFileSync(join(ws, "AGENTS.md"), "utf8");
+  assert.match(a, /^# Mine\nkeep me\n\n<!-- orq:issue begin/);
+  assert.equal(a.split("orq:issue begin").length, 2); // replaced, not appended twice
+  assert.doesNotMatch(a, /^name: issue/m);
+  assert.match(a, /orq wait/);
+  assert.equal(run("instructions", "nope").status, 2);
+});
+
+test("agents: templates expand with optional groups, defaults, lists and quotes", async () => {
+  const { expandTemplate, agentDef, BUILTIN_AGENTS } = await import("./agents.js");
+  const v = { model: "", effort: "high", roots: ["/a", "/b"], mode: ["--x", "y"], p: "my file" };
+  assert.deepEqual(expandTemplate("run [-m {model}] -e {effort} -M {model:def} [--add {roots}] {mode} 'q a' {p}", v),
+    ["run", "-e", "high", "-M", "def", "--add", "/a", "--add", "/b", "--x", "y", "q a", "my file"]);
+  assert.throws(() => expandTemplate("x {nope}", v), /unknown placeholder/);
+  assert.equal(agentDef({ agents: { codex: { mem_max: "6G" } } }, "codex").run, BUILTIN_AGENTS.codex.run);
+  assert.equal(agentDef({ agents: { acme: { run: "acme" } } }, "acme").run, "acme");
+  assert.throws(() => agentDef({}, "acme"), /unknown agent/);
+});
+
+test("agent + wait: a fake agent from the config runs in the background, wait reports it", () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  (env as Record<string, string>).ORQ_TERMINAL = "plain";
+  const fake = join(root, "fake.mjs");
+  writeFileSync(fake, `let s = ""; process.stdin.on("data", (d) => s += d).on("end", () => {
+  console.log("session id: abc123"); console.error("noise");
+  console.log("ANSWER " + s.trim().split(/\\r?\\n/)[0] + " " + process.argv.slice(2).join(","));
+  process.exit(s.includes("FAIL") ? 1 : 0); });\n`);
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { fake: {
+    run: `'${process.execPath}' '${fake}' [-m {model}] {mode}`, readonly: "ro", write: false, stdin: true,
+    session: { from_log: "session id: (\\S+)" }, mem_max: "off" } } }));
+  mkdirSync(join(root, "w"));
+  writeFileSync(join(root, "p.md"), "hello\n");
+  writeFileSync(join(root, "extra.txt"), "attached\n");
+  const O = join(root, "out", "x");
+  assert.equal(run("agent", "-a", "fake", "-t", "T one", "-d", join(root, "w"), "-o", O, "--", join(root, "p.md")).status, 2); // write: false
+  const r = run("agent", "-a", "fake", "-t", "T one", "-d", join(root, "w"), "-o", O, "-r", "-m", "mm", "-i", join(root, "extra.txt"), "--", join(root, "p.md"));
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /T one → pid:\d+/);
+  const w = run("wait", "--timeout", "60", "--answer", O);
+  assert.equal(w.status, 0, w.stdout + w.stderr);
+  assert.match(w.stdout, /^\[ORQ AGENT DONE\] T one status=ok rc=0 .*answer: .*x\.out\.md/m);
+  assert.match(readFileSync(`${O}.out.md`, "utf8"), /ANSWER hello -m,mm,ro/);
+  assert.equal(readFileSync(`${O}.id`, "utf8").trim(), "abc123");
+  assert.match(readFileSync(`${O}.log`, "utf8"), /noise/);
+  assert.match(readFileSync(`${O}.prompt.md`, "utf8"), /--- extra\.txt ---\nattached/);
+  // A failing run: .done says fail and wait exits 1; a prefix that never runs times out.
+  writeFileSync(join(root, "p.md"), "FAIL\n");
+  assert.equal(run("agent", "-a", "fake", "-t", "T two", "-d", join(root, "w"), "-o", O, "-r", "--", join(root, "p.md")).status, 0);
+  const f = run("wait", "--timeout", "60", O);
+  assert.equal(f.status, 1);
+  assert.match(f.stdout, /status=fail rc=1/);
+  assert.equal(run("wait", "--timeout", "1", join(root, "nothing")).status, 124);
+  assert.equal(run("agent", "-a", "nope", "-t", "x", "-d", root, "-o", O, "--", join(root, "p.md")).status, 2);
 });

@@ -1,7 +1,7 @@
 # Roadmap — a portable, agent-agnostic, modular orq
 
 **Status:** in progress — steps 1 and 2 done (2026-10-10); plan revised 2026-10-26 (agnostic conductor, modular roles,
-guided setup). Steps 3 (CI) and 4 (modular roles: `[roles]`, `orq pick`, `orq stats`) done 2026-10-26; AgentDef templates land with `orq agent` (step 8). Step 5 (guided setup: `orq setup`, `suggestRoles`, presets) done the same day; conductor instructions per format land with `orq wait` (step 8). Step 6 (lock & claim: `orq lock`, `orq claim`, `orq deps`) done the same day. Step 7 (ProcessHost: `orq run`, `mem_enforce`, per-agent `mem_max`) done the same day — Windows uses the watchdog for now. Next: step 8 (`orq agent` + `orq wait`).
+guided setup). Steps 3 (CI) and 4 (modular roles: `[roles]`, `orq pick`, `orq stats`) done 2026-10-26; AgentDef templates land with `orq agent` (step 8). Step 5 (guided setup: `orq setup`, `suggestRoles`, presets) done the same day; conductor instructions per format land with `orq wait` (step 8). Step 6 (lock & claim: `orq lock`, `orq claim`, `orq deps`) done the same day. Step 7 (ProcessHost: `orq run`, `mem_enforce`, per-agent `mem_max`) done the same day — Windows uses the watchdog for now. Step 8 (`orq agent` on AgentDef and TerminalHost herdr/tmux/plain, `orq wait`) done the same day; the `/issue` playbook runs outside herdr and `orq instructions` writes it per conductor format. Next: step 9 (board).
 
 **Goal:** `npm i -g @irythill/orq` (or an equivalent single install) works on Linux, macOS and Windows (native, not only
 WSL), in any shell (bash, zsh, fish, PowerShell, cmd), with **any** agent as conductor and **any** agents as workers and
@@ -203,7 +203,7 @@ remaining bash/Python scripts keep working until ported; old names stay as thin 
 6. ✅ **Lock & claim:** portable lock + queue file; port `herdr-claim`, `herdr-deps`.
 7. ✅ **ProcessHost:** watchdog first (all OSes), then systemd and Job Object; `mem_enforce` and per-agent caps; port
    `herdr-verify`, `herdr-baseline`.
-8. **`orq agent` + `orq wait`:** port `herdr-agent` on AgentDef, Notifier and TerminalHost (herdr, tmux, plain); the
+8. ✅ **`orq agent` + `orq wait`:** port `herdr-agent` on AgentDef, Notifier and TerminalHost (herdr, tmux, plain); the
    `/issue` instructions use `orq wait` outside herdr.
 9. **Board:** `orq board` from orq's own state, no `/proc` or systemd.
 10. **Keyring and install:** `@napi-rs/keyring`; `npm i -g @irythill/orq` + `orq setup` on all OSes; `install.sh` and

@@ -19,8 +19,9 @@ export const DEFAULTS: Obj = {
     test_slots: 1, // test suites in parallel on the machine
     close_tab_after: 20, // seconds until a finished child tab closes (0 = never)
     tui: false, // children in the agent's own screen (-T) by default
+    terminal: "auto", // where children show their output: auto (herdr, else tmux, else plain) | herdr | tmux | plain
   },
-  agents: {}, // only agents declared here are available
+  agents: {}, // only agents declared here are available; run templates: built in for 5 (src/agents.ts), or `run = ...`
   policy: {
     quota_limit: 90, // quota % from which an agent/account is skipped
     max_rounds: 2, // fix rounds before stopping and calling the user

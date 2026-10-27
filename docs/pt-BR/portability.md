@@ -1,7 +1,7 @@
 # Roadmap — um orq portátil, agnóstico de agente e modular
 
 **Status:** em andamento — passos 1 e 2 prontos (2026-10-10); plano revisado em 2026-10-26 (conductor agnóstico,
-papéis modulares, setup guiado). Passos 3 (CI) e 4 (papéis modulares: `[roles]`, `orq pick`, `orq stats`) prontos em 2026-10-26; os templates de AgentDef chegam com o `orq agent` (passo 8). Passo 5 (setup guiado: `orq setup`, `suggestRoles`, presets) pronto no mesmo dia; as instruções do conductor por formato chegam com o `orq wait` (passo 8). Passo 6 (lock e claim: `orq lock`, `orq claim`, `orq deps`) pronto no mesmo dia. Passo 7 (ProcessHost: `orq run`, `mem_enforce`, `mem_max` por agente) pronto no mesmo dia — o Windows usa o vigia por enquanto. Próximo: passo 8 (`orq agent` + `orq wait`).
+papéis modulares, setup guiado). Passos 3 (CI) e 4 (papéis modulares: `[roles]`, `orq pick`, `orq stats`) prontos em 2026-10-26; os templates de AgentDef chegam com o `orq agent` (passo 8). Passo 5 (setup guiado: `orq setup`, `suggestRoles`, presets) pronto no mesmo dia; as instruções do conductor por formato chegam com o `orq wait` (passo 8). Passo 6 (lock e claim: `orq lock`, `orq claim`, `orq deps`) pronto no mesmo dia. Passo 7 (ProcessHost: `orq run`, `mem_enforce`, `mem_max` por agente) pronto no mesmo dia — o Windows usa o vigia por enquanto. Passo 8 (`orq agent` sobre AgentDef e TerminalHost herdr/tmux/plain, `orq wait`) pronto no mesmo dia; o playbook do `/issue` roda fora do herdr e o `orq instructions` o escreve no formato de cada conductor. Próximo: passo 9 (board).
 
 **Objetivo:** `npm i -g @irythill/orq` (ou uma instalação única equivalente) funciona no Linux, macOS e Windows (nativo,
 não só WSL), em qualquer shell (bash, zsh, fish, PowerShell, cmd), com **qualquer** agente como conductor e **quaisquer**
@@ -204,7 +204,7 @@ Os scripts bash/Python restantes seguem funcionando até serem portados; os nome
 6. ✅ **Lock e claim:** lock portátil + arquivo de fila; port do `herdr-claim` e `herdr-deps`.
 7. ✅ **ProcessHost:** vigia primeiro (todos os SOs), depois systemd e Job Object; `mem_enforce` e limite por agente; port
    do `herdr-verify` e `herdr-baseline`.
-8. **`orq agent` + `orq wait`:** port do `herdr-agent` sobre AgentDef, Notifier e TerminalHost (herdr, tmux, plain); as
+8. ✅ **`orq agent` + `orq wait`:** port do `herdr-agent` sobre AgentDef, Notifier e TerminalHost (herdr, tmux, plain); as
    instruções do `/issue` usam `orq wait` fora do herdr.
 9. **Board:** `orq board` a partir do estado do próprio orq, sem `/proc` nem systemd.
 10. **Keyring e instalação:** `@napi-rs/keyring`; `npm i -g @irythill/orq` + `orq setup` em todos os SOs; `install.sh` e

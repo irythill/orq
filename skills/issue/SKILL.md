@@ -1,9 +1,9 @@
 ---
 name: issue
-description: Runs a Plane issue end to end by orchestrating coding agents in herdr (herdr-agent) — implementer and cross-vendor reviewer picked by orq-pick, tests by herdr-verify, comment and status in Plane. Use when the user says "/issue <ID>", "take issue X", "run ABC-123", or asks to check/create issues in the conductor's ecosystem.
+description: Runs a Plane issue end to end by orchestrating coding agents in herdr or any terminal (herdr-agent / orq agent + orq wait) — implementer and cross-vendor reviewer picked by orq-pick, tests by herdr-verify, comment and status in Plane. Use when the user says "/issue <ID>", "take issue X", "run ABC-123", or asks to check/create issues in the conductor's ecosystem.
 ---
 
-# /issue <ID> — conductor playbook (herdr)
+# /issue <ID> — conductor playbook (herdr or any terminal)
 
 You are the **orchestrator**: you plan, dispatch, follow up and report. **Do not implement anything yourself** (it
 burns the conductor's model). Talk to the user in the user's language.
@@ -12,7 +12,19 @@ burns the conductor's model). Talk to the user in the user's language.
 the repositories and their groups (= herdr workspace, `-g`), **each repo's base branch**, verification commands,
 Plane projects (identifier → project_id), default assignee, labels/modules and MCP limitations. Read it before you
 start. Below, `$WS` = workspace.
-You run **inside herdr** (`HERDR_ENV=1`): that is how the children's notices reach your pane.
+**Inside herdr** (`HERDR_ENV=1`): children open in herdr tabs and their notices reach your pane — the flow below.
+**Outside herdr** (any terminal, tmux, any OS): the same flow with these swaps —
+- `herdr-agent ...` → `orq agent ...` (same flags; it is the same program). Children run in tmux windows inside tmux,
+  else in the background (their screen goes to a log; the answer is still `<prefix>.out.md`). No `-T`.
+- `herdr-claim` → `orq claim` (set `ORQ_CONDUCTOR_ID` to a fixed name per conductor), `herdr-deps` → `orq deps`.
+- **Completion signal:** no line arrives in your pane. After dispatching, run `orq wait <prefix>` **as a background
+  task** (Claude Code: Bash with `run_in_background`); its exit wakes you and its output is the line
+  `[ORQ AGENT DONE] <title> status=ok|fail ... answer: <file>` — treat it exactly like `[HERDR-AGENT DONE]`. Several
+  children in parallel: `orq wait --any <prefix1> <prefix2>` (one wake-up per finish; wait again for the rest).
+  No background tasks in your harness → run `orq wait` in the foreground; that is the one allowed blocking wait.
+- `herdr-verify`/`herdr-baseline` still need herdr: outside it, run the repo's tests yourself one suite at a time
+  in the queue: `orq lock run verify --label "<ID> <repo>" -- orq run --test -- <test command>`.
+- Peeking at a child: `<prefix>.log` (not `herdr pane read`).
 Issue artifacts (prompts, notes) live in `$WS/.orquestra/<ID>/`.
 
 ## 1. Read the issue
@@ -180,5 +192,6 @@ rules live) commits and writes the PR. Find and cite in the prompt, by path, wha
 - **Never** push, PR, merge or deploy unless the user asks. Report to the user in 3–5 lines.
 
 ## Saving tokens
-Short prompts (never paste the whole `CLAUDE.md` — the agent reads the repo's own). Review only the diff. Don't re-read
+Short prompts (never paste the whole `CLAUDE.md` — the agent reads the repo's own). Reviews judge only the diff, but the prompt must say the reviewer **may open files for context** (cat, rg, git
+show — read only): Codex read "review only the diff" as "use only the attached diff" and returned an empty review. Don't re-read
 the whole issue at every step. Respect the MCP limitations listed in the workspace `CLAUDE.md`.

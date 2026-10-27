@@ -24,8 +24,26 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 - `orq run`: runs a command under a memory cap on any OS — a systemd scope where available, else a watchdog that
   samples the process tree every second and kills it above the cap (exit 137). `machine.mem_enforce = auto | kernel |
   watchdog | off`, `agents.<name>.mem_max` per agent, `"off"` disables. `herdr-verify` and `herdr-baseline` use it.
+- `orq agent` (was `herdr-agent`, which now calls it): runs a child agent headless under its memory cap and writes the
+  same files (`.out.md`, `.log`, `.id`, `.pane`, `.done`). Its output goes to a herdr tab inside herdr, a tmux window
+  inside tmux, else a background process (log under the state dir) — `machine.terminal` / `ORQ_TERMINAL` choose.
+  `-T` (the agent's own screen) is still the bash script, `herdr-agent-tui`, herdr only.
+- AgentDef: how each agent runs is a set of command templates in `[agents.<name>]` (`run`, `resume`, `readonly`,
+  `write`, `stdin`, `format`, `session`, `answer`, `env`); the five agents ship as built-in defaults matching
+  `herdr-agent`, and any other CLI is usable by declaring `run` in the config.
+- `orq wait <prefix>...`: blocks until children finish and prints one `[ORQ AGENT DONE] <title> status=...` line each
+  (exit 0 all ok, 1 a failure, 124 timeout; `--any`, `--timeout`, `--answer`). For conductors outside herdr; inside
+  herdr the `[HERDR-AGENT DONE]` line still arrives in the conductor's pane.
+- `/issue` outside herdr: the playbook says how to run the flow in any terminal — `orq agent`, `orq claim`,
+  `orq deps`, and `orq wait` as a background task as the completion signal.
+- `orq instructions claude|agents`: writes the `/issue` playbook in the conductor's format — `SKILL.md` for Claude
+  Code, a marked block in `AGENTS.md` for Codex, OpenCode and others (the rest of the file is kept).
 - CI on Linux, macOS and Windows (Node 20 and 24).
 - Roadmap v2 in [docs/portability.md](docs/portability.md).
+
+### Fixed
+- `orq run` with the systemd cap passes `--expand-environment=no` (systemd ≥ 254), like `herdr-agent` did, so `${...}`
+  in arguments survives.
 
 ## [0.1.0] — 2026-10-12
 

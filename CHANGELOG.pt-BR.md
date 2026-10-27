@@ -25,8 +25,27 @@ English: [CHANGELOG.md](CHANGELOG.md).
 - `orq run`: roda um comando com limite de memória em qualquer SO — escopo do systemd onde houver, senão um vigia que
   mede a árvore de processos a cada segundo e a encerra acima do limite (saída 137). `machine.mem_enforce = auto |
   kernel | watchdog | off`, `agents.<nome>.mem_max` por agente, `"off"` desliga. `herdr-verify` e `herdr-baseline` usam ele.
+- `orq agent` (era `herdr-agent`, que agora chama ele): roda um agente filho sem tela, com limite de memória, e escreve
+  os mesmos arquivos (`.out.md`, `.log`, `.id`, `.pane`, `.done`). A saída vai para uma aba do herdr dentro do herdr,
+  uma janela do tmux dentro do tmux, senão um processo em segundo plano (log no diretório de estado) — escolha com
+  `machine.terminal` / `ORQ_TERMINAL`. O `-T` (a tela do próprio agente) continua no script bash, `herdr-agent-tui`,
+  só no herdr.
+- AgentDef: como cada agente roda é um conjunto de templates de comando em `[agents.<nome>]` (`run`, `resume`,
+  `readonly`, `write`, `stdin`, `format`, `session`, `answer`, `env`); os cinco agentes vêm com padrões embutidos iguais
+  ao `herdr-agent`, e qualquer outra CLI pode ser usada declarando `run` no config.
+- `orq wait <prefixo>...`: bloqueia até os filhos terminarem e imprime uma linha `[ORQ AGENT DONE] <título> status=...`
+  por filho (saída 0 tudo ok, 1 alguma falha, 124 tempo esgotado; `--any`, `--timeout`, `--answer`). Para conductors
+  fora do herdr; dentro do herdr a linha `[HERDR-AGENT DONE]` continua chegando no pane do conductor.
+- `/issue` fora do herdr: o playbook explica como rodar o fluxo em qualquer terminal — `orq agent`, `orq claim`,
+  `orq deps`, e `orq wait` como tarefa em segundo plano para o sinal de término.
+- `orq instructions claude|agents`: escreve o playbook do `/issue` no formato do conductor — `SKILL.md` para o Claude
+  Code, um bloco marcado no `AGENTS.md` para Codex, OpenCode e outros (o resto do arquivo é mantido).
 - CI no Linux, macOS e Windows (Node 20 e 24).
 - Roadmap v2 em [docs/pt-BR/portability.md](docs/pt-BR/portability.md).
+
+### Corrigido
+- `orq run` com o limite do systemd passa `--expand-environment=no` (systemd ≥ 254), como o `herdr-agent` fazia, para
+  `${...}` nos argumentos sobreviver.
 
 ## [0.1.0] — 2026-10-12
 

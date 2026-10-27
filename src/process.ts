@@ -6,7 +6,7 @@
 //   off       no cap
 // mode "auto" = kernel when available, else watchdog. (Windows Job Objects need a native addon: later, if the
 // watchdog proves too coarse.)
-import { execFile, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, execFile, spawn, spawnSync, type StdioOptions } from "node:child_process";
 import { m } from "./i18n.js";
 
 export type MemMode = "auto" | "kernel" | "watchdog" | "off";
@@ -26,6 +26,11 @@ export function hasKernelCap(): boolean {
   kernelOk ??= spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"], { stdio: "ignore", timeout: 10_000 }).status === 0;
   return kernelOk;
 }
+
+// systemd-run expands ${...} in its arguments (the prompt!) unless told not to; the flag exists in systemd >= 254.
+let noExpand: string[] | undefined;
+const noExp = () => noExpand ??= /--expand-environment/.test(spawnSync("systemd-run", ["--help"], { encoding: "utf8" }).stdout ?? "")
+  ? ["--expand-environment=no"] : [];
 
 export function resolveMode(mode: MemMode, cap: number | undefined): "kernel" | "watchdog" | "off" {
   if (cap === undefined || mode === "off") return "off";
@@ -79,7 +84,14 @@ export function killTree(pid: number): void {
   else try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
 }
 
-export interface RunOpts { cap?: number; swap?: number; mode?: MemMode; unit?: string; intervalMs?: number; cwd?: string }
+export interface RunOpts {
+  cap?: number; swap?: number; mode?: MemMode; unit?: string; intervalMs?: number; cwd?: string;
+  stdio?: StdioOptions; env?: NodeJS.ProcessEnv; onSpawn?: (c: ChildProcess) => void;
+  quote?: boolean; // Windows shell (.cmd shims): quote each argument instead of passing a command line as is
+}
+
+/** cmd.exe quoting for one argument (only used when Windows needs a shell). */
+export const winQuote = (a: string) => /[\s"&|<>^%()]/.test(a) || a === "" ? `"${a.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"` : a;
 
 const gb = (b: number) => `${(b / 2 ** 30).toFixed(1)} GB`;
 
@@ -87,14 +99,19 @@ const gb = (b: number) => `${(b / 2 ** 30).toFixed(1)} GB`;
 export function runCapped(cmd: string, args: string[], o: RunOpts = {}): Promise<number> {
   const mode = resolveMode(o.mode ?? "auto", o.cap);
   if (mode === "kernel") {
-    const sd = ["--user", "--scope", "-q", ...(o.unit ? [`--unit=${o.unit}`] : []), "-p", `MemoryMax=${o.cap}`,
+    const sd = ["--user", "--scope", "-q", ...noExp(), ...(o.unit ? [`--unit=${o.unit}`] : []), "-p", `MemoryMax=${o.cap}`,
       ...(o.swap !== undefined ? ["-p", `MemorySwapMax=${o.swap}`] : []), "--", cmd, ...args];
-    return wait(spawn("systemd-run", sd, { stdio: "inherit", cwd: o.cwd }));
+    const c = spawn("systemd-run", sd, { stdio: o.stdio ?? "inherit", cwd: o.cwd, env: o.env });
+    o.onSpawn?.(c);
+    return wait(c);
   }
   const win = process.platform === "win32";
   // Own process group on Linux/macOS, so the whole tree can be killed at once.
   // Windows: a shell only for .cmd/.bat shims (npx, claude…); an .exe runs directly (paths with spaces stay intact).
-  const child = spawn(cmd, args, { stdio: "inherit", cwd: o.cwd, detached: !win, shell: win && !/\.exe$/i.test(cmd) });
+  const shell = win && !/\.exe$/i.test(cmd), q = shell && o.quote;
+  const child = spawn(q ? winQuote(cmd) : cmd, q ? args.map(winQuote) : args,
+    { stdio: o.stdio ?? "inherit", cwd: o.cwd, env: o.env, detached: !win, shell, windowsHide: true });
+  o.onSpawn?.(child);
   if (mode === "off" || !child.pid) return wait(child);
   const fwd = (sig: NodeJS.Signals) => () => { try { process.kill(-child.pid!, sig); } catch { child.kill(sig); } };
   const onInt = fwd("SIGINT"), onTerm = fwd("SIGTERM");

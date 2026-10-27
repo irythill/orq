@@ -180,7 +180,9 @@ dois conductors peguem a mesma issue. Detalhes, atalhos e cenários: [docs/pt-BR
 
 | Comando | O que faz |
 |---|---|
-| `herdr-agent -a <agent> ...` | Roda um agente numa aba com limite de memória; `-r` só leitura, `-R <id>` continua a sessão, `-i` anexa um arquivo, `-b <base>` anexa o diff, `-T` a tela do próprio agente |
+| `orq agent -a <agent> ...` (`herdr-agent`) | Roda um agente com limite de memória numa aba do herdr, numa janela do tmux ou em segundo plano; `-r` só leitura, `-R <id>` continua a sessão, `-i` anexa um arquivo, `-b <base>` anexa o diff, `-T` a tela do próprio agente (só herdr) |
+| `orq instructions claude\|agents` | Escreve o playbook do `/issue` como `SKILL.md` (Claude Code) ou dentro do `AGENTS.md` (Codex, OpenCode…) |
+| `orq wait <prefixo>...` | Bloqueia até esses agentes terminarem; imprime `status=` e o arquivo da resposta (qualquer conductor, qualquer terminal) |
 | `herdr-verify` | Testes relacionados ao diff; falhas que também falham na base contam como pré-existentes |
 | `herdr-board` | Painel ao vivo |
 | `herdr-conductor` | Abre o conductor no pane atual |

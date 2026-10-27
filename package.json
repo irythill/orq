@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "bin": { "orq": "dist/cli.js" },
-  "files": ["dist", "!dist/**/*.test.js"],
+  "files": ["dist", "!dist/**/*.test.js", "skills"],
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "tsc",
