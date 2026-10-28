@@ -1,4 +1,5 @@
-# Proves portability on every push: the TypeScript CLI builds and its tests pass on Linux, macOS and Windows.
+# Proves portability on every push: the TypeScript CLI builds and its tests pass on Linux, macOS and Windows, and the
+# npm package installs from its tarball and runs (fake home and config: nothing of the runner's own is touched).
 name: ci
 on:
   push:
@@ -18,5 +19,26 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh fish # the completion test runs each shell it finds
       - run: npm ci
       - run: npm test
+      - name: install from the packed tarball
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true
+          $t = $env:RUNNER_TEMP; $sep = [IO.Path]::PathSeparator
+          npm pack --pack-destination $t
+          npm i -g --no-audit --no-fund --prefix "$t/prefix" (Get-Item "$t/irythill-orq-*.tgz").FullName
+          $env:PATH = "$t/prefix$sep$t/prefix/bin$sep$env:PATH"
+          $env:HOME = "$t/home"; $env:USERPROFILE = "$t/home"; $env:APPDATA = "$t/appdata"; $env:LOCALAPPDATA = "$t/localappdata"
+          $env:XDG_CONFIG_HOME = "$t/cfg"; $env:XDG_STATE_HOME = "$t/state"; $env:ORQ_LANG = 'en'
+          orq --version
+          orq setup --install
+          if (-not (Test-Path "$t/home/.claude/skills/issue/SKILL.md")) { throw 'skills not linked' }
+          New-Item -ItemType Directory "$t/ws" | Out-Null
+          orq setup --workspace "$t/ws" --conductor codex
+          if (-not (Select-String -Quiet -Path "$t/ws/AGENTS.md" -Pattern 'orq:issue begin')) { throw 'no playbook' }
+          orq quota antigravity
+          orq completion powershell | Out-String | Invoke-Expression
+          (TabExpansion2 'orq comp' 8).CompletionMatches.CompletionText

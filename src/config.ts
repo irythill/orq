@@ -14,7 +14,7 @@ export const DEFAULTS: Obj = {
   machine: {
     agent_mem_max: "4G", // memory cap per agent
     agent_swap_max: "1G",
-    test_mem_max: "6G", // cap per test suite (herdr-verify)
+    test_mem_max: "6G", // cap per test suite (orq verify, orq baseline)
     mem_enforce: "auto", // auto (kernel cap where possible, else watchdog) | kernel | watchdog | off
     test_slots: 1, // test suites in parallel on the machine
     close_tab_after: 20, // seconds until a finished child tab closes (0 = never)

@@ -1,4 +1,4 @@
-// orq wait — Notifier for any conductor: block until children started by `orq agent` (or herdr-verify/-baseline) write
+// orq wait — Notifier for any conductor: block until children started by `orq agent` (or orq verify/baseline) write
 // <prefix>.done, then print one line each: "[ORQ AGENT DONE] <title> status=ok rc=0 ... answer: <file>".
 // Exit 0 = all ok, 1 = some failed (or its runner died without .done), 124 = timeout. With --any, returns at the first.
 // Claude Code: run it as a background task; it wakes the conductor when it exits.

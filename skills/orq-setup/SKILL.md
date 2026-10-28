@@ -1,18 +1,22 @@
 ---
 name: orq-setup
-description: Guided first-time setup of orq for a new developer — detects and smoke-tests the installed agent CLIs, asks which agents take which roles, models, Claude accounts and pick weights, writes ~/.config/orq/config.toml, then prepares a conductor workspace (new-conductor.sh + workspace CLAUDE.md) and checks Plane. Use when the user says "/orq-setup", "set up orq", "configure orq" or just ran install.sh.
+description: Guided first-time setup of orq for a new developer — detects and smoke-tests the installed agent CLIs, asks which agents take which roles, models, Claude accounts and pick weights, writes ~/.config/orq/config.toml, then prepares a conductor workspace (orq setup --workspace + workspace CLAUDE.md) and checks Plane. Use when the user says "/orq-setup", "set up orq", "configure orq" or just installed orq (npm i -g @irythill/orq, or install.sh).
 ---
 
 # /orq-setup — configure orq for this developer
 
-You are setting up orq for someone who just ran `install.sh`. Be brief, one step at a time. Talk to the user in the
-user's language. **Ask before writing or running anything that costs tokens or changes files**; show what you will
-write first. Never handle API keys or tokens yourself: tell the user where to put them.
-`$ORQ` = the orq repo (resolve it from `readlink -f "$(command -v orq-config)"`, two levels up).
+You are setting up orq for someone who just installed it (`npm i -g @irythill/orq`, or `install.sh` from a clone).
+Be brief, one step at a time. Talk to the user in the user's language. **Ask before writing or running anything that
+costs tokens or changes files**; show what you will write first. Never handle API keys or tokens yourself: tell the
+user where to put them.
+`$ORQ` = docs and examples: a clone of the repo if there is one, else https://github.com/irythill/orq (`docs/`,
+`examples/`; the npm package ships only the CLI, the skills and the workspace template).
 
 ## 0. Preflight
-- `command -v orq-config orq-pick herdr-agent herdr` — missing orq scripts → tell the user to run `$ORQ/install.sh`
-  and stop. Missing `herdr` → point to the README Install section.
+- `command -v orq` missing → tell the user to run `npm i -g @irythill/orq` and stop.
+- `orq setup --install`: shows what orq found (git, terminal host, memory cap, keyring, shell completion) and links
+  the skills for Claude Code. `git` missing → stop: it is required. herdr is optional (tabs per child; on Linux,
+  `$ORQ/install.sh` adds it as a service): without it children run in tmux windows or in the background.
 - Existing `~/.config/orq/config.toml` (or `config.json`)? Show it in short and ask: start over, or adjust it.
 
 ## 1. Detect and smoke-test the agents
@@ -53,7 +57,7 @@ Offer `$ORQ/examples/irythill/config.toml` as an example, saying clearly **it is
   `~/.config/claude-accounts` (lines `<name> <CLAUDE_CONFIG_DIR>`, e.g. `work ~/.claude`, `personal ~/.claude-personal`)
   and explain the alias + one-time login from `$ORQ/docs/claude-accounts.md`. One account → skip; `quota = ["<name>"]`
   only if listed there.
-- Re-run `$ORQ/install.sh` afterwards so the skills are linked into each account's folder too.
+- Re-run `orq setup --install` afterwards so the skills are linked into each account's folder too.
 
 ## 4. Policy
 Explain simply, then suggest the example's values and ask if they want to change any:
@@ -63,35 +67,38 @@ Explain simply, then suggest the example's values and ask if they want to change
 - `max_rounds` (2) review rounds before handing back; `machine.agent_mem_max` / `test_mem_max` come from `orq setup`
   (RAM and parallel tasks) — the user may change them.
 - **Language** of orq's messages (board, notices, CLI): `[ui] lang = "auto" | "en" | "pt"` (auto = system locale).
-  Suggest the language the user is talking to you in. Mention they can switch any time with `orq-lang toggle`, the
-  `l` key in `herdr-board`, or a herdr key bound to the `orq.lang-toggle` action (see the comments in
+  Suggest the language the user is talking to you in. Mention they can switch any time with `orq lang toggle`, the
+  `l` key in `orq board`, or a herdr key bound to the `orq.lang-toggle` action (see the comments in
   `herdr-plugin/herdr-plugin.toml`).
 - **Board theme**: `[ui] theme = "gunmetal"` (default, dark) | `"chrome"` (light) | `"lcd"` (green) | `"terminal"`.
-  Light terminal → suggest `chrome`; they can cycle with `t` inside `herdr-board`.
+  Light terminal → suggest `chrome`; they can cycle with `t` inside `orq board`.
 
 ## 5. Write and validate
 - Show the full TOML (the proposal plus the changes they asked for). After the OK: `orq setup --answers <file> --write`
   (backs up an existing config as `config.toml.bak-<timestamp>`), then apply their edits with `orq set` or by editing
   the file.
-- Validate: `orq-config files` and `orq-config` (exit 2 = error: fix and retry).
-- Show the picks: `orq-pick impl --level medium --explain --no-record` and
-  `orq-pick review --impl-agent <their main implementer> --explain --no-record`. Exit 3 = no candidate: explain why
+- Validate: `orq config files` and `orq config` (exit 2 = error: fix and retry).
+- Show the picks: `orq pick impl --level medium --explain --no-record` and
+  `orq pick review --impl-agent <their main implementer> --explain --no-record`. Exit 3 = no candidate: explain why
   (roles, vendor, quota) and adjust.
 
 ## 6. Workspace
-- Ask for the folder that groups their repos (e.g. `~/Code/acme-platform`) and a short name. After the OK:
-  `$ORQ/setup/new-conductor.sh <name> <folder>`. It never overwrites a filled `CLAUDE.md`.
+- Ask for the folder that groups their repos (e.g. `~/Code/acme-platform`). After the OK:
+  `orq setup --workspace <folder> --conductor <the conductor agent>` — `.orquestra/`, `.worktrees/`, the map
+  `<folder>/CLAUDE.md` from the template (never overwrites one) and the `/issue` playbook in the conductor's format
+  (`.claude/skills/issue/SKILL.md` for Claude Code, `AGENTS.md` for the others). Conductor in herdr (clone only):
+  `$ORQ/setup/new-conductor.sh <name> <folder>` also writes its instructions and permissions.
 - Fill the repo table in `<folder>/CLAUDE.md` by inspecting each git repo inside it:
   - base branch: `git -C <repo> symbolic-ref --short refs/remotes/origin/HEAD` (strip `origin/`); ask if the team
     branches from another one (e.g. `dev`).
-  - group: the suggestion `new-conductor.sh` printed.
+  - group: the repo folder name in lower case (the herdr workspace or tmux group for its children).
   - stack and verification: `package.json` scripts (lint, typecheck, test) with the package manager from the lockfile;
     otherwise `Makefile`, `pyproject.toml`, `Cargo.toml`, `go.mod`… Leave `—` when nothing fits.
   Show the filled table and write it only after the OK. Plane projects and the issue standard: ask, or leave the
   placeholders and say so.
 
 ## 7. Plane
-- Point to `$ORQ/docs/plane.md`. Check `claude mcp list` (and `CLAUDE_CONFIG_DIR=<dir> claude mcp list` for every
+- Point to `$ORQ/docs/plane.md` (on GitHub without a clone). Check `claude mcp list` (and `CLAUDE_CONFIG_DIR=<dir> claude mcp list` for every
   account that will run a conductor) for a `plane` server.
 - Missing → tell the user to follow docs/plane.md; the API key goes in **their** MCP config, typed by them, never in
   this chat or in a repo.
@@ -100,7 +107,8 @@ Explain simply, then suggest the example's values and ask if they want to change
 Short checklist: agents tested and enabled (roles), accounts, config path (+ backup), workspace and repos filled,
 Plane ok/pending, anything skipped. Then how to start:
 ```bash
-herdr                                     # the window (server runs as a service)
-cd <folder> && herdr-conductor            # inside a herdr pane
+cd <folder> && claude                     # any terminal (or codex, opencode… reading AGENTS.md)
+cd <folder> && herdr-conductor            # or inside a herdr pane (clone + install.sh)
 ```
-and in the conductor: `/issue DEMO-123`.
+and in the conductor: `/issue DEMO-123`. `orq board` in another tab shows everything; shell completion:
+`orq completion bash|zsh|fish|powershell` (the line to add is in `orq setup --install`).

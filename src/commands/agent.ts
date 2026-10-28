@@ -17,6 +17,7 @@ import { m } from "../i18n.js";
 import { stateDir } from "../paths.js";
 import { killTree, type MemMode, parseSize, resolveMode, runCapped } from "../process.js";
 import { closeOwnTab, detectHost, type Host, launch, shq } from "../terminal.js";
+import { dropWorktree, notify } from "../testrun.js";
 
 export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base] [-r] [-R session] -- <prompt.md>   run a child agent";
 
@@ -176,7 +177,7 @@ async function runJob(file: string): Promise<number> {
   };
   const post = () => {
     if (j.promptInDir) rmSync(join(j.dir, PF), { force: true });
-    if (j.throwaway) spawnSync("git", ["-C", j.repo, "worktree", "remove", "--force", j.dir], { stdio: "ignore" });
+    if (j.throwaway) dropWorktree(j.repo, j.dir);
   };
   if (!pre()) rc = 2;
   else {
@@ -225,10 +226,4 @@ async function runJob(file: string): Promise<number> {
   console.log(`\n[${j.agent} ${m("finished", "terminou")}: exit ${rc} status=${st}] ${m("answer", "resposta")}: ${O}.out.md`);
   if (j.host !== "plain" && !j.keep) { await sleep(j.closeAfter * 1000); closeOwnTab(j.host); }
   return 0;
-}
-
-/** The conductor is a herdr pane: type the line into it (herdr-notify waits for it to leave a dialog). */
-function notify(pane: string, line: string): void {
-  const local = join(dirname(CLI), "..", "setup", "herdr-notify");
-  spawnSync(existsSync(local) ? local : "herdr-notify", [pane, line], { stdio: "inherit" });
 }

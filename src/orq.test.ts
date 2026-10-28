@@ -1,8 +1,8 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { merge } from "./config.js";
@@ -15,8 +15,10 @@ const CLI = fileURLToPath(new URL("./cli.js", import.meta.url));
 
 function sandbox() {
   const root = mkdtempSync(join(tmpdir(), "orq-test-"));
-  const env = { ...process.env, XDG_CONFIG_HOME: join(root, "cfg"), XDG_STATE_HOME: join(root, "state"), ORQ_LANG: "en" };
-  delete (env as Record<string, string | undefined>).ORQ_CONFIG;
+  // A fake home too: nothing a test runs may reach the real ~/.claude, ~/.config/orq or ~/.local/state/orq.
+  const env = { ...process.env, XDG_CONFIG_HOME: join(root, "cfg"), XDG_STATE_HOME: join(root, "state"), ORQ_LANG: "en",
+    HOME: join(root, "home"), USERPROFILE: join(root, "home"), APPDATA: join(root, "appdata"), LOCALAPPDATA: join(root, "localappdata") };
+  for (const k of ["ORQ_CONFIG", "CLAUDE_CONFIG_DIR", "CLAUDE_ACCOUNTS_FILE"]) delete (env as Record<string, string | undefined>)[k];
   const run = (...args: string[]) => spawnSync(process.execPath, [CLI, ...args], { env, cwd: root, encoding: "utf8" });
   return { root, env, run };
 }
@@ -359,4 +361,207 @@ test("agent + wait: a fake agent from the config runs in the background, wait re
   assert.match(f.stdout, /status=fail rc=1/);
   assert.equal(run("wait", "--timeout", "1", join(root, "nothing")).status, 124);
   assert.equal(run("agent", "-a", "nope", "-t", "x", "-d", root, "-o", O, "--", join(root, "p.md")).status, 2);
+});
+
+test("board: agents, queue, claims, quota and blocks from fake state files, plain when piped", () => {
+  const { root, env, run } = sandbox(), st = join(root, "state", "orq"), ws = join(root, "ws"), now = Date.now();
+  const iso = (ms: number) => new Date(ms).toISOString(), dead = spawnSync(process.execPath, ["-e", ""]).pid!;
+  const pre = join(ws, ".orquestra", "ABC-1", "impl-api");
+  mkdirSync(join(st, "agents"), { recursive: true }); mkdirSync(dirname(pre), { recursive: true });
+  mkdirSync(join(st, "locks", "verify"), { recursive: true }); mkdirSync(join(st, "board"), { recursive: true });
+  writeFileSync(`${pre}.job.json`, JSON.stringify({ argv: ["claude", "-p", "--model", "claude-opus-5"] }));
+  writeFileSync(`${pre}.log`, `start\n${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Edit" }] } })}\n`);
+  const agent = (unit: string, o: object) => writeFileSync(join(st, "agents", `${unit}.json`),
+    JSON.stringify({ prefix: pre, title: "ABC-1 impl api", agent: "claude", host: "plain", cap: 2 ** 32, at: iso(now - 90_000), ...o }));
+  agent("u-run", { pid: process.pid });
+  agent("u-dead", { pid: dead });
+  agent("u-done", { pid: dead, status: "fail", rc: 3, end: iso(now - 60_000) });
+  agent("u-old", { pid: dead, status: "ok", rc: 0, at: iso(now - 7200_000), end: iso(now - 7000_000) });
+  writeFileSync(join(st, "locks", "verify", `${now - 5000}-${process.pid}.json`), JSON.stringify({ pid: process.pid, label: "verify ABC-1 api", at: now - 5000, held: true }));
+  writeFileSync(join(ws, ".orquestra", "ABC-1", "owner"), `pane=me@box kind=id account=work at=${iso(now)}\n`);
+  writeFileSync(join(st, "blocks.json"), JSON.stringify({ copilot: { until: now / 1000 + 86400, reason: "out" } }));
+  writeFileSync(join(st, "board", "quota.txt"), "work 5h=42% week=7%\nopencode 5h=- week=- [no quota collector]\n");
+
+  const r = run("board", "--json", "-w", ws);
+  assert.equal(r.status, 0, r.stderr);
+  const j = JSON.parse(r.stdout);
+  assert.deepEqual(j.agents.map((a: { unit: string; state: string }) => [a.unit, a.state]), [["u-run", "running"], ["u-dead", "died"], ["u-done", "fail"]]);
+  const a = j.agents[0];
+  assert.deepEqual([a.issue, a.label, a.model, a.activity, a.cap], ["ABC-1", "impl-api", "claude-opus-5", "· Edit", 2 ** 32]);
+  assert.ok(a.secs >= 89 && a.mem > 0, `secs=${a.secs} mem=${a.mem}`);
+  assert.equal(j.queue.holders[0].label, "verify ABC-1 api");
+  assert.deepEqual(j.conductors, [{ id: "me@box", kind: "id", account: "work", alive: true, issues: ["ABC-1"] }]);
+  assert.deepEqual(j.quota.lines[0], { name: "work", five: "42%", week: "7%" });
+  assert.equal(j.blocks.copilot.reason, "out");
+
+  const o = run("board", "--once", "-w", ws);
+  assert.equal(o.status, 0, o.stderr);
+  assert.ok(!o.stdout.includes("\x1b"), "no escape codes when piped");
+  for (const s of ["TRANSPORT", "verify ABC-1 api", "impl-api", "claude-opus-5", "· Edit", "runner gone", "rc=3", "me@box", "42%",
+    "no quota collector: opencode", "copilot", "CHARTS"]) assert.ok(o.stdout.includes(s), `missing ${s}\n${o.stdout}`);
+  const pt = spawnSync(process.execPath, [CLI, "board", "--once", "-w", ws], { env: { ...env, ORQ_LANG: "pt" }, encoding: "utf8" });
+  assert.ok(pt.stdout.includes("fila de testes"), pt.stdout);
+});
+
+test("board: render colors only when asked, activity from the log tail", async () => {
+  const { render, activity, dur } = await import("./commands/board.js");
+  const s = { at: new Date().toISOString(), mem: { used: 1, total: 2 }, workspaces: ["/w"], queue: { holders: [], waiters: [] },
+    agents: [], conductors: [], quota: { lines: [] }, blocks: {}, scoreboard: [] };
+  assert.ok(!render(s, "gunmetal", 80, "none").join("\n").includes("\x1b"));
+  assert.ok(render(s, "gunmetal", 80, "true").join("\n").includes("\x1b[48;2;25;27;29m"));
+  assert.ok(render(s, "gunmetal", 80, "basic").join("\n").includes("\x1b[36m"));
+  assert.equal(activity(`{"type":"text","part":{"text":"hello"}}\n{"partial`), "hello");
+  assert.equal(activity("a\nlast words\n\n"), "last words");
+  assert.deepEqual([dur(5), dur(65), dur(3700), dur(90000)], ["5s", "1m05s", "1h01m", "1d01h"]);
+});
+
+test("verify + baseline: new vs pre-existing failures with a fake jest, in the queue, worktrees cleaned up", async () => {
+  const { runnerArgs, failures } = await import("./testrun.js");
+  assert.deepEqual(runnerArgs("vitest", "related", ["a.ts"], "j"), ["related", "a.ts", "--run", "--passWithNoTests", "--reporter=json", "--outputFile=j", "--maxWorkers=2"]);
+  assert.deepEqual(runnerArgs("jest", "all", [], "j"), ["--json", "--outputFile=j", "--maxWorkers=2", "--workerIdleMemoryLimit=1G"]);
+  assert.equal(failures(join(tmpdir(), "orq-no-such.json"), "/x"), undefined);
+
+  const { root, env, run } = sandbox(), ws = join(root, "ws"), repo = join(ws, "api");
+  Object.assign(env, { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", ORQ_TERMINAL: "plain" });
+  const git = (...a: string[]) => {
+    const r = spawnSync("git", a, { cwd: repo, env, encoding: "utf8" });
+    assert.equal(r.status, 0, `git ${a.join(" ")}: ${r.stderr}`);
+  };
+  mkdirSync(join(repo, "node_modules", "jest"), { recursive: true });
+  // The fake jest: every *.test.js line "FAIL <name>" / "PASS <name>" is a test; --runTestsByPath limits the files.
+  writeFileSync(join(repo, "node_modules", "jest", "package.json"), JSON.stringify({ bin: { jest: "bin.js" } }));
+  writeFileSync(join(repo, "node_modules", "jest", "bin.js"), `const fs = require("fs"), path = require("path");
+const a = process.argv.slice(2), out = a.find((x) => x.startsWith("--outputFile=")).slice(13);
+const only = a.includes("--runTestsByPath") ? a.filter((x) => !x.startsWith("-")) : null;
+const files = fs.readdirSync(".").filter((f) => f.endsWith(".test.js") && (!only || only.includes(f)));
+let total = 0;
+const testResults = files.map((f) => ({ name: path.join(process.cwd(), f), assertionResults: fs.readFileSync(f, "utf8").split(/\\r?\\n/).filter(Boolean)
+  .map((l) => { total++; const [s, n] = l.split(" "); return { status: s === "FAIL" ? "failed" : "passed", fullName: n }; }) }));
+console.log("ran " + files.join(","));
+fs.writeFileSync(out, JSON.stringify({ numTotalTests: total, testResults }));\n`);
+  writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { test: "jest" } }));
+  writeFileSync(join(repo, ".gitignore"), "node_modules\n");
+  writeFileSync(join(repo, "a.test.js"), "FAIL old\nPASS fine\n");
+  writeFileSync(join(repo, "src.js"), "1\n");
+  git("init", "-q", "-b", "main"); git("add", "."); git("commit", "-qm", "base");
+  spawnSync("git", ["init", "-q", "--bare", join(root, "origin.git")]);
+  git("remote", "add", "origin", join(root, "origin.git")); git("push", "-q", "origin", "main"); git("fetch", "-q", "origin");
+  const O = join(ws, ".orquestra", "X-1", "verify-api");
+  const verify = () => run("verify", "-x", "-w", ws, "-r", "api", "-d", repo, "-b", "main", "-o", O);
+
+  let r = verify();
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(readFileSync(`${O}.txt`, "utf8"), /^# verify api \w+: no JS\/TS file changed relative to origin\/main/);
+
+  git("checkout", "-qb", "feat");
+  writeFileSync(join(repo, "src.js"), "2\n");
+  writeFileSync(join(repo, "b.test.js"), "FAIL new\nPASS ok\n");
+  git("add", "."); git("commit", "-qm", "feat");
+  r = verify();
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const txt = readFileSync(`${O}.txt`, "utf8");
+  assert.match(txt, /: 4 tests related to 2 changed files\n# base: 1 failing file\(s\) run on origin\/main \w+\n/);
+  assert.match(txt, /## New failures \(1\)\nb\.test\.js :: new\n\n## Already failing on origin\/main\na\.test\.js :: old\n$/);
+  assert.match(readFileSync(`${O}.done`, "utf8"), /^status=fail new=1 at=/);
+  assert.match(readFileSync(`${O}.log`, "utf8"), /ran a\.test\.js,b\.test\.js/);
+  assert.match(run("wait", "--timeout", "5", O).stdout, /^\[ORQ AGENT DONE\] verify-api status=fail new=1 .*answer: .*verify-api\.txt/);
+  assert.equal(run("lock", "status", "verify", "--json").stdout.trim(), JSON.stringify({ holders: [], waiters: [] }));
+  assert.deepEqual(readdirSync(join(ws, ".worktrees")), []); // the base worktree is gone
+  assert.ok(existsSync(join(repo, "node_modules", "jest", "bin.js")), "the main clone's node_modules is intact");
+
+  writeFileSync(join(repo, "b.test.js"), "PASS new\n");
+  git("commit", "-qam", "fix");
+  r = verify();
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(readFileSync(`${O}.done`, "utf8"), /^status=ok new=0/);
+  assert.match(readFileSync(`${O}.txt`, "utf8"), /## New failures \(0\)\nnone\n\n## Already failing on origin\/main\na\.test\.js :: old/);
+  // In the background (plain terminal), as the conductor uses it: returns at once, orq wait reports it by title.
+  r = run("verify", "-w", ws, "-r", "api", "-d", repo, "-b", "main", "-o", O);
+  assert.match(r.stdout, /^\[orq verify\] X-1 verify api → pid:\d+/, r.stderr);
+  const w = run("wait", "--timeout", "60", O);
+  assert.equal(w.status, 0, w.stdout);
+  assert.match(w.stdout, /^\[ORQ AGENT DONE\] X-1 verify api status=ok new=0 /);
+
+  const base = () => run("baseline", "-x", "-w", ws, "-r", "api", "-b", "main");
+  r = base();
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const out = join(ws, ".orquestra", "baseline", "api-main.txt");
+  assert.match(readFileSync(out, "utf8"), /^# sha \w+ \d{4}-\d\d-\d\d — tests already failing on origin\/main\na\.test\.js :: old\n$/);
+  assert.match(readFileSync(`${out}.done`, "utf8"), /^status=ok sha=\w+ at=/);
+  assert.match(base().stdout, /baseline already up to date/);
+  assert.deepEqual(readdirSync(join(ws, ".worktrees")), []);
+  assert.equal(run("verify", "-w", ws).status, 2);
+});
+
+test("setup --install: skills linked into each Claude account, kept when they are the user's; --workspace", () => {
+  const { root, env, run } = sandbox(), home = join(root, "home");
+  writeFileSync(join(root, "accounts"), `work ${join(root, "claude-work")}\n`);
+  (env as Record<string, string>).CLAUDE_ACCOUNTS_FILE = join(root, "accounts");
+  mkdirSync(join(home, ".claude", "skills", "orq-status"), { recursive: true }); // a real folder of the user's
+  let r = run("setup", "--install");
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Environment\n  node +v\d+/);
+  assert.match(r.stdout, /git +ok/);
+  for (const d of [join(home, ".claude"), join(root, "claude-work")])
+    assert.match(readFileSync(join(d, "skills", "issue", "SKILL.md"), "utf8"), /^---\r?\nname: issue/);
+  assert.match(r.stdout, /skip .*orq-status/);
+  r = run("setup", "--install");
+  assert.match(r.stdout, /ok +\S+issue/);
+  assert.doesNotMatch(r.stdout, /link /);
+
+  const ws = join(root, "ws");
+  mkdirSync(ws);
+  assert.equal(run("setup", "--workspace", ws, "--conductor", "codex").status, 0);
+  assert.match(readFileSync(join(ws, "AGENTS.md"), "utf8"), /orq:issue begin/);
+  assert.match(readFileSync(join(ws, "CLAUDE.md"), "utf8"), new RegExp(`ws ecosystem \\(${ws.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}\\)`));
+  writeFileSync(join(ws, "CLAUDE.md"), "mine\n");
+  assert.equal(run("setup", "--workspace", ws, "--conductor", "claude").status, 0);
+  assert.equal(readFileSync(join(ws, "CLAUDE.md"), "utf8"), "mine\n"); // never overwritten
+  assert.ok(existsSync(join(ws, ".claude", "skills", "issue", "SKILL.md")) && existsSync(join(ws, ".orquestra")));
+});
+
+test("completion: scripts per shell, each one checked by its own shell when it is installed", () => {
+  const { env, run } = sandbox();
+  assert.equal(run("completion", "cmd").status, 2);
+  const has = (c: string, a: string[]) => spawnSync(c, a, { stdio: "ignore" }).status === 0;
+  const sh = (c: string, a: string[], script: string) => spawnSync(c, a, { env: { ...env, ORQ_COMP: script }, encoding: "utf8" });
+  const bash = run("completion", "bash").stdout;
+  assert.match(bash, /complete -o default -F _orq orq/);
+  if (process.platform !== "win32" && has("bash", ["--version"])) {
+    const r = sh("bash", ["-c", 'eval "$ORQ_COMP"; COMP_WORDS=(orq la); COMP_CWORD=1; _orq; echo "${COMPREPLY[*]}"; COMP_WORDS=(orq lock ""); COMP_CWORD=2; _orq; echo "${COMPREPLY[*]}"'], bash);
+    assert.equal(r.stdout, "lang\nwait release run status\n", r.stderr);
+  }
+  const zsh = run("completion", "zsh").stdout;
+  if (has("zsh", ["--version"])) {
+    const r = sh("zsh", ["-f", "-c", 'autoload -U compinit && compinit -u -D && eval "$ORQ_COMP" && (( $+functions[_orq] )) && echo ok'], zsh);
+    assert.equal(r.stdout.trim(), "ok", r.stderr);
+  }
+  const fish = run("completion", "fish").stdout;
+  assert.match(fish, /-a lang -d 'language of orq\\'s messages'/);
+  if (has("fish", ["--version"])) {
+    const r = sh("fish", ["-c", 'echo $ORQ_COMP | source; complete -C "orq la"; complete -C "orq lang to"'], fish);
+    assert.match(r.stdout, /^lang\tlanguage of orq's messages\ntoggle\n$/, r.stderr);
+  }
+  const ps = run("completion", "powershell").stdout;
+  assert.equal(run("completion", "pwsh").stdout, ps);
+  const pwsh = ["pwsh", "powershell"].find((c) => has(c, ["-NoProfile", "-Command", "exit 0"]));
+  if (pwsh) {
+    const r = sh(pwsh, ["-NoProfile", "-NonInteractive", "-Command", "Invoke-Expression $env:ORQ_COMP; " +
+      "(TabExpansion2 'orq la' 6).CompletionMatches.CompletionText; (TabExpansion2 'orq lock ' 9).CompletionMatches.CompletionText -join ','"], ps);
+    assert.equal(r.stdout.trim().split(/\r?\n/).join("|"), "lang|wait,release,run,status", r.stderr);
+  }
+});
+
+test("keyring: the native module loads on every CI platform; off and missing entries read as nothing", async () => {
+  const { backend, readSecret } = await import("./keyring.js");
+  const old = process.env.ORQ_KEYRING;
+  try {
+    process.env.ORQ_KEYRING = "off";
+    assert.equal(backend(), "none");
+    assert.equal(readSecret("gemini", "antigravity"), undefined);
+    delete process.env.ORQ_KEYRING;
+    assert.equal(backend(), "native");
+    // Only on CI: a lookup (of an entry nobody has) must not throw even without a keyring service (headless Linux).
+    if (process.env.CI) assert.equal(readSecret(`orq-test-${process.pid}`, "nobody"), undefined);
+  } finally { if (old === undefined) delete process.env.ORQ_KEYRING; else process.env.ORQ_KEYRING = old; }
 });

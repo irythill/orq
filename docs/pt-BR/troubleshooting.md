@@ -21,7 +21,7 @@
 | O filho morre no limite de 4 GB durante tsc + jest | a suíte de testes não cabe junto com o agente | os testes saem do filho (`herdr-verify` no conductor, 6 GB, em fila); o filho roda `NODE_OPTIONS=--max-old-space-size=2048 tsc` |
 | A máquina trava (I/O alto, OOM) ao criar worktrees | cada worktree instalava ~1 GB de `node_modules` | o worktree **linka** o `node_modules` do repo principal; deps desatualizadas → um install no repo principal |
 | Tudo morre de uma vez sob pressão de memória | o `systemd-oomd` mata o pai de todas as sessões | filhos sem MCP, `--maxWorkers=2`, uma suíte por vez; servidor do herdr com `ManagedOOMPreference=avoid` |
-| Um processo descontrolado come um núcleo por dias | um filho deixou um processo para trás depois que o worktree foi apagado | o `herdr-board` lista scopes de agentes sem `.run.sh` como "orphan?" e sinaliza agentes rodando há mais de 3 h |
+| Um processo descontrolado come um núcleo por dias | um filho deixou um processo para trás depois que o worktree foi apagado | o `orq board` mostra um agente cujo runner morreu sem terminar como "runner sumiu" e sinaliza agentes rodando há mais de 3 h |
 | O conductor diz "rodando" quando o agente já terminou | o `pgrep -f` casa com a própria linha de comando | terminou = `<prefix>.done` existe; nunca `pgrep`/`ps` |
 | O reviewer não consegue ler os critérios em `.orquestra/` | o sandbox só enxerga a pasta do `-d` | `orq agent -i <file>` anexa o conteúdo ao prompt; `-b <base>` anexa o diff |
 | A review do Codex não consegue rodar testes (`EROFS` no cache do jest) | o sandbox só-leitura não consegue escrever nem em `/tmp` | `-a codex -r` roda `workspace-write` num **worktree descartável**, removido no fim |

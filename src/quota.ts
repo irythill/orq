@@ -2,7 +2,7 @@
 //   "builtin"            claude: the account's usage (Anthropic OAuth usage endpoint, same login Claude Code uses)
 //                        codex:  the rate_limits Codex writes into its latest session file
 //                        antigravity: per-model quota from Cloud Code (fetchAvailableModels), with the login agy keeps
-//                                 in the system keyring (Linux: Secret Service via secret-tool)
+//                                 in the OS keyring (src/keyring.ts: Secret Service, Keychain, Credential Manager)
 //                        copilot: premium requests left this month (`gh api /copilot_internal/user`; a monthly
 //                                 allowance, shown in the week slot)
 //   false                left out of the list entirely
@@ -10,12 +10,13 @@
 //   { command = "..." }  any command printing lines "<name> 5h=NN% week=NN% [note]"
 // Output line (read by orq-pick and the board): "<name> 5h=NN% week=NN% [note]".
 //   -  = the plan has no such window (not limiting);  ? = no data (expired login, collector failed).
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { claudeAccounts } from "./accounts.js";
 import { writeAtomic } from "./fsutil.js";
+import { readSecret } from "./keyring.js";
 import { stateDir } from "./paths.js";
 import { m } from "./i18n.js";
 
@@ -65,11 +66,7 @@ function claudeToken(dir: string): OAuth | undefined {
     return JSON.parse(readFileSync(join(dir, ".credentials.json"), "utf8")).claudeAiOauth;
   } catch { /* not in a file: macOS keeps it in the Keychain */ }
   if (process.platform !== "darwin") return undefined;
-  try {
-    const raw = execFileSync("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    return JSON.parse(raw).claudeAiOauth;
-  } catch { return undefined; }
+  try { return JSON.parse(readSecret("Claude Code-credentials", userInfo().username) ?? "").claudeAiOauth; } catch { return undefined; }
 }
 
 export async function claudeQuota(name: string, dir: string): Promise<QuotaLine> {
@@ -169,12 +166,12 @@ export function antigravityFromModels(models: Record<string, ModelQuota>, now = 
 }
 
 function agyToken(): { access?: string; expiry?: string } | undefined {
-  // agy (go-keyring) keeps {"token": {access_token, expiry, ...}} under service "gemini", user "antigravity".
-  const r = spawnSync("secret-tool", ["lookup", "service", "gemini", "username", "antigravity"],
-    { encoding: "utf8", timeout: 10_000 });
-  if (r.error || r.status !== 0 || !r.stdout.trim()) return undefined;
+  // agy (go-keyring) keeps {"token": {access_token, expiry, ...}} under service "gemini", user "antigravity"
+  // (on Windows go-keyring names the credential "gemini:antigravity").
+  const raw = readSecret("gemini", "antigravity", "gemini:antigravity");
+  if (!raw) return undefined;
   try {
-    const t = JSON.parse(r.stdout).token;
+    const t = JSON.parse(raw).token;
     return { access: t?.access_token, expiry: t?.expiry };
   } catch { return undefined; }
 }

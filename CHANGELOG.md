@@ -4,7 +4,7 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 [Keep a Changelog](https://keepachangelog.com/); versions follow `package.json`.
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
-## [Unreleased]
+## [0.1.0] — 2026-10-28 — first npm release
 ### Added
 - The orc conductor: ASCII art with the version and who plays which role, shown by `orq`, `orq --version` and
   `orq setup` in a real terminal only (never when the output is piped); 24-bit or basic colors, `NO_COLOR` respected.
@@ -38,14 +38,44 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   `orq deps`, and `orq wait` as a background task as the completion signal.
 - `orq instructions claude|agents`: writes the `/issue` playbook in the conductor's format — `SKILL.md` for Claude
   Code, a marked block in `AGENTS.md` for Codex, OpenCode and others (the rest of the file is kept).
+- `orq board` (`herdr-board` now calls it): the live board from orq's own state files — running agents
+  (`<state>/agents/*.json`, memory of the process tree against the cap), the test queue (`orq lock`), conductors and
+  their claimed issues, quota (cached, collected in the background every 5 min), active blocks and the 7-day
+  scoreboard. No `/proc`, systemd or jq: Linux, macOS and Windows, any terminal. `--once`, `--json`, `--interval`;
+  keys `q` `r` `l` `t`; plain text when piped or with `NO_COLOR`. Not ported: `f` (jump to a pane) and the live
+  herdr state of each conductor pane.
+- `orq verify` and `orq baseline` (were `herdr-verify` and `herdr-baseline`, which now call them): the tests related
+  to a diff, with failures that also fail on `origin/<base>` counted as pre-existing, and the base snapshot. Same flags,
+  output files and exit codes; same "verify" queue (`orq lock`) and test memory cap (`orq run`). They open in a herdr
+  tab, a tmux window or the background like `orq agent`, `-x` runs in the foreground, and `orq wait <prefix>` waits
+  for them. The runner's own bin runs with node when present (no `npx` shell on Windows); jest and vitest.
+- **Install on any OS:** `npm i -g @irythill/orq` + `orq setup`, no clone. `orq setup` now shows what it found (git,
+  terminal host, memory cap, keyring, the shell's completion line), links the skills into each Claude account (a
+  junction on Windows, a copy if links fail; never over a folder of the user's) and prepares the conductor's
+  workspace (`.orquestra/`, the `CLAUDE.md` map, the `/issue` playbook in its format). `--install` and
+  `--workspace <dir> [--conductor <agent>]` do those parts with no questions. The package ships the skills and the
+  workspace template.
+- `orq completion bash|zsh|fish|powershell`: prints the completion script for that shell (subcommands and their
+  fixed words; files otherwise).
 - CI on Linux, macOS and Windows (Node 20 and 24).
 - Roadmap v2 in [docs/portability.md](docs/portability.md).
 
+### Changed
+- Keyring reads go through `@napi-rs/keyring` (Secret Service, Keychain, Credential Manager) instead of `secret-tool`
+  and `security`; those remain the fallback when the native module can't load. `ORQ_KEYRING = native | cli | off`.
+  The Antigravity quota now works on macOS and Windows too.
+- `install.sh` and `setup/herdr.service` are optional Linux extras for a clone (herdr service and plugin, the old
+  script names); nothing requires them.
+- The skills call `orq pick`, `orq config`, `orq block`, `orq stats`, `orq quota`, `orq lang` (present in every
+  install) instead of the `orq-*` / `agent-quota` wrappers; `/orq-setup` starts from `npm i -g` and `orq setup`.
+
 ### Fixed
+- A pid of 0 (an empty `.pid` file, a missing field) no longer counts as a live process: `process.kill(0, 0)` targets
+  the process group and always succeeds.
 - `orq run` with the systemd cap passes `--expand-environment=no` (systemd ≥ 254), like `herdr-agent` did, so `${...}`
   in arguments survives.
 
-## [0.1.0] — 2026-10-12
+## 2026-10-12 — the orq CLI in TypeScript (git only, before the npm package)
 
 ### Added
 - **`orq` CLI in TypeScript** (Node 20+): `orq config`, `orq set`, `orq lang`, `orq block` and `orq quota`. The old

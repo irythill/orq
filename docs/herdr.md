@@ -26,7 +26,7 @@ Inside herdr:
    line of answer).
 5. Follow along: the child shows up in the group's space (e.g. `api`) — `Alt+↓` to it, `Alt+←/→` between tabs, `Alt+↑`
    back. Don't type in child tabs (headless, output only). When a child finishes, `[HERDR-AGENT DONE] …` reaches the
-   conductor and it carries on by itself (verify → review → Plane comment). Or keep `herdr-board` open in a tab.
+   conductor and it carries on by itself (verify → review → Plane comment). Or keep `orq board` (`herdr-board`) open in a tab.
 
 **2. Several issues at once (same workspace)**
 1. Create another space (`prefix Shift+C`, name `acme-2`) and open another conductor there, preferably on **another

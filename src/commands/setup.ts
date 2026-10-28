@@ -1,21 +1,26 @@
-// orq setup — guided first configuration: detect agent CLIs, ask what the user knows, suggest roles (src/suggest.ts).
+// orq setup — guided first configuration: detect agent CLIs, ask what the user knows, suggest roles (src/suggest.ts),
+// and do what a fresh `npm i -g @irythill/orq` still needs (src/install.ts): skills for Claude Code, a conductor workspace.
 //   orq setup                               interactive, in any terminal
 //   orq setup --detect                      installed agent CLIs, as JSON (for a conductor driving the setup)
 //   orq setup --answers <file|-> [--write]  proposal from answers JSON (see Answers in src/suggest.ts); --write saves it
+//   orq setup --install                     no questions: what orq found, and the skills linked for Claude Code
+//   orq setup --workspace <dir> [--conductor <agent>]   .orquestra, CLAUDE.md map, /issue playbook in its format
 //   --preset economy|quality|single-agent
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
-import { totalmem } from "node:os";
+import { homedir, totalmem } from "node:os";
 import { delimiter, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { writeAtomic } from "../fsutil.js";
 import { banner, infoLines } from "../banner.js";
+import { getPath, loadConfig } from "../config.js";
 import { m } from "../i18n.js";
-import { userConfigFile } from "../paths.js";
+import { environment, installSkills, prepareWorkspace } from "../install.js";
+import { expand, userConfigFile } from "../paths.js";
 import { type Answers, type Plan, suggestRoles, toToml } from "../suggest.js";
 
 export const USAGE = `orq setup [--preset economy|quality|single-agent]   guided first configuration (roles, weights, memory)
-orq setup --detect | --answers <file|-> [--write]`;
+orq setup --detect | --answers <file|-> [--write] | --install | --workspace <dir> [--conductor <agent>]`;
 
 /** Agent name → its CLI and a cheap headless smoke test. */
 const CLIS: Record<string, { bin: string; test: string }> = {
@@ -61,6 +66,7 @@ async function interactive(preset?: Answers["preset"]): Promise<number> {
     ((await Promise.race([rl.question(def ? `${q} [${def}] ` : `${q} `), closed])).trim() || def);
   const yes = async (q: string, def = "n") => /^[ysYS]/.test(await ask(`${q} (y/n)`, def));
   try {
+    env();
     const found = detect();
     if (!found.length) {
       console.log(m("No agent CLI found (claude, codex, opencode, agy, copilot). Install one and run orq setup again.",
@@ -93,6 +99,11 @@ async function interactive(preset?: Answers["preset"]): Promise<number> {
     const toml = show({ agents, conductor, parallel, ramGB, preset });
     if (await yes(m(`Write this to ${userConfigFile()}?`, `Gravar em ${userConfigFile()}?`)))
       console.log(m(`written: ${write(toml)}`, `gravado: ${write(toml)}`));
+    if (names.includes("claude") || existsSync(join(homedir(), ".claude"))) skills();
+    const ws = await ask(m("Folder that groups your repos, for the conductor (empty = later: orq setup --workspace <dir>)",
+      "Pasta que agrupa seus repos, para o conductor (vazio = depois: orq setup --workspace <pasta>)"));
+    if (ws) workspace(ws, conductor);
+    next();
     return 0;
   } catch (e) {
     if ((e as Error).message !== "closed") throw e;
@@ -101,15 +112,51 @@ async function interactive(preset?: Answers["preset"]): Promise<number> {
   } finally { rl.close(); }
 }
 
+function env(): void {
+  console.log(m("Environment", "Ambiente"));
+  let cfg = {};
+  try { cfg = loadConfig().cfg; } catch { /* a broken config is reported by orq config */ }
+  for (const l of environment(cfg)) console.log(l);
+}
+
+function skills(): void {
+  console.log(m("Skills for Claude Code (/issue, /orq-setup, /orq-status)", "Skills do Claude Code (/issue, /orq-setup, /orq-status)"));
+  for (const l of installSkills()) console.log(l);
+}
+
+/** claude → .claude/skills/issue/SKILL.md; any other conductor → AGENTS.md. */
+function workspace(dir: string, conductor?: string): void {
+  let c = conductor;
+  if (!c) { try { c = getPath(loadConfig().cfg, "roles.conductor.agent") as string | undefined; } catch { /* none */ } }
+  c ??= onPath("claude") ? "claude" : "agents";
+  const d = expand(dir); // typed at the prompt: ~ is not expanded by any shell
+  console.log(`Workspace ${d}`);
+  for (const l of prepareWorkspace(d, c === "claude" ? "claude" : "agents")) console.log(l);
+}
+
+const next = () => console.log(m(`Next: fill in the workspace CLAUDE.md, open your conductor in that folder and say "/issue <ID>".
+Board: orq board · quota: orq quota · completion: orq completion <shell>`,
+`Próximo: preencha o CLAUDE.md do workspace, abra o seu conductor nessa pasta e diga "/issue <ID>".
+Painel: orq board · cota: orq quota · autocompletar: orq completion <shell>`));
+
 export async function setup(argv: string[]): Promise<number> {
-  let preset: Answers["preset"], answers: string | undefined, doWrite = false;
+  let preset: Answers["preset"], answers: string | undefined, doWrite = false, ws: string | undefined, conductor: string | undefined;
+  let install = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--detect") { console.log(JSON.stringify(detect())); return 0; }
     if (a === "--preset") preset = argv[++i] as Answers["preset"];
     else if (a === "--answers") answers = argv[++i];
     else if (a === "--write") doWrite = true;
+    else if (a === "--install") install = true;
+    else if (a === "--workspace" && argv[i + 1]) ws = argv[++i];
+    else if (a === "--conductor" && argv[i + 1]) conductor = argv[++i];
     else { console.error(USAGE); return 2; }
+  }
+  if (install || ws) {
+    if (install) { env(); skills(); }
+    if (ws) workspace(ws, conductor);
+    return 0;
   }
   if (!answers) return interactive(preset);
   const a = JSON.parse(readFileSync(answers === "-" ? 0 : answers, "utf8")) as Answers;

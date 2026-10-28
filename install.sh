@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# orq installer: checks requirements and links (never copies) the scripts, the herdr service and the skills.
+# orq from a clone, on Linux — optional: `npm i -g @irythill/orq` + `orq setup` is the install on any OS and needs none
+# of this. For a clone it builds the CLI and links (never copies) the bash extras (herdr-* scripts and old orq-* names),
+# the herdr service and plugin, and the skills.
 #
 #   ./install.sh               install (idempotent, safe to re-run, safe while sessions are using the scripts)
 #   ./install.sh --dry-run     only print what would be done
 #   ./install.sh --uninstall   remove only the links this installer creates, and only if they point into this repo
 #
-# It never writes ~/.config/orq/config.toml: that is /orq-setup's job (inside Claude).
+# It never writes ~/.config/orq/config.toml: that is `orq setup`'s job (or /orq-setup inside Claude).
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
@@ -19,7 +21,7 @@ for a in "$@"; do
   case "$a" in
     --dry-run|-n) DRY=1 ;;
     --uninstall) UNINSTALL=1 ;;
-    -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n "2,10p" "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "$(m "unknown option" "opção desconhecida"): $a (--help)" >&2; exit 2 ;;
   esac
 done
@@ -130,8 +132,7 @@ for c in claude codex opencode agy copilot; do
   if command -v "$c" >/dev/null; then row "${G}ok${N}" "agent: $c" "$(command -v "$c")"; AGENTS=$((AGENTS + 1))
   else row "-" "agent: $c" "$(m "not found (optional)" "não encontrado (opcional)")"; fi
 done
-[ "$AGENTS" = 0 ] && warn "$(m "no agent CLI found: install and log in to at least one (claude is needed for the conductor)" "nenhum agente encontrado: instale e faça login em pelo menos um (o claude é necessário para o conductor)")"
-command -v claude >/dev/null || warn "$(m "claude not found: the conductor and /orq-setup run inside Claude Code" "claude não encontrado: o conductor e o /orq-setup rodam dentro do Claude Code")"
+[ "$AGENTS" = 0 ] && warn "$(m "no agent CLI found: install and log in to at least one" "nenhum agente encontrado: instale e faça login em pelo menos um")"
 if [ "$ERRORS" -gt 0 ]; then
   echo "${R}$(m error erro)${N}: $(m "$ERRORS required tool(s) missing (git, jq, python3, node >= 20, npm). Install them and re-run." "faltam $ERRORS ferramenta(s) obrigatória(s) (git, jq, python3, node >= 20, npm). Instale e rode de novo.")" >&2
   exit 1
@@ -201,4 +202,4 @@ fi
 
 say ""
 if [ "$WARNINGS" -gt 0 ]; then say "$(m "Done with $WARNINGS warning(s) (see above)." "Pronto, com $WARNINGS aviso(s) (veja acima).")"; else say "$(m Done. Pronto.)"; fi
-say "${B}$(m next: "próximo passo:")${N} $(m "open Claude and run /orq-setup" "abra o Claude e rode /orq-setup") · $(m "language" "idioma"): orq-lang pt|en|auto"
+say "${B}$(m next: "próximo passo:")${N} $(m "orq setup (or /orq-setup inside Claude)" "orq setup (ou /orq-setup dentro do Claude)") · $(m "language" "idioma"): orq lang pt|en|auto"

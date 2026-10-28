@@ -4,7 +4,7 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 [Keep a Changelog](https://keepachangelog.com/pt-BR/); as versões seguem o `package.json`.
 English: [CHANGELOG.md](CHANGELOG.md).
 
-## [Não lançado]
+## [0.1.0] — 2026-10-28 — primeiro release no npm
 ### Adicionado
 - O orc maestro: arte ASCII com a versão e quem faz qual papel, mostrada por `orq`, `orq --version` e `orq setup`
   só num terminal de verdade (nunca quando a saída vai para outro programa); cores 24-bit ou básicas, respeita
@@ -40,14 +40,45 @@ English: [CHANGELOG.md](CHANGELOG.md).
   `orq deps`, e `orq wait` como tarefa em segundo plano para o sinal de término.
 - `orq instructions claude|agents`: escreve o playbook do `/issue` no formato do conductor — `SKILL.md` para o Claude
   Code, um bloco marcado no `AGENTS.md` para Codex, OpenCode e outros (o resto do arquivo é mantido).
+- `orq board` (o `herdr-board` agora o chama): o painel ao vivo a partir dos arquivos de estado do próprio orq —
+  agentes rodando (`<state>/agents/*.json`, memória da árvore de processos contra o limite), a fila de testes
+  (`orq lock`), conductors e as issues que reivindicaram, cota (em cache, coletada em segundo plano a cada 5 min),
+  bloqueios ativos e o placar de 7 dias. Sem `/proc`, systemd nem jq: Linux, macOS e Windows, qualquer terminal.
+  `--once`, `--json`, `--interval`; teclas `q` `r` `l` `t`; texto puro quando a saída vai para outro programa ou com
+  `NO_COLOR`. Não portado: `f` (pular para um painel) e o estado ao vivo do herdr de cada painel de conductor.
+- `orq verify` e `orq baseline` (eram o `herdr-verify` e o `herdr-baseline`, que agora chamam eles): os testes
+  relacionados a um diff, com as falhas que também falham em `origin/<base>` contadas como pré-existentes, e o snapshot
+  da base. Mesmas flags, arquivos de saída e códigos de saída; mesma fila "verify" (`orq lock`) e limite de memória de
+  testes (`orq run`). Abrem numa aba do herdr, numa janela do tmux ou em segundo plano como o `orq agent`, `-x` roda em
+  primeiro plano, e o `orq wait <prefixo>` espera por eles. O bin do próprio runner roda com o node quando existe (sem
+  shell do `npx` no Windows); jest e vitest.
+- **Instalação em qualquer SO:** `npm i -g @irythill/orq` + `orq setup`, sem clone. O `orq setup` agora mostra o que
+  encontrou (git, terminal, limite de memória, chaveiro, a linha de autocompletar do shell), liga as skills em cada
+  conta do Claude (uma junction no Windows, uma cópia se os links falharem; nunca por cima de uma pasta do usuário) e
+  prepara o workspace do conductor (`.orquestra/`, o mapa `CLAUDE.md`, o playbook do `/issue` no formato dele).
+  `--install` e `--workspace <pasta> [--conductor <agente>]` fazem essas partes sem perguntas. O pacote leva as
+  skills e o template do workspace.
+- `orq completion bash|zsh|fish|powershell`: imprime o script de autocompletar daquele shell (subcomandos e as
+  palavras fixas de cada um; arquivos no resto).
 - CI no Linux, macOS e Windows (Node 20 e 24).
 - Roadmap v2 em [docs/pt-BR/portability.md](docs/pt-BR/portability.md).
 
+### Alterado
+- O chaveiro é lido pelo `@napi-rs/keyring` (Secret Service, Keychain, Credential Manager) em vez do `secret-tool` e
+  do `security`; eles continuam de reserva quando o módulo nativo não carrega. `ORQ_KEYRING = native | cli | off`.
+  A cota do Antigravity agora funciona no macOS e no Windows também.
+- `install.sh` e `setup/herdr.service` são extras opcionais do Linux para um clone (serviço e plugin do herdr, os
+  nomes antigos dos scripts); nada depende deles.
+- As skills chamam `orq pick`, `orq config`, `orq block`, `orq stats`, `orq quota`, `orq lang` (presentes em toda
+  instalação) em vez dos wrappers `orq-*` / `agent-quota`; o `/orq-setup` parte do `npm i -g` e do `orq setup`.
+
 ### Corrigido
+- Um pid 0 (um arquivo `.pid` vazio, um campo faltando) não conta mais como processo vivo: `process.kill(0, 0)` mira o
+  grupo de processos e sempre dá certo.
 - `orq run` com o limite do systemd passa `--expand-environment=no` (systemd ≥ 254), como o `herdr-agent` fazia, para
   `${...}` nos argumentos sobreviver.
 
-## [0.1.0] — 2026-10-12
+## 2026-10-12 — o CLI orq em TypeScript (só no git, antes do pacote npm)
 
 ### Adicionado
 - **CLI `orq` em TypeScript** (Node 20+): `orq config`, `orq set`, `orq lang`, `orq block` e `orq quota`. Os nomes

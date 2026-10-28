@@ -15,6 +15,7 @@ const SETTLE_MS = 250;
 const dir = (name: string) => join(stateDir(), "locks", name);
 
 export function alive(pid: number): boolean {
+  if (!(pid > 0)) return false; // kill(0, …) would signal our own process group and "succeed"
   try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
 }
 

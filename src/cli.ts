@@ -5,8 +5,11 @@ import { ConfigError, getPath, loadConfig } from "./config.js";
 import { banner, infoLines, version } from "./banner.js";
 import { detectLang, m, setLang } from "./i18n.js";
 import { agent, USAGE as AGENT } from "./commands/agent.js";
+import { board, USAGE as BOARD } from "./commands/board.js";
+import { baseline, USAGE as BASELINE } from "./commands/baseline.js";
 import { block, USAGE as BLOCK } from "./commands/block.js";
 import { claim, USAGE as CLAIM } from "./commands/claim.js";
+import { completion, USAGE as COMPLETION } from "./commands/completion.js";
 import { config, USAGE as CONFIG } from "./commands/config.js";
 import { deps, USAGE as DEPS } from "./commands/deps.js";
 import { instructions, USAGE as INSTRUCTIONS } from "./commands/instructions.js";
@@ -18,9 +21,11 @@ import { run, USAGE as RUN } from "./commands/run.js";
 import { set, USAGE as SET } from "./commands/set.js";
 import { setup, USAGE as SETUP } from "./commands/setup.js";
 import { stats, USAGE as STATS } from "./commands/stats.js";
+import { verify, USAGE as VERIFY } from "./commands/verify.js";
 import { wait, USAGE as WAIT } from "./commands/wait.js";
 
-const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = { config, set, lang, block, quota, pick, stats, setup, lock, claim, deps, run, agent, wait, instructions };
+const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = { config, set, board, lang, block, quota, pick, stats, setup, lock, claim, deps, run, agent, wait, instructions, verify, baseline,
+  completion: (a) => completion(a, Object.keys(COMMANDS)) };
 
 const usage = () => `orq <command> [args]
 
@@ -31,13 +36,17 @@ ${LANG}
 ${QUOTA}
 ${PICK}
 ${STATS}
+${BOARD}
 ${LOCK}
 ${RUN}
 ${AGENT}
 ${WAIT}
+${VERIFY}
+${BASELINE}
 ${INSTRUCTIONS}
 ${CLAIM}
 ${DEPS}
+${COMPLETION}
 ${BLOCK.split("\n")[0]}
   (orq block --help ${m("for more", "para mais")})`;
 

@@ -27,7 +27,7 @@ Dentro do herdr:
    resposta).
 5. Acompanhe: o filho aparece no space do grupo (ex.: `api`) — `Alt+↓` até ele, `Alt+←/→` entre abas, `Alt+↑` para
    voltar. Não digite nas abas dos filhos (headless, só saída). Quando um filho termina, `[HERDR-AGENT DONE] …` chega
-   ao conductor e ele segue sozinho (verify → review → comentário no Plane). Ou deixe o `herdr-board` aberto numa aba.
+   ao conductor e ele segue sozinho (verify → review → comentário no Plane). Ou deixe o `orq board` (`herdr-board`) aberto numa aba.
 
 **2. Várias issues ao mesmo tempo (mesmo workspace)**
 1. Crie outro space (`prefix Shift+C`, nome `acme-2`) e abra outro conductor ali, de preferência em **outra conta**:

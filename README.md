@@ -51,34 +51,61 @@ You declare only the ones you have, and the roles each may take.
 
 ## Install
 
-Linux or **Windows with WSL2** (Ubuntu 22.04+ with systemd enabled). macOS: no per-agent memory cap.
-
-**Requirements:** `git`, `jq`, Node 20+ with `npm` (the `orq` CLI is built on install), `python3` (3.11+ for TOML config; older → JSON config or `pip install --user tomli`),
-user `systemd`, and at least one agent from the table above, logged in.
+Linux, macOS or Windows (native, not only WSL), in any shell — bash, zsh, fish, PowerShell, cmd.
+**Requirements:** Node 20+ with `npm`, `git`, and at least one agent from the table above, logged in. Optional:
+[herdr](https://herdr.dev) or tmux, so each child gets its own tab or window (otherwise children run in the
+background and `orq board` shows them).
 
 ```bash
-# 1. herdr (tested on 0.9.3)
-curl -fsSL https://herdr.dev/install.sh -o /tmp/herdr-install.sh && less /tmp/herdr-install.sh && sh /tmp/herdr-install.sh
+npm i -g @irythill/orq
+orq setup
+```
 
-# 2. orq
+`orq setup` shows what it found (git, terminal, how memory is capped, keyring, your shell), links orq's skills into
+`~/.claude/skills/` and each account folder in `claude-accounts` (a junction on Windows; never over a folder of
+yours), asks about your agents and plans, writes `~/.config/orq/config.toml` (`%APPDATA%\orq\config.toml` on Windows)
+and prepares the folder that groups your repos for the conductor: `.orquestra/`, the map `CLAUDE.md` and the
+`/issue` playbook in the conductor's format. Pieces on their own: `orq setup --install` (no questions),
+`orq setup --workspace <folder> --conductor <agent>`. Inside Claude, **`/orq-setup`** does the same as a
+conversation and also fills in the repo table. Plane: [docs/plane.md](docs/plane.md).
+
+**Memory cap:** a systemd scope on Linux with a user session, else a watchdog (macOS, Windows, WSL without systemd).
+**Keyring** (Antigravity quota, Claude quota on macOS): Secret Service, Keychain or Credential Manager through
+`@napi-rs/keyring`; without the native module, `secret-tool`/`security`.
+
+### Shell completion
+
+| Shell | Turn it on |
+|---|---|
+| bash | `echo 'eval "$(orq completion bash)"' >> ~/.bashrc` |
+| zsh | `echo 'eval "$(orq completion zsh)"' >> ~/.zshrc` (after `compinit`) |
+| fish | `orq completion fish > ~/.config/fish/completions/orq.fish` |
+| PowerShell | `Add-Content $PROFILE 'orq completion powershell \| Out-String \| Invoke-Expression'` |
+| cmd | no programmable completion |
+
+### Linux extras from a clone: `install.sh` (optional)
+
+For herdr as an always-on service, its plugin and the old script names (`herdr-*`, `orq-*`, `agent-quota`):
+
+```bash
+# herdr (tested on 0.9.3)
+curl -fsSL https://herdr.dev/install.sh -o /tmp/herdr-install.sh && less /tmp/herdr-install.sh && sh /tmp/herdr-install.sh
 git clone https://github.com/irythill/orq ~/Code/orq && cd ~/Code/orq
 ./install.sh            # links in ~/.local/bin, herdr service, skills for Claude
 ```
 
-`install.sh` checks the requirements (table of what's found and missing), builds the `orq` CLI (`src/` → `dist/`), then **symlinks** (never copies) the
-scripts into `~/.local/bin`, `setup/herdr.service` into `~/.config/systemd/user/` (and enables it), and every skill
-into `~/.claude/skills/` plus each account folder listed in `~/.config/claude-accounts`. Idempotent: re-run it after
-a `git pull` or a new account. It never overwrites a real file (warns and skips) and never writes your config.
+Needs `git`, `jq`, Node 20+ with `npm`, `python3` (3.11+ for TOML config; older → JSON config or
+`pip install --user tomli`) and user `systemd` (WSL2: Ubuntu 22.04+ with systemd enabled). `install.sh` checks the
+requirements (table of what's found and missing), builds the `orq` CLI (`src/` → `dist/`), then **symlinks** (never
+copies) the scripts into `~/.local/bin`, `setup/herdr.service` into `~/.config/systemd/user/` (and enables it), and
+every skill into `~/.claude/skills/` plus each account folder listed in `~/.config/claude-accounts`. Idempotent:
+re-run it after a `git pull` or a new account. It never overwrites a real file (warns and skips) and never writes
+your config.
 
 | Flag | What it does |
 |---|---|
 | `--dry-run` | print what it would do, change nothing |
 | `--uninstall` | remove only the links it creates, and only those pointing into this repo (config and history stay) |
-
-Then, inside Claude: **`/orq-setup`** — it detects the installed agents, tests each one headless, asks about roles,
-models, accounts, repos, base branches and verification commands, writes `~/.config/orq/config.toml` and fills the
-workspace `CLAUDE.md`. Plane:
-[docs/plane.md](docs/plane.md).
 
 ## Configuration
 
@@ -137,11 +164,11 @@ orq speaks English and Portuguese: CLI messages, `herdr-board`, notices and `ins
 `[ui] lang` in your config (`"auto"` = system locale, `"en"`, `"pt"`), or the `ORQ_LANG` environment variable.
 Switch it any time:
 - `orq-lang pt` / `orq-lang en` / `orq-lang toggle` (`orq-lang` alone shows the current one);
-- `l` inside `herdr-board`;
+- `l` inside `orq board`;
 - a herdr key: `install.sh` links the `orq` herdr plugin; bind its `orq.lang-toggle` action (snippet in
   `herdr-plugin/herdr-plugin.toml`) — e.g. `prefix+shift+l` — and `orq.board` to open the board as an overlay.
 
-`herdr-board` has its own look, from the [SYNTH.DECK](https://github.com/irythill/synth-deck-portfolio)
+`orq board` has its own look, from the [SYNTH.DECK](https://github.com/irythill/synth-deck-portfolio)
 portfolio: `[ui] theme = "gunmetal"` (default, dark graphite), `"chrome"` (light silver), `"lcd"` (phosphor green) or
 `"terminal"` (your terminal's colors). `t` inside the board cycles through them (`ORQ_THEME` overrides).
 
@@ -157,8 +184,9 @@ cd ~/Code/<workspace> && herdr-conductor # inside a herdr pane: opens the conduc
 In the conductor: **`/issue DEMO-123`**. It answers in one line and moves on by itself at every `[HERDR-AGENT DONE]`.
 You only come back when it asks for a decision or says it's done.
 
-To see everything at once, keep **`herdr-board`** open in a tab: test queue, running agents (model, memory, last
-action), conductors and what each is waiting for, memory and quota. `f` jumps to the pane of any line. With
+To see everything at once, keep **`orq board`** open in a tab or window (any terminal, any OS; `herdr-board` calls it):
+test queue, running agents (model, memory against the cap, last action), conductors and their issues, memory, quota,
+blocks and the 7-day scoreboard. `--once` prints it once, `--json` for scripts. With
 `ui.toast.delivery = "system"` in herdr's config, each finished step also pops up a native OS notification.
 
 Several issues at once: one conductor per issue (ideally on different accounts). `herdr-claim` keeps two conductors
@@ -181,12 +209,14 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 | `orq agent -a <agent> ...` (`herdr-agent`) | Runs an agent with a memory cap in a herdr tab, a tmux window or the background; `-r` read only, `-R <id>` continue the session, `-i` attach a file, `-b <base>` attach the diff, `-T` the agent's own screen (herdr only) |
 | `orq instructions claude\|agents` | Writes the `/issue` playbook as `SKILL.md` (Claude Code) or into `AGENTS.md` (Codex, OpenCode…) |
 | `orq wait <prefix>...` | Blocks until those agents finish; prints `status=` and the answer file (any conductor, any terminal) |
-| `herdr-verify` | Tests related to the diff; failures that also fail on the base count as pre-existing |
-| `herdr-board` | Live board |
+| `orq verify ...` (`herdr-verify`) | Tests related to the diff, queued and memory-capped; failures that also fail on the base count as pre-existing |
+| `orq board` (`herdr-board`) | Live board: queue, agents, conductors, quota, blocks, scoreboard |
 | `herdr-conductor` | Opens the conductor in the current pane |
 | `herdr-claim` | Owner of each issue among conductors |
 | `herdr-deps` | Links the worktree's dependencies to the main repo's (no reinstall) |
-| `herdr-baseline` | Manual snapshot of the tests failing on the base (outside the flow) |
+| `orq baseline ...` (`herdr-baseline`) | Manual snapshot of the tests failing on the base (outside the flow) |
+| `orq setup` | First configuration and install: environment, skills for Claude, config, conductor workspace |
+| `orq completion bash\|zsh\|fish\|powershell` | Prints the shell completion script (see Install) |
 | `orq <config\|set\|lang\|block\|quota>` | The cross-platform CLI (TypeScript); the `orq-*` and `agent-quota` names below call it |
 | `agent-quota` | Current quota of each agent and account; on a failed reading, the last good one until its window resets |
 | `orq-config` · `orq-pick` · `orq-stats` · `orq-block` | Configuration, agent pick, scoreboard, manual blocks |

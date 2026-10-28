@@ -7,8 +7,8 @@ rules — read the repo's own before touching it. This file only holds the map a
 - **Workspace:** `{{WORKSPACE}}`
 - **Conductor (herdr):** opened with `herdr-conductor [account] [model] [-r <session-id>]` in a herdr pane, in this folder
   (instructions in `.orquestra-conductor.md`); the **Group** in the table below is the herdr workspace (`-g`).
-  Tests from the Verification column (jest/vitest) **don't run in the child**: the conductor runs `herdr-verify`
-  (one at a time on the machine); the child does lint + `tsc` (`NODE_OPTIONS=--max-old-space-size=2048`).
+  Tests from the Verification column (jest/vitest) **don't run in the child**: the conductor runs `herdr-verify` (`orq verify`
+  outside herdr; one at a time on the machine); the child does lint + `tsc` (`NODE_OPTIONS=--max-old-space-size=2048`).
 - **Agents:** chosen by `orq-pick` from each developer's `~/.config/orq/config.toml` — nothing about models here.
 
 ## Repositories

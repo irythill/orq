@@ -21,7 +21,7 @@
 | Child dies at its 4 GB cap during tsc + jest | the test suite doesn't fit next to the agent | tests leave the child (`herdr-verify` in the conductor, 6 GB, queued); child runs `NODE_OPTIONS=--max-old-space-size=2048 tsc` |
 | Machine freezes (high I/O, OOM) when creating worktrees | each worktree installed ~1 GB of `node_modules` | the worktree **links** to the main repo's `node_modules`; stale deps → one install in the main repo |
 | Everything dies at once under memory pressure | `systemd-oomd` kills the parent of all sessions | children without MCP, `--maxWorkers=2`, one suite at a time; herdr server with `ManagedOOMPreference=avoid` |
-| A runaway process eats a core for days | a child left a process behind after its worktree was deleted | `herdr-board` lists agent scopes without a `.run.sh` as "orphan?" and flags agents running for over 3 h |
+| A runaway process eats a core for days | a child left a process behind after its worktree was deleted | `orq board` lists an agent whose runner died without finishing as "runner gone" and flags agents running for over 3 h |
 | Conductor says "running" when the agent already finished | `pgrep -f` matches its own command line | finished = `<prefix>.done` exists; never `pgrep`/`ps` |
 | Reviewer can't read the criteria in `.orquestra/` | sandbox only sees the `-d` folder | `orq agent -i <file>` appends the content to the prompt; `-b <base>` appends the diff |
 | Codex review can't run tests (`EROFS` on jest's cache) | the read-only sandbox can't even write to `/tmp` | `-a codex -r` runs `workspace-write` on a **throwaway worktree**, removed at the end |

@@ -1,6 +1,6 @@
 ---
 name: issue
-description: Runs a Plane issue end to end by orchestrating coding agents in herdr or any terminal (herdr-agent / orq agent + orq wait) — implementer and cross-vendor reviewer picked by orq-pick, tests by herdr-verify, comment and status in Plane. Use when the user says "/issue <ID>", "take issue X", "run ABC-123", or asks to check/create issues in the conductor's ecosystem.
+description: Runs a Plane issue end to end by orchestrating coding agents in herdr or any terminal (herdr-agent / orq agent + orq wait) — implementer and cross-vendor reviewer picked by orq pick, tests by herdr-verify / orq verify, comment and status in Plane. Use when the user says "/issue <ID>", "take issue X", "run ABC-123", or asks to check/create issues in the conductor's ecosystem.
 ---
 
 # /issue <ID> — conductor playbook (herdr or any terminal)
@@ -22,8 +22,8 @@ start. Below, `$WS` = workspace.
   `[ORQ AGENT DONE] <title> status=ok|fail ... answer: <file>` — treat it exactly like `[HERDR-AGENT DONE]`. Several
   children in parallel: `orq wait --any <prefix1> <prefix2>` (one wake-up per finish; wait again for the rest).
   No background tasks in your harness → run `orq wait` in the foreground; that is the one allowed blocking wait.
-- `herdr-verify`/`herdr-baseline` still need herdr: outside it, run the repo's tests yourself one suite at a time
-  in the queue: `orq lock run verify --label "<ID> <repo>" -- orq run --test -- <test command>`.
+- `herdr-verify` → `orq verify`, `herdr-baseline` → `orq baseline` (same flags). They run in a tmux window or in
+  the background like children, and you wait for them the same way: `orq wait $O/verify-<repo>`.
 - Peeking at a child: `<prefix>.log` (not `herdr pane read`).
 Issue artifacts (prompts, notes) live in `$WS/.orquestra/<ID>/`.
 
@@ -44,23 +44,23 @@ One task per repo. Level:
 - **medium** — business rule, API↔front integration, several files.
 - **heavy** — architecture, data migration, hard/concurrency bug, security.
 
-## 3. Pick agent and model: always `orq-pick`, never by hand
-`orq-pick` decides agent, model, effort and account (user config + delivery and token history + current quota +
+## 3. Pick agent and model: always `orq pick`, never by hand
+`orq pick` decides agent, model, effort and account (user config + delivery and token history + current quota +
 rotation). **Do not choose by preference, by a rule you read elsewhere, or by what worked last time**: run it before
 EVERY dispatch (implementation, review, second opinion) and use its output verbatim.
 ```bash
-orq-pick impl --level simple|medium|heavy                          # → e.g. -a codex -m gpt-6-sol -e low
-orq-pick review --level <level> --impl-agent <agent that implemented>   # → another vendor, e.g. -a opencode -m ...
-orq-pick opinion                                                   # second opinion (e.g. Copilot), see step 5
+orq pick impl --level simple|medium|heavy                          # → e.g. -a codex -m gpt-6-sol -e low
+orq pick review --level <level> --impl-agent <agent that implemented>   # → another vendor, e.g. -a opencode -m ...
+orq pick opinion                                                   # second opinion (e.g. Copilot), see step 5
 ```
-The output goes straight into `herdr-agent` (`herdr-agent $(orq-pick ...) -g ... -t ... -d ... -o ... -- prompt.md`).
+The output goes straight into `herdr-agent` (`herdr-agent $(orq pick ...) -g ... -t ... -d ... -o ... -- prompt.md`).
 - Exit 3 = no candidate (quota exhausted, no agent with that role): **stop and ask the user**.
-- Implementer failed review twice (step 6) → pick again without it: `orq-pick impl --level <level> --exclude-agent <agent>`.
-- `--exclude-agent` never "sticks": every `orq-pick` call decides again, with only that dispatch's exclusions.
-- The conductor's own model (e.g. Opus) as implementer: only with the user's OK, never through `orq-pick`.
-- Want to understand a choice? `orq-pick ... --explain --no-record` (score of each candidate; not counted in rotation).
+- Implementer failed review twice (step 6) → pick again without it: `orq pick impl --level <level> --exclude-agent <agent>`.
+- `--exclude-agent` never "sticks": every `orq pick` call decides again, with only that dispatch's exclusions.
+- The conductor's own model (e.g. Opus) as implementer: only with the user's OK, never through `orq pick`.
+- Want to understand a choice? `orq pick ... --explain --no-record` (score of each candidate; not counted in rotation).
 
-**Every child runs through `herdr-agent`** (agent from `orq-pick`): headless (`claude -p` / `codex exec` /
+**Every child runs through `herdr-agent`** (agent from `orq pick`): headless (`claude -p` / `codex exec` /
 `opencode run` / `agy -p` / `copilot -p`) in a herdr tab (workspace = group `-g`, tab = title) with live output.
 When it finishes it writes `<prefix>.done` and sends ONE line `[HERDR-AGENT DONE] <title> status=ok|fail ...` to your
 pane; no MCP, and a **4 GB memory cap per agent** (own cgroup: if it blows up, only it dies). NEVER `herdr agent start`
@@ -102,9 +102,9 @@ In the child's prompt: "node_modules is shared (link): don't run install/add; if
 tell me".
 **Dispatch** (no MCP; memory cap; writes in automatic mode — that is why implementation only happens in a worktree):
 ```bash
-herdr-agent $(orq-pick impl --level <level>) -g <group> -t "<ID> impl <repo>" -d $WT -o $O/impl-<repo> -- $O/impl-<repo>.md
+herdr-agent $(orq pick impl --level <level>) -g <group> -t "<ID> impl <repo>" -d $WT -o $O/impl-<repo> -- $O/impl-<repo>.md
 ```
-- The Claude account (`-c`) already comes from `orq-pick` (the least used one under the limit).
+- The Claude account (`-c`) already comes from `orq pick` (the least used one under the limit).
 - Full final answer in `$O/impl-<repo>.out.md`; log in `.log`; the agent's session id in `.id`.
 - Codex's sandbox has no network: `git fetch` is yours, beforehand (above). Push/PR: yours (step 7).
 - `herdr-agent` returns immediately (no need to background it); the child's pane is in `<prefix>.pane`
@@ -139,18 +139,18 @@ Child with `status=ok` → run the tests related to the diff, in their own tab, 
 
 ## 5. Cross review (always another vendor)
 ```bash
-herdr-agent $(orq-pick review --level <level> --impl-agent <who implemented>) -b $BASE \
+herdr-agent $(orq pick review --level <level> --impl-agent <who implemented>) -b $BASE \
   -g <group> -t "<ID> review <repo>" -d $WT -o $O/review-<repo> -r -i $O/impl-<repo>.md -i $O/verify-<repo>.txt \
   -- $O/review-<repo>.md
 ```
 `-b $BASE` attaches the diff (`origin/$BASE...HEAD`): always use it. The review prompt works for any reviewer and says
 "the diff is attached; for context, open files with your file-reading tool; don't run lint, tsc or tests (the results
 are in the attached verify)". If the reviewer ends with `status=fail` and no verdict (empty answer, or a
-`jetski: ... permission` line), that is not a rejection: run `orq-pick review ... --exclude-agent <it>` and redo it.
-`--exclude-agent` applies **only to redoing that review**: for the next round's review, run `orq-pick review` without
+`jetski: ... permission` line), that is not a rejection: run `orq pick review ... --exclude-agent <it>` and redo it.
+`--exclude-agent` applies **only to redoing that review**: for the next round's review, run `orq pick review` without
 exclusions (the failure may have been a one-off). An agent that failed twice in a row with no verdict →
-`orq-block <agent> --days 1` and tell the user.
-**Second opinion** (`orq-pick opinion`, read only, same attachments): only on **heavy** issues or when reviewer and
+`orq block <agent> --days 1` and tell the user.
+**Second opinion** (`orq pick opinion`, read only, same attachments): only on **heavy** issues or when reviewer and
 implementer disagree about a blocker. It never becomes a round by itself: you weigh both answers and decide.
 **Before dispatching:** `git -C $R fetch origin $BASE; git -C $WT merge-base --is-ancestor origin/$BASE HEAD` — if it
 fails, don't review yet: send a fix "rebase on origin/<BASE> and repeat the checks".
@@ -163,8 +163,8 @@ repo checklist.
 ## 6. Loop
 Blocking problems → write the list to `$O/fix-<n>.md` and continue the implementer's session (any agent):
 `herdr-agent -a <same> [-c <same account>] -g <group> -t "<ID> fix<n> <repo>" -d $WT -o $O/impl-<repo> -R $(cat $O/impl-<repo>.id) -- $O/fix-<n>.md`.
-A fix is a continuation: same agent and session, no `orq-pick`. Then a new `herdr-verify` (4b) and a new review
-(`orq-pick review` again). **Maximum: `orq-config get policy.max_rounds` rounds**; over it → `orq-pick impl
+A fix is a continuation: same agent and session, no `orq pick`. Then a new `herdr-verify` (4b) and a new review
+(`orq pick review` again). **Maximum: `orq config get policy.max_rounds` rounds**; over it → `orq pick impl
 --exclude-agent <it>` only with the user's OK, or stop and report. Non-blocking suggestions go into the comment; they
 don't become a round.
 
@@ -178,7 +178,7 @@ rules live) commits and writes the PR. Find and cite in the prompt, by path, wha
 - PR (**only when the user asks**): you, in `$WT`: `git -C $WT push -u origin <branch>` and `gh pr create` with a body
   built **from the repo's `.github/pull_request_template.md`** (every section; `<ID>` where the template asks for the
   issue) and the answer in `$O/impl-<repo>.out.md`. Check the opened PR against the template.
-- Plane comment (`workitem_comment create`): summary, repo(s), branch, agents and models used (`orq-pick` output),
+- Plane comment (`workitem_comment create`): summary, repo(s), branch, agents and models used (`orq pick` output),
   review result, checks that ran.
 - **CI after every push:** `gh pr checks <n>` (no `--watch`; if pending, end your turn and check on the next notice).
   Red → `gh run view <id> --log-failed | tail -40`: error from the diff → fix round; error already on the base → create
