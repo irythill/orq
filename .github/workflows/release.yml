@@ -1,0 +1,34 @@
+# Publishes @irythill/orq to npm when a v* tag is pushed. Trusted publishing (OIDC): no npm token in the repo, and the
+# package gets provenance linking it to this repo and commit. The tag must match package.json's version.
+#   npm version patch && git push --follow-tags
+name: release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # the GitHub release
+  id-token: write # npm trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: tag matches package.json
+        run: test "${GITHUB_REF_NAME#v}" = "$(node -p 'require("./package.json").version')"
+      - run: npm ci
+      - run: npm test
+      - run: npm publish --provenance
+      - name: GitHub release with the CHANGELOG section
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          awk -v v="$v" 'index($0, "## [" v "]") == 1 {f=1; next} /^## /{f=0} f' CHANGELOG.md > notes.md
+          printf '\nInstall: `npm i -g @irythill/orq` then `orq setup`.\n' >> notes.md
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
