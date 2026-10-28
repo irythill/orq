@@ -11,7 +11,7 @@ tabs, and hands the issue back *In Review* with a summary in Plane. Merge, PR an
 What orq does **not** decide for you: which agents you have, how much each may spend and how you like to work. All of
 that lives in your config.
 
-> Born from daily use at a health-tech company: 3–5 issues in parallel on a 14 GB laptop, across Claude Code, Codex,
+> Born from daily use at a health-tech company: 3–5 issues in parallel on a 14 GB PC, across Claude Code, Codex,
 > OpenCode, Antigravity and Copilot. The story, numbers and lessons: **[docs/case-study.md](docs/case-study.md)**.
 >
 > 🚧 = not available yet.

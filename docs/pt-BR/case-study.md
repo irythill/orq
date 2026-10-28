@@ -1,6 +1,6 @@
 [English](../case-study.md) · **Português**
 
-# Estudo de caso: um dev, cinco agentes de código, um notebook de 14 GB
+# Estudo de caso: um dev, cinco agentes de código, um PC de 14 GB
 
 *Por [irythill](https://github.com/irythill). Números do próprio histórico `.orquestra/` do autor (setembro–outubro de
 2026); empresa, repositórios e issues anonimizados.*
@@ -10,7 +10,7 @@
 Uma empresa de saúde, um time pequeno e um ecossistema de **7 repositórios**: uma API em NestJS, um painel admin, um
 site público de cadastro, peças de mobile e de CI/infraestrutura. O trabalho é acompanhado num **Plane self-hosted**. O
 autor paga assinaturas mensais de **Claude Code, Codex, OpenCode (MiniMax), Antigravity e GitHub Copilot**, e queria
-trabalhar em **3–5 issues ao mesmo tempo** num **notebook Linux de 14 GB** — sem ficar de babá de cada agente e sem
+trabalhar em **3–5 issues ao mesmo tempo** num **PC Linux de 14 GB** — sem ficar de babá de cada agente e sem
 queimar a quota mais cara em trabalho de rotina.
 
 A ideia desde o início: o modelo caro (Claude Opus) só **orquestra** — lê a issue, planeja, despacha, pesa os

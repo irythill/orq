@@ -1,6 +1,6 @@
 **English** · [Português](pt-BR/case-study.md)
 
-# Case study: one developer, five coding agents, a 14 GB laptop
+# Case study: one developer, five coding agents, a 14 GB PC
 
 *By [irythill](https://github.com/irythill). Numbers from the author's own `.orquestra/` history (September–October
 2026); company, repositories and issues anonymized.*
@@ -10,7 +10,7 @@
 A health-tech company, a small team, and an ecosystem of **7 repositories**: a NestJS API, an admin panel, a public
 sign-up website, mobile and CI/infrastructure pieces. Work is tracked in a **self-hosted Plane**. The author pays for
 monthly subscriptions to **Claude Code, Codex, OpenCode (MiniMax), Antigravity and GitHub Copilot**, and wanted to
-work on **3–5 issues at the same time** on a **14 GB Linux laptop** — without babysitting each agent and without
+work on **3–5 issues at the same time** on a **14 GB Linux PC** — without babysitting each agent and without
 burning the most expensive quota on routine work.
 
 The idea from the start: the expensive model (Claude Opus) only **orchestrates** — reads the issue, plans, dispatches,

@@ -11,7 +11,7 @@ agente certo para cada etapa, despacha o **implementador**, os **testes** e uma 
 O que o orq **não** decide por você: quais agentes você tem, quanto cada um pode gastar e como você gosta de
 trabalhar. Tudo isso fica na sua config.
 
-> Nasceu do uso diário numa empresa de saúde: 3–5 issues em paralelo num notebook de 14 GB, usando Claude Code, Codex,
+> Nasceu do uso diário numa empresa de saúde: 3–5 issues em paralelo num PC de 14 GB, usando Claude Code, Codex,
 > OpenCode, Antigravity e Copilot. A história, os números e as lições: **[docs/pt-BR/case-study.md](docs/pt-BR/case-study.md)**.
 >
 > 🚧 = ainda não disponível.
