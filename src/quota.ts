@@ -116,8 +116,9 @@ function latestCodexSession(): string | undefined {
 
 interface Window { used_percent?: number; window_minutes?: number; resets_at?: number }
 
-/** The last rate_limits in a Codex session (.jsonl): 300-min window = 5h, 10080 = week; a window already reset → 0. */
-export function codexFromSession(text: string, nowSec: number): { five: Pct; week: Pct } | undefined {
+/** The last rate_limits in a Codex session (.jsonl): a window up to 6 h = 5h; the longest one over that (10080 = week,
+ *  43200 on the free plan = 30 days) fills the week slot, with `span` (minutes) when it isn't a week; reset → 0. */
+export function codexFromSession(text: string, nowSec: number): { five: Pct; week: Pct; span?: number } | undefined {
   let last: { primary?: Window; secondary?: Window } | undefined;
   for (const line of text.split("\n")) {
     if (!line.includes('"rate_limits"')) continue;
@@ -134,12 +135,11 @@ export function codexFromSession(text: string, nowSec: number): { five: Pct; wee
   }
   if (!last) return undefined;
   const ws = [last.primary, last.secondary].filter((w): w is Window => !!w);
-  const win = (mins: number): Pct => {
-    const w = ws.find((x) => x.window_minutes === mins);
-    if (!w) return "-";
-    return (w.resets_at ?? 0) < nowSec ? 0 : Math.floor(w.used_percent ?? 0);
-  };
-  return { five: win(300), week: win(10080) };
+  const pct = (w?: Window): Pct => !w ? "-" : (w.resets_at ?? 0) < nowSec ? 0 : Math.floor(w.used_percent ?? 0);
+  const short = ws.find((x) => (x.window_minutes ?? 0) <= 360);
+  const long = ws.filter((x) => (x.window_minutes ?? 0) > 360).sort((a, b) => b.window_minutes! - a.window_minutes!)[0];
+  const span = long && long.window_minutes !== 10080 ? long.window_minutes : undefined;
+  return { five: pct(short), week: pct(long), ...(span ? { span } : {}) };
 }
 
 export function codexQuota(): QuotaLine {
@@ -148,7 +148,10 @@ export function codexQuota(): QuotaLine {
   const q = codexFromSession(readFileSync(f, "utf8"), Date.now() / 1000);
   if (!q) return noData("codex", m("no limit data", "sem dados de limite"));
   const age = Math.round((Date.now() - statSync(f).mtimeMs) / 60_000);
-  return { name: "codex", ...q, note: m(`from the last session, ${age} min ago`, `da última sessão, há ${age} min`) };
+  const { span, ...pcts } = q;
+  const d = span && Math.round(span / 1440);
+  return { name: "codex", ...pcts, note: (d ? m(`${d}-day window in the week slot; `, `janela de ${d} dias no lugar da semana; `) : "")
+    + m(`from the last session, ${age} min ago`, `da última sessão, há ${age} min`) };
 }
 
 // --- antigravity ----------------------------------------------------------------------------------------------------

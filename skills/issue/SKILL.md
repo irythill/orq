@@ -219,8 +219,8 @@ rules live) commits and writes the PR. Find and cite in the prompt, by path, wha
 - Move it to **In Review** (finished child tabs close by themselves; close any leftover with
   `herdr tab list | jq -r '.result.tabs[]|select(.label|startswith("<ID> "))|.tab_id' | xargs -rn1 herdr tab close`)
   and **release the issue**: `herdr-claim -w $WS -r <ID>`. The worktree stays until the merge.
-- **After the merge** (when the user confirms): `git -C $R fetch origin $BASE; git -C $R cherry origin/$BASE <branch>`
-  with no `+` lines → `git -C $R worktree remove $WT` and `git -C $R branch -D <branch>`; with `+` lines → ask.
+- **After the merge** (when the user confirms): run `orq gc -w $WS` and show the list. If this issue's worktree is
+  listed as removable, run `orq gc -w $WS --yes`; anything else → ask the user.
 - **Never** push, PR, merge or deploy unless the user asks. Report to the user in 3–5 lines.
 
 ## Saving tokens

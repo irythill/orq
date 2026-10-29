@@ -97,6 +97,56 @@ test("unknown command exits 2", () => {
   assert.equal(sandbox().run("nope").status, 2);
 });
 
+test("gc classifies issue worktrees and removes only removable ones", () => {
+  const { root, env, run } = sandbox(), ws = join(root, "ws"), repo = join(ws, "demo"), origin = join(root, "origin.git");
+  const git = (cwd: string, ...args: string[]) => {
+    const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+    assert.equal(r.status, 0, `${args.join(" ")}: ${r.stderr}`); return r.stdout.trim();
+  };
+  mkdirSync(ws, { recursive: true }); mkdirSync(join(ws, ".worktrees"), { recursive: true });
+  spawnSync("git", ["init", "--bare", "-q", origin]); spawnSync("git", ["init", "-q", "-b", "main", repo]);
+  git(repo, "config", "user.email", "orq-test"); git(repo, "config", "user.name", "Test");
+  writeFileSync(join(repo, "base"), "base\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "base");
+  git(repo, "remote", "add", "origin", origin); git(repo, "push", "-qu", "origin", "main");
+  git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+  const add = (id: string) => {
+    const branch = `work/plane-${id}`, path = join(ws, ".worktrees", `demo-plane-${id}`);
+    git(repo, "worktree", "add", "-qb", branch, path, "main"); return { branch, path };
+  };
+  const dirty = add("dirty"); writeFileSync(join(dirty.path, "dirty"), "x");
+  const unpushed = add("unpushed"); writeFileSync(join(unpushed.path, "change"), "x"); git(unpushed.path, "add", "."); git(unpushed.path, "commit", "-qm", "unpushed");
+  const squash = add("squash"); writeFileSync(join(squash.path, "feature"), "feature\n"); git(squash.path, "add", "."); git(squash.path, "commit", "-qm", "feature");
+  git(repo, "checkout", "main"); writeFileSync(join(repo, "feature"), "feature\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "squash merge"); git(repo, "push", "-qu", "origin", "main"); git(repo, "checkout", "main");
+  const merged = add("merged"); writeFileSync(join(merged.path, "merged"), "x"); git(merged.path, "add", "."); git(merged.path, "commit", "-qm", "merged");
+  const stale = add("stale"); writeFileSync(join(stale.path, "stale"), "x"); git(stale.path, "add", ".");
+  const oldDate = "2000-01-01T00:00:00Z";
+  const oldCommit = spawnSync("git", ["-C", stale.path, "commit", "-qm", "old"], { encoding: "utf8",
+    env: { ...env, GIT_AUTHOR_DATE: oldDate, GIT_COMMITTER_DATE: oldDate } });
+  assert.equal(oldCommit.status, 0, oldCommit.stderr); git(repo, "push", "-qu", "origin", stale.branch);
+  // Committed after its PR was merged: the PR's head is an older commit, so it must stay.
+  const moved = add("moved"); writeFileSync(join(moved.path, "later"), "x"); git(moved.path, "add", "."); git(moved.path, "commit", "-qm", "after merge");
+  // Nothing of its own (content is in base), but its claim is alive; .orquestra/ keeps the ID uppercase.
+  add("owned"); mkdirSync(join(ws, ".orquestra", "OWNED"), { recursive: true });
+  writeFileSync(join(ws, ".orquestra", "OWNED", "owner"), `pane=c1 kind=id account=a at=${new Date().toISOString()}\n`);
+  const gh = join(root, "fake-gh.js"); writeFileSync(gh, `const a = process.argv.slice(2).join(" ");
+console.log(/--head work\\/plane-merged .*--state merged/.test(a) ? '[{"number":1}]'
+  : /--head work\\/plane-moved .*--state merged/.test(a) ? '[{"number":2,"headRefOid":"0000000"}]' : "[]");
+`); (env as Record<string, string | undefined>).ORQ_GH = gh;
+  const listed = run("gc", "-w", ws, "--json"); assert.equal(listed.status, 0, `stdout=${listed.stdout} stderr=${listed.stderr} signal=${listed.signal}`);
+  assert.ok(listed.stdout.trim(), `gc produced no rows: ${listed.stderr} signal=${listed.signal}`);
+  const rows = JSON.parse(listed.stdout) as { branch: string; verdict: string; reason: string }[];
+  const byId = (id: string) => rows.find((r) => r.branch.endsWith(id))!;
+  assert.equal(byId("dirty").verdict, "KEEP"); assert.equal(byId("unpushed").verdict, "KEEP");
+  assert.equal(byId("squash").verdict, "REMOVABLE"); assert.match(byId("squash").reason, /base/);
+  assert.equal(byId("merged").verdict, "REMOVABLE"); assert.match(byId("merged").reason, /PR merged/);
+  assert.equal(byId("stale").verdict, "STALE");
+  assert.equal(byId("moved").verdict, "KEEP"); assert.equal(byId("owned").verdict, "KEEP");
+  const removed = run("gc", "-w", ws, "--yes", "--json"); assert.equal(removed.status, 0, removed.stderr);
+  assert.equal(existsSync(squash.path), false); assert.equal(existsSync(merged.path), false);
+  assert.equal(git(repo, "branch", "--list", squash.branch), ""); assert.equal(git(repo, "branch", "--list", merged.branch), "");
+  assert.equal(existsSync(dirty.path), true); assert.equal(existsSync(unpushed.path), true); assert.equal(existsSync(stale.path), true);
+});
+
 test("codexFromSession: last rate_limits, windows by length, reset windows read 0", async () => {
   const { codexFromSession } = await import("./quota.js");
   const ev = (p: number, s: number, resets: number) => JSON.stringify({ payload: { rate_limits: {
@@ -105,6 +155,10 @@ test("codexFromSession: last rate_limits, windows by length, reset windows read 
   assert.deepEqual(codexFromSession(`${ev(10, 20, 2000)}\n{"x":1}\n${ev(42.7, 77, 2000)}\n`, 1000), { five: 42, week: 77 });
   assert.deepEqual(codexFromSession(ev(10, 20, 500), 1000), { five: 0, week: 20 });
   assert.equal(codexFromSession('{"nothing":true}', 1000), undefined);
+  // Free plan: a single 30-day window. It must count (it used to read "-", i.e. no limit, at 80 %).
+  const free = JSON.stringify({ payload: { rate_limits: { primary: { used_percent: 80, window_minutes: 43200, resets_at: 9000 },
+    secondary: null } } });
+  assert.deepEqual(codexFromSession(free, 1000), { five: "-", week: 80, span: 43200 });
 });
 
 test("minimaxFromRemains: worst model per window, remaining % read as used", () => {
