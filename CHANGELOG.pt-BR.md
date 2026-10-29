@@ -6,6 +6,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Não lançado]
 ### Adicionado
+- `/issue`: os itens do review vêm marcados `[blocker]` ou `[suggestion]`; só um blocker com `arquivo:linha` e uma
+  falha concreta abre rodada de fix, e o resto vai para o comentário no Plane.
 - `/issue`: o implementador termina com uma seção `## Decisions` (escolhas, trade-offs, o que ficou de fora de
   propósito) e o reviewer a recebe; escolha documentada não vira blocker, a menos que quebre um critério ou esteja errada.
 ### Corrigido
