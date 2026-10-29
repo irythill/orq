@@ -4,7 +4,7 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 [Keep a Changelog](https://keepachangelog.com/pt-BR/); as versões seguem o `package.json`.
 English: [CHANGELOG.md](CHANGELOG.md).
 
-## [Não lançado]
+## [0.2.0] — 2026-10-29
 ### Adicionado
 - `orq quota --line`: uma linha para barra de status (`work 64 · home 93! · codex 81`), a janela mais apertada de cada
   fonte, `!` no limite do pick, `⊘` bloqueado. Lê o cache do board e nunca espera a rede, então uma entrada `command` do
