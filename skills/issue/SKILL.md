@@ -148,7 +148,8 @@ outside the issue's domain: ask the user first (then it ships as its own PR, not
 
 ## 5. Cross review (always another vendor)
 ```bash
-herdr-agent $(orq pick review --level <level> --impl-agent <who implemented>) -b $BASE \
+orq pick review --level <level> --impl-agent <who implemented> > $O/review-<repo>.pick   # round 2+ reuses it
+herdr-agent $(cat $O/review-<repo>.pick) -b $BASE \
   -g <group> -t "<ID> review <repo>" -d $WT -o $O/review-<repo> -r -i $O/impl-<repo>.md -i $O/impl-<repo>.out.md \
   -i $O/verify-<repo>.txt \
   -- $O/review-<repo>.md
@@ -157,8 +158,8 @@ herdr-agent $(orq pick review --level <level> --impl-agent <who implemented>) -b
 "the diff is attached; for context, open files with your file-reading tool; don't run lint, tsc or tests (the results
 are in the attached verify)". If the reviewer ends with `status=fail` and no verdict (empty answer, or a
 `jetski: ... permission` line), that is not a rejection: run `orq pick review ... --exclude-agent <it>` and redo it.
-`--exclude-agent` applies **only to redoing that review**: for the next round's review, run `orq pick review` without
-exclusions (the failure may have been a one-off). An agent that failed twice in a row with no verdict →
+`--exclude-agent` applies **only to redoing that review** (save the new pick to `review-<repo>.pick`); the next
+round reuses whoever gave the verdict. An agent that failed twice in a row with no verdict →
 `orq block <agent> --days 1` and tell the user.
 **Second opinion** (`orq pick opinion`, read only, same attachments): only on **heavy** issues or when reviewer and
 implementer disagree about a blocker. It never becomes a round by itself: you weigh both answers and decide.
@@ -184,8 +185,15 @@ Blocking problems → write the list (blockers only) to `$O/fix-<n>.md` and cont
 A fix is a continuation: same agent, model, account and session, effort one level up (`--same` reads the implementer's
 pick; never a new `orq pick`, never `-a` alone — without `-m` the session resumes on the CLI's default model, which
 loses the prompt cache and hands the work to a weaker model). `fix-<n>.md` ends with "update the `## Decisions` section
-of your final answer for the whole branch". Then a new `herdr-verify` (4b) and a new review
-(`orq pick review` again). **Maximum: `orq config get policy.max_rounds` rounds**; over it → `orq pick impl
+of your final answer for the whole branch". **Before dispatching the fix:** `git -C $WT rev-parse HEAD > $O/round-<n>.sha`.
+Then a new `herdr-verify` (4b) and the **round review** (step 5 with these changes):
+- Same reviewer as the round before: `$(cat $O/review-<repo>.pick)`. Only if it is over quota, blocked or fails with
+  no verdict → a new `orq pick review` (saved to the same file).
+- Extra attachments: `git -C $WT diff $(cat $O/round-<n>.sha)..HEAD > $O/fix-<n>.diff` → `-i $O/fix-<n>.md -i $O/fix-<n>.diff`
+  (the full `-b $BASE` diff stays, as context).
+- The prompt asks a closed question: "for each item in fix-<n>.md: RESOLVED or NOT RESOLVED (why); then the fix diff:
+  any regression it introduced, as `[blocker]`/`[suggestion]`. Outside the fix diff, report only a blocker you missed
+  before that would break production, and say why it wasn't in the first review". Anything else is a suggestion. **Maximum: `orq config get policy.max_rounds` rounds**; over it → `orq pick impl
 --exclude-agent <it> > $O/impl-<repo>.pick` only with the user's OK, or stop and report. Non-blocking suggestions go into the comment; they
 don't become a round.
 
