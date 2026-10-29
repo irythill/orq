@@ -6,6 +6,8 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Added
+- `/issue`: the fix prompt asks for the smallest diff, nothing outside the listed blockers, and a test per blocker that
+  fails without the fix; an item the implementer thinks is wrong is answered, not "fixed".
 - `/issue`: from round 2 on, the review checks the previous blockers and the fix's own diff (`round-<n>.sha`..HEAD),
   with the same reviewer as the round before; new findings outside that diff only as a justified blocker.
 - `/issue`: review items are tagged `[blocker]` or `[suggestion]`; only a blocker with `file:line` and a concrete
