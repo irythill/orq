@@ -15,7 +15,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "../accounts.js";
 import { agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
-import { loadConfig, type Obj } from "../config.js";
+import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
 import { alive } from "../lock.js";
@@ -24,7 +24,7 @@ import { killTree, type MemMode, parseSize, resolveMode, runCapped } from "../pr
 import { closeOwnTab, detectHost, type Host, launch, screenOpen, shq, typeInto } from "../terminal.js";
 import { dropWorktree, notify } from "../testrun.js";
 
-export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base] [-r] [-R session] [-T] -- <prompt.md>   run a child agent";
+export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base] [-r] [-R session [-F]] [-T] -- <prompt.md>   run a child agent";
 
 const CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
 const PF = ".herdr-agent-prompt.md"; // prompt_in_dir file name (kept from herdr-agent)
@@ -45,7 +45,7 @@ export async function agent(argv: string[]): Promise<number> {
   if (argv[0] === "--run") return runJob(argv[1]);
   if (argv[0] === "--turn") return turn(argv[1], argv[2], argv.slice(3));
   let a = process.env.AGENT || "codex", g = "", t = "", d = "", o = "", model = "", effort = "", acc = "", resume = "", base = "";
-  let ro = false, tui = false, prompt: string | undefined;
+  let ro = false, tui = false, force = false, prompt: string | undefined;
   const inc: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i], v = () => argv[++i] ?? "";
@@ -53,7 +53,7 @@ export async function agent(argv: string[]): Promise<number> {
     if (x === "-a") a = v(); else if (x === "-g") g = v(); else if (x === "-t") t = v(); else if (x === "-d") d = v();
     else if (x === "-o") o = v(); else if (x === "-m") model = v(); else if (x === "-e") effort = v();
     else if (x === "-c") acc = v(); else if (x === "-i") inc.push(resolve(v())); else if (x === "-R") resume = v();
-    else if (x === "-b") base = v(); else if (x === "-p") v(); else if (x === "-r") ro = true; else if (x === "-T") tui = true;
+    else if (x === "-b") base = v(); else if (x === "-p") v(); else if (x === "-r") ro = true; else if (x === "-T") tui = true; else if (x === "-F") force = true;
     else if (!x.startsWith("-") && prompt === undefined) prompt = x;
     else { console.error(USAGE); return 2; }
   }
@@ -77,6 +77,20 @@ export async function agent(argv: string[]): Promise<number> {
     return 2;
   }
   const repo = resolve(d), O = resolve(o);
+  // Fix rounds: every -R on the same session counts, whatever the prefix is called. policy.max_rounds is enforced here,
+  // not left to the conductor to remember (a 7-round fix loop is what burns the tokens). -F = the user said go on.
+  if (resume) {
+    const max = Number(getPath(cfg, "policy.max_rounds") ?? 2), cf = join(dirname(O), `.rounds-${resume}`);
+    let n = 0;
+    try { n = Number(readFileSync(cf, "utf8")) || 0; } catch { /* first follow-up */ }
+    if (n >= max && !force) {
+      console.error(m(`round limit: session ${resume} already had ${n} follow-up(s) (policy.max_rounds = ${max}). Stop and tell the user; with their OK, repeat with -F.`,
+        `limite de rodadas: a sessão ${resume} já teve ${n} follow-up(s) (policy.max_rounds = ${max}). Pare e avise o usuário; com o OK dele, repita com -F.`));
+      return 4;
+    }
+    mkdirSync(dirname(O), { recursive: true });
+    writeFileSync(cf, String(n + 1));
+  }
   let P = resolve(prompt);
   if (!existsSync(repo)) { console.error(m(`no folder ${repo}`, `pasta ${repo} não existe`)); return 2; }
   if (!existsSync(P)) { console.error(m(`no prompt file ${P}`, `arquivo de prompt ${P} não existe`)); return 2; }

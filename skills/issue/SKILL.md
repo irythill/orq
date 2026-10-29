@@ -188,7 +188,7 @@ repo checklist.
 **Only `[blocker]` items open a round.** An item tagged blocker without `file:line` and a concrete failure, or that
 only restates a `## Decisions` choice, counts as a suggestion; when you downgrade one, say why in the Plane comment.
 No blockers left → APPROVED, even with suggestions.
-Blocking problems → write the list (blockers only) to `$O/fix-<n>.md` and continue the implementer's session (any agent):
+Blocking problems → write the list (blockers only) to `$O/fix-<n>.md` (always this name; reviews `$O/review-<repo>-<n>`, never `fix<n>-<repo>` or other variants — a later conductor counts rounds by these files) and continue the implementer's session (any agent):
 `herdr-agent $(orq pick fix --same $O/impl-<repo>.pick) -g <group> -t "<ID> fix<n> <repo>" -d $WT -o $O/impl-<repo> -R $(cat $O/impl-<repo>.id) -- $O/fix-<n>.md`.
 A fix is a continuation: same agent, model, account and session, effort one level up (`--same` reads the implementer's
 pick; never a new `orq pick`, never `-a` alone — without `-m` the session resumes on the CLI's default model, which
@@ -204,9 +204,15 @@ Then a new `herdr-verify` (4b) and the **round review** (step 5 with these chang
   (the full `-b $BASE` diff stays, as context).
 - The prompt asks a closed question: "for each item in fix-<n>.md: RESOLVED or NOT RESOLVED (why); then the fix diff:
   any regression it introduced, as `[blocker]`/`[suggestion]`. Outside the fix diff, report only a blocker you missed
-  before that would break production, and say why it wasn't in the first review". Anything else is a suggestion. **Maximum: `orq config get policy.max_rounds` rounds**; over it → `orq pick impl
+  before that would break production, and say why it wasn't in the first review". Anything else is a suggestion. **Maximum: `orq config get policy.max_rounds` rounds** — `orq agent -R` refuses the next one (exit 4) and counts per session, so a renamed prefix doesn't reset it; on exit 4 stop and tell the user, `-F` only with their OK; over it → `orq pick impl
 --exclude-agent <it> > $O/impl-<repo>.pick` only with the user's OK, or stop and report. Non-blocking suggestions go into the comment; they
 don't become a round.
+
+## Screenshots / visual validation
+Only when the issue asks for it. **One** attempt (a job with `--effort low`, a short prompt that says which screens and
+where to save the images), at most ~6 images, and read them only as files you need to judge — never re-read the same
+image. If it fails, tell the user instead of dispatching a second `shots` job. Playwright runs inside that child's
+worktree, never as an MCP in the conductor (images in the conductor's context are re-billed every turn).
 
 ## 7. Close
 **Commit/PR conventions belong to the repo, not to you.** The **implementer, in the worktree** (where the repo's

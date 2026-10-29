@@ -755,3 +755,19 @@ test("keyring: the native module loads on every CI platform; off and missing ent
     if (process.env.CI) assert.equal(readSecret(`orq-test-${process.pid}`, "nobody"), undefined);
   } finally { if (old === undefined) delete process.env.ORQ_KEYRING; else process.env.ORQ_KEYRING = old; }
 });
+
+test("orq agent -R: policy.max_rounds is enforced per session, whatever the prefix", () => {
+  const { root, env, run } = sandbox();
+  mkdirSync(join(root, "cfg", "orq"), { recursive: true });
+  writeFileSync(join(root, "cfg", "orq", "config.toml"), "[policy]\nmax_rounds = 1\n");
+  mkdirSync(join(root, "o"), { recursive: true });
+  writeFileSync(join(root, "p.md"), "x");
+  writeFileSync(join(root, "o", ".rounds-S1"), "1"); // one follow-up already done on S1
+  // another prefix name, same session: still over the limit
+  const args = ["agent", "-a", "claude", "-t", "t", "-d", root, "-o", join(root, "o", "fix2"), "-R", "S1", "--", join(root, "p.md")];
+  const r = spawnSync(process.execPath, [CLI, ...args], { env, cwd: root, encoding: "utf8" });
+  assert.equal(r.status, 4);
+  assert.match(r.stderr, /round limit/);
+  assert.equal(readFileSync(join(root, "o", ".rounds-S1"), "utf8"), "1");
+  void run;
+});
