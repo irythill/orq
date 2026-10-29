@@ -166,6 +166,15 @@ test("roles: legacy agents.roles become an auto pool; [roles] fixed and pool win
   assert.deepEqual(resolveRole(cfg, "review"), { mode: "auto", pool: ["agy"], rule: "other-vendor", section: "reviewer" });
 });
 
+test("pick: a fix keeps the implementer's agent, model and account, one effort level up", async () => {
+  const { escalate } = await import("./pick.js");
+  assert.equal(escalate("-a codex -m gpt-6-sol -e low\n"), "-a codex -m gpt-6-sol -e medium");
+  assert.equal(escalate("-a claude -m claude-sonnet-5 -e medium -c work"), "-a claude -m claude-sonnet-5 -e high -c work");
+  assert.equal(escalate("-a codex -m gpt-6-sol -e high"), "-a codex -m gpt-6-sol -e high");
+  assert.equal(escalate("-a opencode -m minimax/MiniMax-M3"), "-a opencode -m minimax/MiniMax-M3");
+  assert.equal(escalate("-a codex -m gpt-6-sol -e xhigh"), "-a codex -m gpt-6-sol -e xhigh");
+});
+
 test("pick: fixed role takes the first usable agent in order, never one outside the list", async () => {
   const { pick, parseQuota } = await import("./pick.js");
   const agents = {

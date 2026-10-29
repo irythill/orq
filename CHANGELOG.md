@@ -4,6 +4,17 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 [Keep a Changelog](https://keepachangelog.com/); versions follow `package.json`.
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
+## [Unreleased]
+### Added
+- `/issue`: the implementer ends with a `## Decisions` section (choices, trade-offs, what was left out on purpose) and
+  the reviewer gets it; a documented choice is not a blocker unless it breaks a criterion or is wrong.
+### Fixed
+- **Fix rounds kept the implementer's session but not its model.** `/issue` resumed with `-a <agent> -R <session>`
+  and no `-m`, so Codex fell back to its CLI default (in one workspace, 88 of 136 fixes ran on a different model than
+  the implementation, with the highest new-token median: the prompt cache is per model). New
+  `orq pick fix --same <impl pick file>` repeats the implementer's agent, model and account with the effort one level up
+  (capped at high); `/issue` saves the implementer's pick to `impl-<repo>.pick` and uses it on every fix.
+
 ## [0.1.0] — 2026-10-28 — first npm release
 ### Added
 - The orc conductor: ASCII art with the version and who plays which role, shown by `orq`, `orq --version` and

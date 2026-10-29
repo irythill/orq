@@ -1,12 +1,13 @@
 // orq pick — agent, model, effort and account for a role, from [roles] (fixed or auto), the history, quota and blocks.
 // Prints the runner arguments (e.g. `-a codex -m gpt-6-sol -e low -c work`); each pick is recorded in
 // <state dir>/picks.jsonl (that feeds rotation). Exit 3 = no candidate: ask the user.
+// `orq pick fix --same <file>`: the implementer's saved pick, effort one level up (no choice, nothing recorded).
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, type Obj } from "../config.js";
 import { m } from "../i18n.js";
-import { asArgs, parseQuota, pick as choose } from "../pick.js";
+import { asArgs, escalate, parseQuota, pick as choose } from "../pick.js";
 import { expand, stateDir } from "../paths.js";
 import { collect, type Source } from "../quota.js";
 import { PICK_ROLES, type PickRole, vendorOf } from "../roles.js";
@@ -14,7 +15,8 @@ import { collectRuns, rows } from "../stats.js";
 import { load as loadBlocks } from "./block.js";
 
 export const USAGE = `orq pick <impl|fix|worker|review|opinion> [--level simple|medium|heavy] [--impl-vendor <v>|--impl-agent <a>]
-         [--exclude-agent <a>]... [-w <workspace>] [--explain] [--no-record]`;
+         [--exclude-agent <a>]... [-w <workspace>] [--explain] [--no-record]
+orq pick fix --same <impl pick file>   same agent/model/account as the implementer, effort one level up`;
 
 // The board refreshes this file; fresher than 10 min → no new quota requests.
 const QCACHE = join(process.env.XDG_RUNTIME_DIR ?? tmpdir(), "herdr-board.quota");
@@ -27,6 +29,15 @@ async function quotaText(cfg: Obj): Promise<string> {
 export async function pick(argv: string[]): Promise<number> {
   const role = argv[0] as PickRole;
   if (!PICK_ROLES.includes(role)) { console.error(USAGE); return 2; }
+  if (role === "fix" && argv[1] === "--same") {
+    const f = argv[2];
+    if (!f || argv.length > 3) { console.error(USAGE); return 2; }
+    if (!existsSync(f)) { console.error(`orq pick: ${m("no such file: ", "arquivo não existe: ")}${f}`); return 2; }
+    const prev = readFileSync(f, "utf8").trim();
+    if (!/(^|\s)-a \S/.test(prev)) { console.error(`orq pick: ${m("not a pick: ", "não é um pick: ")}${f}`); return 2; }
+    console.log(escalate(prev));
+    return 0;
+  }
   let level = "medium", implVendor: string | undefined, implAgent: string | undefined, ws: string | undefined;
   let explain = false, record = true;
   const exclude = new Set<string>();
