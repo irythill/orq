@@ -6,6 +6,10 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Added
+- `orq gc`: lists the issue worktrees that are safe to remove (PR merged with the local head, or content already in
+  the base, which also catches squash merges) and removes them with `--yes`. Never touches a worktree with uncommitted
+  changes, unpushed commits, a live claim or a running child. `/issue` uses it after the merge instead of `git cherry`;
+  `install.sh` installs an optional daily `orq-gc.timer` (not enabled).
 - `/issue`: the fix prompt asks for the smallest diff, nothing outside the listed blockers, and a test per blocker that
   fails without the fix; an item the implementer thinks is wrong is answered, not "fixed".
 - `/issue`: from round 2 on, the review checks the previous blockers and the fix's own diff (`round-<n>.sha`..HEAD),

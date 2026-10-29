@@ -1,0 +1,10 @@
+# Daily `orq gc --yes`: removes issue worktrees whose PR is merged or whose content is already in the base.
+# Set the workspace (a conductor workspace, e.g. %h/Code/project) in a drop-in:
+#   systemctl --user edit orq-gc.service   →   [Service]  Environment=ORQ_GC_WORKSPACE=%h/Code/project
+[Unit]
+Description=orq gc: remove merged issue worktrees
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env orq gc --yes -w ${ORQ_GC_WORKSPACE}

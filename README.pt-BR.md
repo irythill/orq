@@ -216,6 +216,7 @@ dois conductors peguem a mesma issue. Detalhes, atalhos e cenários: [docs/pt-BR
 | `herdr-claim` | Dono de cada issue entre os conductors |
 | `herdr-deps` | Liga as dependências do worktree às do repo principal (sem reinstalar) |
 | `orq baseline ...` (`herdr-baseline`) | Snapshot manual dos testes que falham na base (fora do fluxo) |
+| `orq gc [-w <workspace>] [--yes]` | Lista worktrees de issues seguras para remover; `--yes` as remove |
 | `orq setup` | Primeira configuração e instalação: ambiente, skills do Claude, config, workspace do conductor |
 | `orq completion bash\|zsh\|fish\|powershell` | Imprime o script de autocompletar do shell (veja Instalação) |
 | `orq <config\|set\|lang\|block\|quota>` | O CLI multiplataforma (TypeScript); os nomes `orq-*` e `agent-quota` abaixo chamam ele |
