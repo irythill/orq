@@ -6,6 +6,10 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Não lançado]
 ### Adicionado
+- `orq gc`: lista as worktrees de issues que podem ser removidas (PR mergeado com o HEAD local, ou conteúdo já na
+  base, o que pega também squash merge) e as remove com `--yes`. Nunca mexe em worktree com mudança não commitada,
+  commit fora do remote, claim ativo ou agente rodando. O `/issue` usa no pós-merge no lugar do `git cherry`; o
+  `install.sh` instala um `orq-gc.timer` diário opcional (não ativado).
 - `/issue`: o prompt de fix pede o menor diff, nada fora dos blockers listados e um teste por blocker que falhe sem o
   fix; item que o implementador considera errado é respondido, não "corrigido".
 - `/issue`: da rodada 2 em diante, o review confere os blockers anteriores e o diff do próprio fix (`round-<n>.sha`..HEAD),

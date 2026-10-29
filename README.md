@@ -215,6 +215,7 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 | `herdr-claim` | Owner of each issue among conductors |
 | `herdr-deps` | Links the worktree's dependencies to the main repo's (no reinstall) |
 | `orq baseline ...` (`herdr-baseline`) | Manual snapshot of the tests failing on the base (outside the flow) |
+| `orq gc [-w <workspace>] [--yes]` | Lists issue worktrees that are safe to remove; `--yes` removes them |
 | `orq setup` | First configuration and install: environment, skills for Claude, config, conductor workspace |
 | `orq completion bash\|zsh\|fish\|powershell` | Prints the shell completion script (see Install) |
 | `orq <config\|set\|lang\|block\|quota>` | The cross-platform CLI (TypeScript); the `orq-*` and `agent-quota` names below call it |
