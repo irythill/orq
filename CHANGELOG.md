@@ -6,6 +6,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Added
+- Quota for OpenCode on MiniMax: the Token Plan's 5h and weekly windows from `/v1/token_plan/remains`, with
+  `$MINIMAX_API_KEY` or the key OpenCode keeps in its `auth.json` (`$MINIMAX_API_HOST` for another region). `opencode`
+  is now `"builtin"` by default; without a MiniMax key it reads `-` as before.
 - `/issue`: the fix prompt asks for the smallest diff, nothing outside the listed blockers, and a test per blocker that
   fails without the fix; an item the implementer thinks is wrong is answered, not "fixed".
 - `/issue`: from round 2 on, the review checks the previous blockers and the fix's own diff (`round-<n>.sha`..HEAD),

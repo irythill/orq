@@ -6,6 +6,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Não lançado]
 ### Adicionado
+- Cota do OpenCode na MiniMax: janelas de 5h e semanal do Token Plan via `/v1/token_plan/remains`, com
+  `$MINIMAX_API_KEY` ou a chave que o OpenCode guarda no `auth.json` (`$MINIMAX_API_HOST` para outra região). O
+  `opencode` agora é `"builtin"` por padrão; sem chave da MiniMax ele mostra `-`, como antes.
 - `/issue`: o prompt de fix pede o menor diff, nada fora dos blockers listados e um teste por blocker que falhe sem o
   fix; item que o implementador considera errado é respondido, não "corrigido".
 - `/issue`: da rodada 2 em diante, o review confere os blockers anteriores e o diff do próprio fix (`round-<n>.sha`..HEAD),
