@@ -128,7 +128,10 @@ test("gc classifies issue worktrees and removes only removable ones", () => {
   // Nothing of its own (content is in base), but its claim is alive; .orquestra/ keeps the ID uppercase.
   add("owned"); mkdirSync(join(ws, ".orquestra", "OWNED"), { recursive: true });
   writeFileSync(join(ws, ".orquestra", "OWNED", "owner"), `pane=c1 kind=id account=a at=${new Date().toISOString()}\n`);
-  const gh = join(root, "fake-gh"); writeFileSync(gh, `#!/bin/sh\ncase "$*" in *"--head work/plane-merged"*"--state merged"*) echo '[{"number":1}]' ;; *"--head work/plane-moved"*"--state merged"*) echo '[{"number":2,"headRefOid":"0000000"}]' ;; *) echo '[]' ;; esac\n`); spawnSync("chmod", ["+x", gh]); (env as Record<string, string | undefined>).ORQ_GH = gh;
+  const gh = join(root, "fake-gh.js"); writeFileSync(gh, `const a = process.argv.slice(2).join(" ");
+console.log(/--head work\\/plane-merged .*--state merged/.test(a) ? '[{"number":1}]'
+  : /--head work\\/plane-moved .*--state merged/.test(a) ? '[{"number":2,"headRefOid":"0000000"}]' : "[]");
+`); (env as Record<string, string | undefined>).ORQ_GH = gh;
   const listed = run("gc", "-w", ws, "--json"); assert.equal(listed.status, 0, `stdout=${listed.stdout} stderr=${listed.stderr} signal=${listed.signal}`);
   assert.ok(listed.stdout.trim(), `gc produced no rows: ${listed.stderr} signal=${listed.signal}`);
   const rows = JSON.parse(listed.stdout) as { branch: string; verdict: string; reason: string }[];
