@@ -1,11 +1,40 @@
 // orq quota [name...]   quota of each source in [quota] (default: all) — lines "<name> 5h=NN% week=NN% [note]"
+// orq quota --line      one line for a status bar (herdr's tab_bar_right command entry): the board's cache, never
+//                       the network — a stale cache starts the board's background collection, like the board does.
 import { getPath, loadConfig } from "../config.js";
+import { m } from "../i18n.js";
 import { collect, type Source } from "../quota.js";
+import { type Quota, quota as cached } from "./board.js";
+import { load as loadBlocks } from "./block.js";
 
-export const USAGE = "orq quota [name...]                   quota per agent/account ([quota] in the config)";
+export const USAGE = `orq quota [name...]                   quota per agent/account ([quota] in the config)
+orq quota --line                      one line for a status bar, from the board's cache (e.g. herdr tab_bar_right)`;
+
+const pct = (p: string) => (/^\d+%$/.test(p) ? Number(p.slice(0, -1)) : undefined);
+
+/** "work 64 · home 93! · codex 81 · minimax ?": the tighter of the two windows per source; ! at or over the pick
+ *  limit, ⊘ blocked (orq block), ? no data; sources with no window at all ("-" and "-") are left out. */
+export function quotaLine(lines: Quota[], limit: number, blocked: Set<string>, age?: number): string {
+  const parts = lines.filter((q) => q.five !== "-" || q.week !== "-").map((q) => {
+    if (blocked.has(q.name)) return `${q.name} ⊘`;
+    const ns = [pct(q.five), pct(q.week)].filter((n): n is number => n !== undefined);
+    if (!ns.length) return `${q.name} ?`;
+    const top = Math.max(...ns);
+    return `${q.name} ${top}${top >= limit ? "!" : ""}`;
+  });
+  if (!parts.length) return age === undefined ? m("quota: collecting...", "cota: coletando...") : "";
+  const old = age !== undefined && age > 15 * 60_000 ? ` (${Math.round(age / 60_000)} min)` : "";
+  return parts.join(" · ") + old;
+}
 
 export async function quota(argv: string[]): Promise<number> {
-  const sources = (getPath(loadConfig().cfg, "quota") ?? {}) as Record<string, Source>;
+  const { cfg } = loadConfig();
+  if (argv[0] === "--line") {
+    const q = cached(Date.now());
+    console.log(quotaLine(q.lines, Number(getPath(cfg, "policy.quota_limit") ?? 90), new Set(Object.keys(loadBlocks())), q.age));
+    return 0;
+  }
+  const sources = (getPath(cfg, "quota") ?? {}) as Record<string, Source>;
   for (const l of await collect(sources, argv)) console.log(l);
   return 0;
 }

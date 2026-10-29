@@ -61,6 +61,24 @@ Inside herdr:
   peek: `herdr pane read $(cat .orquestra/<ID>/<prefix>.pane) --source recent`.
 - **One batch per session:** after a set of related issues → `/clear` (state lives in Plane and `.orquestra/`).
 
+## Quota in the tab bar
+
+`orq quota --line` prints one line for a status bar: the tighter of the two windows per source, `!` at the pick limit
+(`policy.quota_limit`), `⊘` blocked, `?` no data. It reads the board's cache and never waits for the network (a stale
+cache starts the same background collection the board uses), so it is cheap to call every minute. In
+`~/.config/herdr/config.toml`:
+
+```toml
+[ui]
+tab_bar_right = [
+  { type = "command", command = "orq quota --line", interval_seconds = 60, timeout_seconds = 5 },
+  { type = "hostname" },
+]
+tab_bar_right_separator = " · "
+```
+
+Then `herdr server reload-config`. The board keeps the full picture (both windows, notes, resets).
+
 ## Native pop-up when something finishes
 herdr sends notices to the OS notification service (Linux: the desktop's; Windows: toast; macOS: Notification Center)
 when `~/.config/herdr/config.toml` has:
