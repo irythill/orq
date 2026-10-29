@@ -206,7 +206,7 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 
 | Command | What it does |
 |---|---|
-| `orq agent -a <agent> ...` (`herdr-agent`) | Runs an agent with a memory cap in a herdr tab, a tmux window or the background; `-r` read only, `-R <id>` continue the session, `-i` attach a file, `-b <base>` attach the diff, `-T` the agent's own screen (herdr only) |
+| `orq agent -a <agent> ...` (`herdr-agent`) | Runs an agent with a memory cap in a herdr tab, a tmux window or the background; `-r` read only, `-R <id>` continue the session, `-i` attach a file, `-b <base>` attach the diff, `-T` the agent's own screen (herdr or tmux; `-R` with it open types the follow-up into it) |
 | `orq instructions claude\|agents` | Writes the `/issue` playbook as `SKILL.md` (Claude Code) or into `AGENTS.md` (Codex, OpenCode…) |
 | `orq wait <prefix>...` | Blocks until those agents finish; prints `status=` and the answer file (any conductor, any terminal) |
 | `orq verify ...` (`herdr-verify`) | Tests related to the diff, queued and memory-capped; failures that also fail on the base count as pre-existing |

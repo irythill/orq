@@ -63,31 +63,36 @@ function parseTable(text: string): Map<number, [number, number]> {
   return t;
 }
 
-/** Total memory of `root` and all its descendants. */
-export function treeMem(root: number, table = processTable()): number {
+/** `root` and all its descendants. */
+export function treePids(root: number, table = processTable()): number[] {
   const kids = new Map<number, number[]>();
   for (const [pid, [ppid]] of table) kids.set(ppid, [...(kids.get(ppid) ?? []), pid]);
-  let total = 0;
   const seen = new Set<number>(), todo = [root];
   while (todo.length) {
     const p = todo.pop()!;
     if (seen.has(p)) continue;
     seen.add(p);
-    total += table.get(p)?.[1] ?? 0;
     todo.push(...(kids.get(p) ?? []));
   }
-  return total;
+  return [...seen];
 }
 
-export function killTree(pid: number): void {
+/** Total memory of `root` and all its descendants. */
+export function treeMem(root: number, table = processTable()): number {
+  return treePids(root, table).reduce((t, p) => t + (table.get(p)?.[1] ?? 0), 0);
+}
+
+export function killTree(pid: number, group = true): void {
   if (process.platform === "win32") spawnSync("taskkill", ["/T", "/F", "/PID", String(pid)], { stdio: "ignore" });
-  else try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
+  else if (group) try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
+  else for (const p of treePids(pid)) try { process.kill(p, "SIGKILL"); } catch { /* gone */ } // no group of its own
 }
 
 export interface RunOpts {
   cap?: number; swap?: number; mode?: MemMode; unit?: string; intervalMs?: number; cwd?: string;
   stdio?: StdioOptions; env?: NodeJS.ProcessEnv; onSpawn?: (c: ChildProcess) => void;
   quote?: boolean; // Windows shell (.cmd shims): quote each argument instead of passing a command line as is
+  tty?: boolean; // an interactive screen (-T): stays in the terminal's session; the watchdog kills its tree pid by pid
 }
 
 /** cmd.exe quoting for one argument (only used when Windows needs a shell). */
@@ -106,16 +111,16 @@ export function runCapped(cmd: string, args: string[], o: RunOpts = {}): Promise
     return wait(c);
   }
   const win = process.platform === "win32";
-  // Own process group on Linux/macOS, so the whole tree can be killed at once.
+  // Own process group on Linux/macOS, so the whole tree can be killed at once (not for a screen: it needs the terminal).
   // Windows: a shell only for .cmd/.bat shims (npx, claude…); an .exe runs directly (paths with spaces stay intact).
   const shell = win && !/\.exe$/i.test(cmd), q = shell && o.quote;
   const child = spawn(q ? winQuote(cmd) : cmd, q ? args.map(winQuote) : args,
-    { stdio: o.stdio ?? "inherit", cwd: o.cwd, env: o.env, detached: !win, shell, windowsHide: true });
+    { stdio: o.stdio ?? "inherit", cwd: o.cwd, env: o.env, detached: !win && !o.tty, shell, windowsHide: true });
   o.onSpawn?.(child);
   if (mode === "off" || !child.pid) return wait(child);
   const fwd = (sig: NodeJS.Signals) => () => { try { process.kill(-child.pid!, sig); } catch { child.kill(sig); } };
   const onInt = fwd("SIGINT"), onTerm = fwd("SIGTERM");
-  if (!win) { process.on("SIGINT", onInt); process.on("SIGTERM", onTerm); }
+  if (!win && !o.tty) { process.on("SIGINT", onInt); process.on("SIGTERM", onTerm); }
   let killed = false, sampling = false;
   const timer = setInterval(async () => {
     if (sampling || killed) return; // a slow sample (Windows) never overlaps the next
@@ -126,7 +131,7 @@ export function runCapped(cmd: string, args: string[], o: RunOpts = {}): Promise
       killed = true;
       console.error(m(`orq: memory ${gb(used)} over the cap (${gb(o.cap!)}): killing the process tree`,
         `orq: memória ${gb(used)} acima do limite (${gb(o.cap!)}): encerrando a árvore de processos`));
-      killTree(child.pid!);
+      killTree(child.pid!, !o.tty);
     }
   }, o.intervalMs ?? 1000);
   return wait(child).then((code) => {

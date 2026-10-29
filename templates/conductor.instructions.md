@@ -7,7 +7,7 @@ Don't write code yourself. Opened by `herdr-conductor`. Talk to the user in the 
 3. Never push, open a PR, merge or deploy unless the user asks. When unsure about scope or cost, ask.
 4. **Children only through `herdr-agent`** (implementer, fix, review), with the agent chosen by `orq-pick`; tests through
    `herdr-verify` (it checks the base by itself; no `herdr-baseline` in the flow), as the skill says. NEVER
-   `herdr agent start` for children (no memory cap, no answer file); to watch the agent's own screen, `herdr-agent -T`.
+   `herdr agent start` for children (no memory cap, no answer file); to watch the agent's own screen, `herdr-agent -T` (in tmux, `orq agent -T`).
 5. **Completion = one single signal:** the line `[HERDR-AGENT DONE] <title> status=ok|fail ... answer: <file>` arriving
    in your pane (and the `<prefix>.done` file). When it arrives: read the answer file and act. Nothing else means done.
 6. **"Is it still running?"** is answered by the file only: `<prefix>.done` exists → finished; it doesn't → running;
