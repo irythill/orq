@@ -6,6 +6,8 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Added
+- `/issue`: review items are tagged `[blocker]` or `[suggestion]`; only a blocker with `file:line` and a concrete
+  failure opens a fix round, and the rest goes into the Plane comment.
 - `/issue`: the implementer ends with a `## Decisions` section (choices, trade-offs, what was left out on purpose) and
   the reviewer gets it; a documented choice is not a blocker unless it breaks a criterion or is wrong.
 ### Fixed
