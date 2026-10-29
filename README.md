@@ -31,8 +31,12 @@ You ── "/issue DEMO-123" ──► conductor (Claude in herdr)
 
 - **Every step in a herdr tab.** You watch it live and the tab closes when it's done. Results stay in
   `.orquestra/<ID>/` (`.out.md`, `.log`, `.done`).
-- **Fixed order every round:** implementer ok → tests with no new failure → review. A blocking problem becomes a fix
-  round in the implementer's own session (configurable maximum).
+- **Fixed order every round:** implementer ok → tests with no new failure → review. Only a `[blocker]` with
+  `file:line` and a concrete failure becomes a fix round; the rest goes into the Plane comment (configurable maximum).
+- **Fix rounds converge.** A fix continues the implementer's session on the same model (`orq pick fix --same`, effort
+  one level up), fixes only the listed blockers with a test each, and the next review, by the same reviewer, checks
+  those blockers and the fix's own diff instead of starting over. The implementer ends with a `## Decisions` section, so
+  a deliberate choice doesn't come back as a blocker.
 - **Nobody picks an agent by gut feeling.** `orq-pick` decides from data: what each agent delivered in the history,
   how many tokens it spent, how long it took, the current quota, and a rotation so no agent gets all the work.
 - **The machine stays up.** Each agent runs under its own memory cap; tests wait in a queue.
@@ -42,8 +46,8 @@ You ── "/issue DEMO-123" ──► conductor (Claude in herdr)
 | Agent | CLI | Possible roles | Notes |
 |---|---|---|---|
 | Claude Code | `claude` | conductor, implement, review | several accounts (`claude-accounts`); Opus as conductor |
-| Codex | `codex` | implement, review | sandbox without network: the conductor runs `git fetch` |
-| OpenCode | `opencode` | implement, review | any provider (e.g. MiniMax) |
+| Codex | `codex` | implement, review | sandbox without network: the conductor runs `git fetch`; quota from its session files (the free plan's 30-day window included) |
+| OpenCode | `opencode` | implement, review | any provider (e.g. MiniMax); on MiniMax, quota from the Token Plan API with your key |
 | Antigravity | `agy` | review | headless denies commands outside its allowlist: it reviews by reading the attached diff |
 | GitHub Copilot | `copilot` | second opinion | small allowances on some plans: occasional use |
 
@@ -128,8 +132,13 @@ vendor = "openai"
 roles  = ["impl", "fix", "review"]
 quota  = ["codex"]                       # name in agent-quota's output
 [agents.codex.models.impl]
-simple = "gpt-6-sol@low"                 # model@effort
-heavy  = "gpt-6.1-sol@medium"
+simple = "gpt-6-sol@low"                 # model@effort, per issue level
+medium = "gpt-6-sol@medium"
+heavy  = "gpt-6.1-sol@high"
+[agents.codex.models.review]
+simple  = "gpt-6-sol@low"                # reviews scale with the issue too
+default = "gpt-6-sol@medium"
+heavy   = "gpt-6-sol@high"
 
 [agents.opencode]
 vendor = "minimax"
@@ -157,6 +166,7 @@ rotation = 0.20                          # penalty for having been picked recent
 orq-pick review --impl-agent codex --explain     # every candidate's score and who was left out, and why
 orq-stats --days 30                              # scoreboard: delivery, approval, time and tokens per agent and model
 orq-block antigravity --days 3                   # out of the picks (e.g. weekly quota gone, no collector for it)
+orq pick fix --same .orquestra/<ID>/impl-<repo>.pick   # a fix round: the implementer's agent/model/account, effort +1
 ```
 
 ### Language and theme
@@ -188,6 +198,9 @@ To see everything at once, keep **`orq board`** open in a tab or window (any ter
 test queue, running agents (model, memory against the cap, last action), conductors and their issues, memory, quota,
 blocks and the 7-day scoreboard. `--once` prints it once, `--json` for scripts. With
 `ui.toast.delivery = "system"` in herdr's config, each finished step also pops up a native OS notification.
+For quota without opening the board, `orq quota --line` fits herdr's tab bar (a `tab_bar_right` command entry,
+[docs/herdr.md](docs/herdr.md#quota-in-the-tab-bar)). After merges, `orq gc` lists and removes the issue worktrees
+left behind.
 
 Several issues at once: one conductor per issue (ideally on different accounts). `herdr-claim` keeps two conductors
 off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr.md).
@@ -215,7 +228,8 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 | `herdr-claim` | Owner of each issue among conductors |
 | `herdr-deps` | Links the worktree's dependencies to the main repo's (no reinstall) |
 | `orq baseline ...` (`herdr-baseline`) | Manual snapshot of the tests failing on the base (outside the flow) |
-| `orq gc [-w <workspace>] [--yes]` | Lists issue worktrees that are safe to remove; `--yes` removes them |
+| `orq gc [-w <workspace>] [--yes] [--days N] [--json]` | Lists issue worktrees that are safe to remove (PR merged, or content already in the base, squash merges included); `--yes` removes them. Never touches uncommitted work, unpushed commits, a live claim or a running agent. Optional daily `orq-gc.timer` |
+| `orq quota --line` | One line of quota for a status bar (`work 64 · home 94! · codex 81`), from the board's cache, never the network |
 | `orq setup` | First configuration and install: environment, skills for Claude, config, conductor workspace |
 | `orq completion bash\|zsh\|fish\|powershell` | Prints the shell completion script (see Install) |
 | `orq <config\|set\|lang\|block\|quota>` | The cross-platform CLI (TypeScript); the `orq-*` and `agent-quota` names below call it |
