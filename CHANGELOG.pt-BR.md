@@ -4,6 +4,17 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 [Keep a Changelog](https://keepachangelog.com/pt-BR/); as versões seguem o `package.json`.
 English: [CHANGELOG.md](CHANGELOG.md).
 
+## [Não lançado]
+### Adicionado
+- `/issue`: o implementador termina com uma seção `## Decisions` (escolhas, trade-offs, o que ficou de fora de
+  propósito) e o reviewer a recebe; escolha documentada não vira blocker, a menos que quebre um critério ou esteja errada.
+### Corrigido
+- **As rodadas de fix mantinham a sessão do implementador, mas não o modelo.** O `/issue` retomava com
+  `-a <agente> -R <sessão>` sem `-m`, e o Codex caía no modelo padrão da CLI (num workspace, 88 de 136 fixes rodaram
+  num modelo diferente do da implementação, com a maior mediana de tokens novos: o cache de prompt é por modelo). Novo
+  `orq pick fix --same <arquivo do pick do impl>` repete agente, modelo e conta do implementador com o esforço um nível
+  acima (no máximo high); o `/issue` salva o pick do implementador em `impl-<repo>.pick` e o usa em todo fix.
+
 ## [0.1.0] — 2026-10-28 — primeiro release no npm
 ### Adicionado
 - O orc maestro: arte ASCII com a versão e quem faz qual papel, mostrada por `orq`, `orq --version` e `orq setup`
