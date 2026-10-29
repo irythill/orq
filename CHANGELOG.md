@@ -6,6 +6,8 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Added
+- `/issue`: from round 2 on, the review checks the previous blockers and the fix's own diff (`round-<n>.sha`..HEAD),
+  with the same reviewer as the round before; new findings outside that diff only as a justified blocker.
 - `/issue`: review items are tagged `[blocker]` or `[suggestion]`; only a blocker with `file:line` and a concrete
   failure opens a fix round, and the rest goes into the Plane comment.
 - `/issue`: the implementer ends with a `## Decisions` section (choices, trade-offs, what was left out on purpose) and
