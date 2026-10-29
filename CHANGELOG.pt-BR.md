@@ -6,6 +6,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Não lançado]
 ### Adicionado
+- Cota do OpenCode na MiniMax: janelas de 5h e semanal do Token Plan via `/v1/token_plan/remains`, com
+  `$MINIMAX_API_KEY` ou a chave que o OpenCode guarda no `auth.json` (`$MINIMAX_API_HOST` para outra região). O
+  `opencode` agora é `"builtin"` por padrão; sem chave da MiniMax ele mostra `-`, como antes.
 - `orq gc`: lista as worktrees de issues que podem ser removidas (PR mergeado com o HEAD local, ou conteúdo já na
   base, o que pega também squash merge) e as remove com `--yes`. Nunca mexe em worktree com mudança não commitada,
   commit fora do remote, claim ativo ou agente rodando. O `/issue` usa no pós-merge no lugar do `git cherry`; o
