@@ -342,6 +342,16 @@ test("claim: claim, refuse, release, take over a stale owner", () => {
   assert.match(as("b", "X-1").stdout, /previous owner \(a\) is gone/);
   assert.equal(as("a", "-r", "X-1").status, 1);
   assert.equal(as("b", "-r", "X-1").status, 0);
+  // By name: ORQ_CONDUCTOR_ID is the name outside herdr; part of it finds the owner, -f takes all of its issues.
+  as("design-team", "X-2"); as("design-team", "X-3"); as("mkt-team", "X-4");
+  assert.match(as("c", "-l").stdout, /X-2 "design-team" pane=design-team/);
+  const list = as("c", "--from", "design");
+  assert.equal(list.status, 0); assert.match(list.stdout, /X-2 "design-team" \(alive\)/); assert.doesNotMatch(list.stdout, /X-4/);
+  assert.equal(as("c", "--from", "team").status, 3); // two conductors match
+  assert.equal(as("c", "--from", "nobody").status, 1);
+  assert.match(as("c", "--from", "design", "-f").stdout, /taken over: X-2 X-3/);
+  assert.match(readFileSync(join(root, ".orquestra", "X-3", "owner"), "utf8"), /^pane=c .* name=c$/m);
+  assert.match(as("c", "X-2").stdout, /already yours/);
   void run;
 });
 
