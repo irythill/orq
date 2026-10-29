@@ -1,16 +1,37 @@
 {
   "name": "@irythill/orq",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Orchestrate coding agents (Claude Code, Codex, OpenCode, Antigravity, Copilot) from one conductor.",
   "license": "MIT",
   "type": "module",
-  "bin": { "orq": "dist/cli.js" },
-  "files": ["dist", "!dist/**/*.test.js", "skills", "templates/workspace.CLAUDE.md"],
-  "engines": { "node": ">=20" },
-  "repository": { "type": "git", "url": "git+https://github.com/irythill/orq.git" },
+  "bin": {
+    "orq": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.js",
+    "skills",
+    "templates/workspace.CLAUDE.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/irythill/orq.git"
+  },
   "homepage": "https://github.com/irythill/orq#readme",
-  "keywords": ["agents", "orchestration", "claude-code", "codex", "opencode", "cli"],
-  "publishConfig": { "access": "public" },
+  "keywords": [
+    "agents",
+    "orchestration",
+    "claude-code",
+    "codex",
+    "opencode",
+    "cli"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "test": "tsc && node --test dist/orq.test.js",

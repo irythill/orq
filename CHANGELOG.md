@@ -4,7 +4,7 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 [Keep a Changelog](https://keepachangelog.com/); versions follow `package.json`.
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
-## [Unreleased]
+## [0.2.0] — 2026-10-29
 ### Added
 - `orq quota --line`: one line for a status bar (`work 64 · home 93! · codex 81`), the tighter window per source,
   `!` at the pick limit, `⊘` blocked. It reads the board's cache and never waits for the network, so a herdr
