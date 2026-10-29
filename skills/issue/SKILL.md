@@ -30,7 +30,15 @@ Issue artifacts (prompts, notes) live in `$WS/.orquestra/<ID>/`.
 ## 1. Read the issue
 - **First, claim it:** `herdr-claim -w $WS <ID>`. Exit 1 = another conductor owns it: **stop** and tell the user
   (don't read it, don't dispatch anything). Taking it over (e.g. switching accounts) only with the user's OK:
-  `herdr-claim -w $WS -f <ID>`. Several conductors may share a workspace; `herdr-claim -w $WS -l` lists who has what.
+  `herdr-claim -w $WS -f <ID>`. Several conductors may share a workspace; `herdr-claim -w $WS -l` lists who has what,
+  with each conductor's name (its herdr workspace label, e.g. "emp: orq-cms-dsgn"; outside herdr, `ORQ_CONDUCTOR_ID`).
+- **The user names another conductor** ("take over orq-cms-dsgn's work"): never guess a pane id. Run
+  `orq claim -w $WS --from "<what they said>"` (any part of the name works). It lists that conductor's issues; exit 3 =
+  the name matches more than one conductor (show the list, ask which); exit 1 = none. With the user's OK,
+  `orq claim -w $WS --from "<name>" -f` takes them all. **Resuming** an issue someone else started: don't start over.
+  Read `$O/` first — `impl-<repo>.md`/`.out.md` (prompt, answer, `## Decisions`), `.pick` files, the last
+  `fix-<n>.md` and `review-<repo>.out.md`, `verify-<repo>.txt` — and the Plane comments, then go on from the step the
+  files show (a `.pane`/`.id` without `.done` = a child still running: `orq wait` for it instead of dispatching again).
 - `mcp__plane__workitem` `retrieve_by_identifier` with `workitem_identifier: "<ID>"`; then `workitem_comment list`.
 - Extract: goal, **acceptance criteria**, affected repos, links. No acceptance criteria → write a short proposal and
   **ask the user** before dispatching.
