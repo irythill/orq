@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { merge } from "./config.js";
 import { parseLocal } from "./commands/block.js";
 import { setTomlString } from "./toml-set.js";
-import { antigravityFromModels, copilotFromUser, fromCache } from "./quota.js";
+import { antigravityFromModels, copilotFromUser, fromCache, minimaxFromRemains } from "./quota.js";
 
 process.env.ORQ_LANG = "en"; // messages checked below are the English ones
 const CLI = fileURLToPath(new URL("./cli.js", import.meta.url));
@@ -105,6 +105,15 @@ test("codexFromSession: last rate_limits, windows by length, reset windows read 
   assert.deepEqual(codexFromSession(`${ev(10, 20, 2000)}\n{"x":1}\n${ev(42.7, 77, 2000)}\n`, 1000), { five: 42, week: 77 });
   assert.deepEqual(codexFromSession(ev(10, 20, 500), 1000), { five: 0, week: 20 });
   assert.equal(codexFromSession('{"nothing":true}', 1000), undefined);
+});
+
+test("minimaxFromRemains: worst model per window, remaining % read as used", () => {
+  const q = minimaxFromRemains({ model_remains: [
+    { end_time: 1793290928500, weekly_end_time: 1793800527761, current_interval_remaining_percent: 77, current_weekly_remaining_percent: 90 },
+    { end_time: 1793290928500, current_interval_remaining_percent: 95 }] });
+  assert.equal(q?.five.pct, 23); assert.equal(q?.week.pct, 10);
+  assert.equal(q?.five.resetsAt, new Date(1793290928500).toISOString());
+  assert.equal(minimaxFromRemains({ model_remains: [] }), undefined);
 });
 
 test("collect: none, false, command and filtering by name", async () => {
