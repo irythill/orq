@@ -13,6 +13,11 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   and `orq claim --from <name> [-f]` finds (and takes over) a conductor's issues by any part of that name. `/issue`
   uses it when the user names another conductor, and resumes from `.orquestra/<ID>/` instead of starting over.
 
+### Fixed
+- Switching an agent's account no longer shows the old one's quota or block. The "last reading" quota cache is now
+  tied to the login (Antigravity), and `orq block` records which login it was made for: when the agent or Claude
+  account is logged into another one, the block is dropped on its own (claude, codex, antigravity, copilot, opencode).
+
 ## [0.3.0] — 2026-10-29
 ### Added
 - `orq agent -T` (and `herdr-agent -T`): the agent's own screen in TypeScript, in a herdr tab **or a tmux window**

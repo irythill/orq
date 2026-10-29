@@ -13,6 +13,11 @@ English: [CHANGELOG.md](CHANGELOG.md).
   `-l`, e `orq claim --from <nome> [-f]` encontra (e assume) as issues de um conductor por qualquer parte desse nome. O
   `/issue` usa isso quando o usuário cita outro conductor e retoma a partir de `.orquestra/<ID>/` em vez de recomeçar.
 
+### Corrigido
+- Trocar a conta de um agente não mostra mais a cota ou o bloqueio da antiga. O cache de "última leitura" da cota
+  passou a ser ligado ao login (Antigravity), e o `orq block` grava para qual login foi feito: quando o agente ou a
+  conta do Claude entra em outra, o bloqueio some sozinho (claude, codex, antigravity, copilot, opencode).
+
 ## [0.3.0] — 2026-10-29
 ### Adicionado
 - `orq agent -T` (e `herdr-agent -T`): a tela do próprio agente em TypeScript, numa aba do herdr **ou numa janela do
