@@ -56,7 +56,6 @@ roles  = ["review"]       # headless denies commands outside its allowlist: it o
 quota  = ["antigravity"]
 prior  = 0.6
 [agents.antigravity.models.review]
-default = "gemini-3.8-flash-high"
 heavy   = "gemini-3.1-pro-high"
 
 [agents.copilot]
