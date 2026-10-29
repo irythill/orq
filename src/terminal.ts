@@ -3,6 +3,7 @@
 //   tmux   a background window in the current tmux session
 //   plain  a detached background process; its screen output goes to <state dir>/agents/<run>.log
 // auto = herdr inside a herdr pane (HERDR_PANE_ID), else tmux inside tmux (TMUX), else plain.
+// The agent's own screen (-T) needs herdr or tmux; follow-ups are typed into it while it is open.
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
@@ -63,6 +64,30 @@ export function launch(host: Host, l: Launch): string {
   c.unref();
   closeSync(fd);
   return `pid:${c.pid}`;
+}
+
+/** Is the screen `launch` returned still open? (herdr pane or tmux pane; a background pid has no screen) */
+export function screenOpen(where: string): boolean {
+  if (where.startsWith("tmux:")) return spawnSync("tmux", ["display-message", "-p", "-t", where.slice(5), "#{pane_id}"], { stdio: "ignore" }).status === 0;
+  if (!where || where.startsWith("pid:")) return false;
+  return spawnSync("herdr", ["pane", "get", where], { stdio: "ignore" }).status === 0;
+}
+
+/** Type `text` into an open screen and submit it (a follow-up to an agent's own TUI). */
+export function typeInto(where: string, text: string): void {
+  if (where.startsWith("tmux:")) {
+    // A bracketed paste keeps a multi-line prompt as one message; then Enter sends it.
+    const t = where.slice(5), run = (a: string[], input?: string) => {
+      const r = spawnSync("tmux", a, { input, encoding: "utf8" });
+      if (r.status !== 0) throw new Error(`tmux ${a[0]}: ${(r.stderr || "").trim()}`);
+    };
+    run(["load-buffer", "-b", "orq-prompt", "-"], text);
+    run(["paste-buffer", "-p", "-d", "-b", "orq-prompt", "-t", t]);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300); // let the TUI take the paste before Enter
+    run(["send-keys", "-t", t, "Enter"]);
+    return;
+  }
+  herdr(["agent", "prompt", where, text]);
 }
 
 /** After a run: close our own herdr tab (the result stays in the files). tmux windows close when the runner exits. */
