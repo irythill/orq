@@ -4,7 +4,7 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 [Keep a Changelog](https://keepachangelog.com/pt-BR/); as versões seguem o `package.json`.
 English: [CHANGELOG.md](CHANGELOG.md).
 
-## [Não lançado]
+## [0.3.0] — 2026-10-29
 ### Adicionado
 - `orq agent -T` (e `herdr-agent -T`): a tela do próprio agente em TypeScript, numa aba do herdr **ou numa janela do
   tmux** (antes era o bash `herdr-agent-tui`, só herdr). Claude, Codex e OpenCode; qualquer agente via `tui` /
