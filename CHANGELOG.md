@@ -15,6 +15,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 - `/issue`: the implementer ends with a `## Decisions` section (choices, trade-offs, what was left out on purpose) and
   the reviewer gets it; a documented choice is not a blocker unless it breaks a criterion or is wrong.
 ### Fixed
+- Codex quota on the free plan: its only window is 30 days, which the collector ignored (it showed `-`, so
+  `orq pick` treated an 80 %-used Codex as unlimited). The longest window over 6 h now fills the week slot, with a note
+  when it isn't a week.
 - **Fix rounds kept the implementer's session but not its model.** `/issue` resumed with `-a <agent> -R <session>`
   and no `-m`, so Codex fell back to its CLI default (in one workspace, 88 of 136 fixes ran on a different model than
   the implementation, with the highest new-token median: the prompt cache is per model). New
