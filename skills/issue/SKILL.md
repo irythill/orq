@@ -169,6 +169,10 @@ are in the attached verify)". If the reviewer ends with `status=fail` and no ver
 `--exclude-agent` applies **only to redoing that review** (save the new pick to `review-<repo>.pick`); the next
 round reuses whoever gave the verdict. An agent that failed twice in a row with no verdict →
 `orq block <agent> --days 1` and tell the user.
+**Review tools** (an agent whose `run` has no `{prompt}`/`{prompt_text}`/stdin, e.g. a CodeRabbit-like CLI with
+`ok_exit`/`filter` in the config): same command; it ignores the prompt and the attachments and reviews the branch
+against `{base}` itself. Read its answer like any other: `status=ok` with `rc≠0` is a verdict with findings, not a
+failure. Its high-severity items are the blockers, still under the step 6 rule (`file:line` + concrete failure).
 **Second opinion** (`orq pick opinion`, read only, same attachments): only on **heavy** issues or when reviewer and
 implementer disagree about a blocker. It never becomes a round by itself: you weigh both answers and decide.
 **Before dispatching:** `git -C $R fetch origin $BASE; git -C $WT merge-base --is-ancestor origin/$BASE HEAD` — if it
@@ -204,7 +208,9 @@ Then a new `herdr-verify` (4b) and the **round review** (step 5 with these chang
   (the full `-b $BASE` diff stays, as context).
 - The prompt asks a closed question: "for each item in fix-<n>.md: RESOLVED or NOT RESOLVED (why); then the fix diff:
   any regression it introduced, as `[blocker]`/`[suggestion]`. Outside the fix diff, report only a blocker you missed
-  before that would break production, and say why it wasn't in the first review". Anything else is a suggestion. **Maximum: `orq config get policy.max_rounds` rounds** — `orq agent -R` refuses the next one (exit 4) and counts per session, so a renamed prefix doesn't reset it; on exit 4 stop and tell the user, `-F` only with their OK; over it → `orq pick impl
+  before that would break production, and say why it wasn't in the first review". Anything else is a suggestion. A review tool can't answer that: it reviews the whole
+branch again, so you do the matching — a finding is a blocker this round only if it is inside `fix-<n>.diff` or is a
+NOT RESOLVED item of `fix-<n>.md`; one you already decided on (fixed, rejected or downgraded) stays decided. **Maximum: `orq config get policy.max_rounds` rounds** — `orq agent -R` refuses the next one (exit 4) and counts per session, so a renamed prefix doesn't reset it; on exit 4 stop and tell the user, `-F` only with their OK; over it → `orq pick impl
 --exclude-agent <it> > $O/impl-<repo>.pick` only with the user's OK, or stop and report. Non-blocking suggestions go into the comment; they
 don't become a round.
 
@@ -226,6 +232,10 @@ rules live) commits and writes the PR. Find and cite in the prompt, by path, wha
   issue) and the answer in `$O/impl-<repo>.out.md`. Check the opened PR against the template.
 - Plane comment (`workitem_comment create`): summary, repo(s), branch, agents and models used (`orq pick` output),
   review result, checks that ran.
+- **Review bots on the PR** (a GitHub App reviewer): one more input, not a new review cycle. Only a finding with
+  high severity, `file:line` and a concrete failure, not already decided in the rounds, goes into a fix round (it
+  counts towards `policy.max_rounds`); the rest goes into the Plane comment or a follow-up issue. Don't re-request the
+  bot's review to "get it clean".
 - **CI after every push:** `gh pr checks <n>` (no `--watch`; if pending, end your turn and check on the next notice).
   Red → `gh run view <id> --log-failed | tail -40`: error from the diff → fix round; error already on the base → create
   a Plane issue (workspace standard) and tell the user. "Ready to merge" only with green checks or an explained failure
