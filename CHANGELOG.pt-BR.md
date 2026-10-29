@@ -4,6 +4,12 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 [Keep a Changelog](https://keepachangelog.com/pt-BR/); as versões seguem o `package.json`.
 English: [CHANGELOG.md](CHANGELOG.md).
 
+## [Não lançado]
+### Adicionado
+- O `orq claim` grava o nome de cada conductor (o label do workspace no herdr, senão `ORQ_CONDUCTOR_ID`), mostra no
+  `-l`, e `orq claim --from <nome> [-f]` encontra (e assume) as issues de um conductor por qualquer parte desse nome. O
+  `/issue` usa isso quando o usuário cita outro conductor e retoma a partir de `.orquestra/<ID>/` em vez de recomeçar.
+
 ## [0.3.0] — 2026-10-29
 ### Adicionado
 - `orq agent -T` (e `herdr-agent -T`): a tela do próprio agente em TypeScript, numa aba do herdr **ou numa janela do
