@@ -12,7 +12,7 @@ const DESC: Record<string, string> = {
   quota: "quota per agent/account", pick: "pick agent, model and account for a role", stats: "scoreboard per agent",
   board: "live board", lock: "test queue", run: "run a command under a memory cap", agent: "run a child agent",
   wait: "wait for child agents", verify: "tests of a diff", baseline: "tests already failing on the base",
-  instructions: "write the /issue playbook", claim: "issue owner among conductors", deps: "link node_modules into a worktree",
+  instructions: "write the /issue playbook", claim: "issue owner among conductors", deps: "link node_modules into a worktree", gc: "remove merged issue worktrees",
   block: "block an agent or account", completion: "shell completion script",
 };
 

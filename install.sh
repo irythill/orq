@@ -178,6 +178,20 @@ else
   say "    systemctl --user daemon-reload && systemctl --user enable --now herdr"
 fi
 
+# --- orq gc timer (installed, never enabled here) -------------------------------------------------------------
+say ""
+say "${B}$(m "orq gc timer" "timer do orq gc")${N}"
+if systemd_ok; then
+  link "$ROOT/setup/orq-gc.service" "$UNIT_DIR/orq-gc.service"
+  link "$ROOT/setup/orq-gc.timer" "$UNIT_DIR/orq-gc.timer"
+  run systemctl --user daemon-reload
+  say "  $(m "to remove merged worktrees daily, set the workspace and enable it:" "para remover worktrees mergeadas todo dia, defina o workspace e ative:")"
+  say "    systemctl --user edit orq-gc.service   # [Service] Environment=ORQ_GC_WORKSPACE=<workspace>"
+  say "    systemctl --user enable --now orq-gc.timer"
+else
+  say "  $(m "skipped (needs systemd --user)" "pulado (precisa do systemd --user)")"
+fi
+
 # --- skills -------------------------------------------------------------------------------------------------------
 say ""
 say "${B}$(m "Claude skills" "skills do Claude")${N}"
