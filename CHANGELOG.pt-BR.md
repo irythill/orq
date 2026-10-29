@@ -6,6 +6,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Não lançado]
 ### Adicionado
+- `orq agent -R` aplica `policy.max_rounds`: conta os follow-ups por sessão (qualquer que seja o nome do prefixo) e
+  recusa o próximo com exit 4; `-F` libera com o OK do usuário. O `/issue` fixa os nomes `fix-<n>` / `review-<repo>-<n>`
+  e limita a validação visual (screenshots) a uma tentativa barata.
 - O `orq claim` grava o nome de cada conductor (o label do workspace no herdr, senão `ORQ_CONDUCTOR_ID`), mostra no
   `-l`, e `orq claim --from <nome> [-f]` encontra (e assume) as issues de um conductor por qualquer parte desse nome. O
   `/issue` usa isso quando o usuário cita outro conductor e retoma a partir de `.orquestra/<ID>/` em vez de recomeçar.

@@ -6,6 +6,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Added
+- `orq agent -R` enforces `policy.max_rounds`: it counts follow-ups per session (whatever the prefix is called) and
+  refuses the next with exit 4; `-F` overrides with the user's OK. `/issue` fixes the `fix-<n>` / `review-<repo>-<n>`
+  names and limits visual validation (screenshots) to one cheap attempt.
 - `orq claim` records each conductor's name (its herdr workspace label, else `ORQ_CONDUCTOR_ID`), shows it in `-l`,
   and `orq claim --from <name> [-f]` finds (and takes over) a conductor's issues by any part of that name. `/issue`
   uses it when the user names another conductor, and resumes from `.orquestra/<ID>/` instead of starting over.
