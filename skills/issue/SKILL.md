@@ -184,8 +184,11 @@ Blocking problems → write the list (blockers only) to `$O/fix-<n>.md` and cont
 `herdr-agent $(orq pick fix --same $O/impl-<repo>.pick) -g <group> -t "<ID> fix<n> <repo>" -d $WT -o $O/impl-<repo> -R $(cat $O/impl-<repo>.id) -- $O/fix-<n>.md`.
 A fix is a continuation: same agent, model, account and session, effort one level up (`--same` reads the implementer's
 pick; never a new `orq pick`, never `-a` alone — without `-m` the session resumes on the CLI's default model, which
-loses the prompt cache and hands the work to a weaker model). `fix-<n>.md` ends with "update the `## Decisions` section
-of your final answer for the whole branch". **Before dispatching the fix:** `git -C $WT rev-parse HEAD > $O/round-<n>.sha`.
+loses the prompt cache and hands the work to a weaker model). `fix-<n>.md` = the numbered blockers + these rules: "fix only
+these items, with the smallest diff that does it; don't refactor, rename or reformat code that isn't in the list; for
+each blocker add or adjust a test that fails without the fix, when the code is testable (say so when it isn't); if an
+item is wrong or conflicts with a criterion, don't fix it: say why"; and it ends with "update the `## Decisions`
+section of your final answer for the whole branch". **Before dispatching the fix:** `git -C $WT rev-parse HEAD > $O/round-<n>.sha`.
 Then a new `herdr-verify` (4b) and the **round review** (step 5 with these changes):
 - Same reviewer as the round before: `$(cat $O/review-<repo>.pick)`. Only if it is over quota, blocked or fails with
   no verdict → a new `orq pick review` (saved to the same file).

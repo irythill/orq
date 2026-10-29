@@ -6,6 +6,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Não lançado]
 ### Adicionado
+- `/issue`: o prompt de fix pede o menor diff, nada fora dos blockers listados e um teste por blocker que falhe sem o
+  fix; item que o implementador considera errado é respondido, não "corrigido".
 - `/issue`: da rodada 2 em diante, o review confere os blockers anteriores e o diff do próprio fix (`round-<n>.sha`..HEAD),
   com o mesmo reviewer da rodada anterior; achado novo fora desse diff só como blocker justificado.
 - `/issue`: os itens do review vêm marcados `[blocker]` ou `[suggestion]`; só um blocker com `arquivo:linha` e uma
