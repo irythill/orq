@@ -165,7 +165,9 @@ implementer disagree about a blocker. It never becomes a round by itself: you we
 **Before dispatching:** `git -C $R fetch origin $BASE; git -C $WT merge-base --is-ancestor origin/$BASE HEAD` — if it
 fails, don't review yet: send a fix "rebase on origin/<BASE> and repeat the checks".
 Always **in the same worktree `$WT`**, with the prompt in `$WS/.orquestra/<ID>/review-<repo>.md` = acceptance
-criteria + "review only the attached diff; answer APPROVED or a numbered list of problems (blocker/suggestion)".
+criteria + "review only the attached diff; answer APPROVED or a numbered list of problems, each tagged `[blocker]` or
+`[suggestion]`. A blocker has `file:line` and a concrete failure (input or state → wrong result, crash, data loss,
+security hole, broken acceptance criterion); style, naming, refactors and 'could be cleaner' are suggestions".
 The implementer's answer (`impl-<repo>.out.md`) is attached for its `## Decisions` section only: the diff is the source
 of truth. The prompt says "a choice listed under Decisions is not a blocker unless it breaks an acceptance criterion or
 is wrong; then say why".
@@ -174,7 +176,10 @@ Fixed review checklist, besides the criteria: (a) identifiers/keys consistent ac
 repo checklist.
 
 ## 6. Loop
-Blocking problems → write the list to `$O/fix-<n>.md` and continue the implementer's session (any agent):
+**Only `[blocker]` items open a round.** An item tagged blocker without `file:line` and a concrete failure, or that
+only restates a `## Decisions` choice, counts as a suggestion; when you downgrade one, say why in the Plane comment.
+No blockers left → APPROVED, even with suggestions.
+Blocking problems → write the list (blockers only) to `$O/fix-<n>.md` and continue the implementer's session (any agent):
 `herdr-agent $(orq pick fix --same $O/impl-<repo>.pick) -g <group> -t "<ID> fix<n> <repo>" -d $WT -o $O/impl-<repo> -R $(cat $O/impl-<repo>.id) -- $O/fix-<n>.md`.
 A fix is a continuation: same agent, model, account and session, effort one level up (`--same` reads the implementer's
 pick; never a new `orq pick`, never `-a` alone — without `-m` the session resumes on the CLI's default model, which
