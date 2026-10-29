@@ -105,6 +105,10 @@ test("codexFromSession: last rate_limits, windows by length, reset windows read 
   assert.deepEqual(codexFromSession(`${ev(10, 20, 2000)}\n{"x":1}\n${ev(42.7, 77, 2000)}\n`, 1000), { five: 42, week: 77 });
   assert.deepEqual(codexFromSession(ev(10, 20, 500), 1000), { five: 0, week: 20 });
   assert.equal(codexFromSession('{"nothing":true}', 1000), undefined);
+  // Free plan: a single 30-day window. It must count (it used to read "-", i.e. no limit, at 80 %).
+  const free = JSON.stringify({ payload: { rate_limits: { primary: { used_percent: 80, window_minutes: 43200, resets_at: 9000 },
+    secondary: null } } });
+  assert.deepEqual(codexFromSession(free, 1000), { five: "-", week: 80, span: 43200 });
 });
 
 test("collect: none, false, command and filtering by name", async () => {
