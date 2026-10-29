@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { merge } from "./config.js";
 import { parseLocal } from "./commands/block.js";
 import { setTomlString } from "./toml-set.js";
-import { antigravityFromModels, copilotFromUser, fromCache } from "./quota.js";
+import { antigravityFromModels, copilotFromUser, fromCache, minimaxFromRemains } from "./quota.js";
 
 process.env.ORQ_LANG = "en"; // messages checked below are the English ones
 const CLI = fileURLToPath(new URL("./cli.js", import.meta.url));
@@ -169,6 +169,15 @@ test("quotaLine: the tighter window per source, ! at the limit, blocked and no-d
   assert.equal(quotaLine([q("work", "10%", "20%")], 90, new Set(), 20 * 60_000), "work 20 (20 min)");
   assert.match(quotaLine([], 90, new Set()), /\.\.\.$/); // never collected: "collecting..."
   assert.equal(quotaLine([], 90, new Set(), 1000), "");
+});
+
+test("minimaxFromRemains: worst model per window, remaining % read as used", () => {
+  const q = minimaxFromRemains({ model_remains: [
+    { end_time: 1793290928500, weekly_end_time: 1793800527761, current_interval_remaining_percent: 77, current_weekly_remaining_percent: 90 },
+    { end_time: 1793290928500, current_interval_remaining_percent: 95 }] });
+  assert.equal(q?.five.pct, 23); assert.equal(q?.week.pct, 10);
+  assert.equal(q?.five.resetsAt, new Date(1793290928500).toISOString());
+  assert.equal(minimaxFromRemains({ model_remains: [] }), undefined);
 });
 
 test("collect: none, false, command and filtering by name", async () => {

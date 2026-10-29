@@ -3,6 +3,8 @@
 //                        codex:  the rate_limits Codex writes into its latest session file
 //                        antigravity: per-model quota from Cloud Code (fetchAvailableModels), with the login agy keeps
 //                                 in the OS keyring (src/keyring.ts: Secret Service, Keychain, Credential Manager)
+//                        opencode: the MiniMax Token Plan (/v1/token_plan/remains) with $MINIMAX_API_KEY or the key
+//                                 OpenCode keeps in its auth.json; $MINIMAX_API_HOST for the China region
 //                        copilot: premium requests left this month (`gh api /copilot_internal/user`; a monthly
 //                                 allowance, shown in the week slot)
 //   false                left out of the list entirely
@@ -224,6 +226,54 @@ export function copilotQuota(): QuotaLine {
   catch { return noData("copilot", m("collector failed", "coletor falhou")); }
 }
 
+// --- minimax (opencode) ---------------------------------------------------------------------------------------------
+interface MiniMaxModel {
+  end_time?: number; weekly_end_time?: number;
+  current_interval_remaining_percent?: number; current_weekly_remaining_percent?: number;
+}
+
+/** Worst usage per window across the plan's models (remaining % → used %); resets from the windows' end times. */
+export function minimaxFromRemains(j: { model_remains?: MiniMaxModel[] }): { five: Cached; week: Cached } | undefined {
+  const ms = j?.model_remains ?? [];
+  if (!ms.length) return undefined;
+  const worst = (pct: keyof MiniMaxModel, end: keyof MiniMaxModel): Cached => {
+    let w: Cached = { pct: "-" };
+    for (const x of ms) {
+      if (typeof x[pct] !== "number") continue;
+      const used = 100 - x[pct]!;
+      if (w.pct === "-" || used > (w.pct as number))
+        w = { pct: used, ...(typeof x[end] === "number" ? { resetsAt: new Date(x[end]!).toISOString() } : {}) };
+    }
+    return w;
+  };
+  return { five: worst("current_interval_remaining_percent", "end_time"),
+    week: worst("current_weekly_remaining_percent", "weekly_end_time") };
+}
+
+function minimaxKey(): string | undefined {
+  if (process.env.MINIMAX_API_KEY) return process.env.MINIMAX_API_KEY;
+  const data = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
+  try { return JSON.parse(readFileSync(join(data, "opencode", "auth.json"), "utf8")).minimax?.key; } catch { return undefined; }
+}
+
+export async function minimaxQuota(name: string): Promise<QuotaLine> {
+  const key = minimaxKey();
+  // OpenCode may run another provider: without a MiniMax key there is nothing to limit.
+  if (!key) return { name, five: "-", week: "-", note: m("no MiniMax key", "sem chave da MiniMax") };
+  try {
+    const host = process.env.MINIMAX_API_HOST ?? "api.minimax.io";
+    const r = await fetch(`https://${host}/v1/token_plan/remains`, {
+      headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15_000) });
+    if (!r.ok) return fromCache(name, `HTTP ${r.status}`);
+    const j = await r.json() as { model_remains?: MiniMaxModel[]; base_resp?: { status_code?: number; status_msg?: string } };
+    if (j.base_resp?.status_code) return fromCache(name, `MiniMax ${j.base_resp.status_code}: ${j.base_resp.status_msg ?? ""}`.trim());
+    const q = minimaxFromRemains(j);
+    return q ? remember(name, q.five, q.week) : noData(name, m("no plan data", "sem dados do plano"));
+  } catch (e) {
+    return fromCache(name, m("collector failed", "coletor falhou") + `: ${(e as Error).message}`);
+  }
+}
+
 // --- command ----------------------------------------------------------------------------------------------------------
 function commandQuota(name: string, cmd: string): string[] {
   const r = spawnSync(cmd, { shell: true, encoding: "utf8", timeout: 30_000 });
@@ -248,6 +298,7 @@ export async function collect(sources: Record<string, Source>, want: string[] = 
     if (name === "codex") return wanted(name) ? [format(codexQuota())] : [];
     if (name === "antigravity") return wanted(name) ? [format(await antigravityQuota())] : [];
     if (name === "copilot") return wanted(name) ? [format(copilotQuota())] : [];
+    if (name === "opencode" || name === "minimax") return wanted(name) ? [format(await minimaxQuota(name))] : [];
     return wanted(name) ? [format(noData(name, m("no builtin collector: use \"none\" or a command",
       "sem coletor embutido: use \"none\" ou um comando")))] : [];
   });
