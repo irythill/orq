@@ -1,6 +1,6 @@
 {
   "name": "@irythill/orq",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Orchestrate coding agents (Claude Code, Codex, OpenCode, Antigravity, Copilot) from one conductor.",
   "license": "MIT",
   "type": "module",
