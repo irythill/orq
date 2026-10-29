@@ -1,9 +1,11 @@
 // orq block — takes an agent (or account) out of orq-pick until a date. For quotas without a collector
 // (Antigravity, Copilot, MiniMax) or any outage you know about before the agent fails.
-// State in <state dir>/blocks.json ({name: {until: <epoch seconds>, reason}}), shared with orq-pick.
+// State in <state dir>/blocks.json ({name: {until: <epoch seconds>, reason, acct}}), shared with orq-pick. `acct` is the
+// login at block time (src/identity.ts): if the agent/account is logged into another one later, the block is dropped.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../fsutil.js";
+import { loginId } from "../identity.js";
 import { m } from "../i18n.js";
 import { stateDir } from "../paths.js";
 
@@ -11,7 +13,7 @@ export const USAGE = `orq block <agent|account> [--until YYYY-MM-DD[THH:MM] | --
 orq block -r <agent|account>       unblock early
 orq block -l                       list active blocks (expired ones disappear by themselves)`;
 
-interface Block { until: number; reason?: string }
+interface Block { until: number; reason?: string; acct?: string }
 type Blocks = Record<string, Block>;
 
 const file = () => join(stateDir(), "blocks.json");
@@ -23,7 +25,15 @@ const fmt = (d: Date) =>
 export function load(): Blocks {
   let b: Blocks = {};
   try { b = JSON.parse(readFileSync(file(), "utf8")); } catch { /* missing or broken: no blocks */ }
-  return Object.fromEntries(Object.entries(b).filter(([, v]) => (v?.until ?? 0) > now()));
+  const live = Object.fromEntries(Object.entries(b).filter(([, v]) => (v?.until ?? 0) > now()));
+  // A block made under another login (the account was switched) no longer applies: the new one has its own quota.
+  const kept = Object.fromEntries(Object.entries(live).filter(([k, v]) => {
+    if (!v.acct) return true;
+    const cur = loginId(k);
+    return cur === undefined || cur === v.acct;
+  }));
+  if (Object.keys(kept).length !== Object.keys(live).length) { try { save(kept); } catch { /* best effort */ } }
+  return kept;
 }
 
 const save = (b: Blocks) => writeAtomic(file(), JSON.stringify(b, null, 2));
@@ -59,7 +69,8 @@ export function block(argv: string[]): number {
     else if (o === "--reason") reason = rest.shift() ?? "";
   }
   if (Number.isNaN(until.getTime())) { console.error(USAGE); return 2; }
-  b[name] = { until: until.getTime() / 1000, reason };
+  const acct = loginId(name);
+  b[name] = { until: until.getTime() / 1000, reason, ...(acct ? { acct } : {}) };
   save(b);
   console.log(`${name} ${m("out of orq-pick until", "fora do orq-pick até")} ${fmt(until)}`);
   return 0;
