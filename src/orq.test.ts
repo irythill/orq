@@ -161,6 +161,16 @@ test("codexFromSession: last rate_limits, windows by length, reset windows read 
   assert.deepEqual(codexFromSession(free, 1000), { five: "-", week: 80, span: 43200 });
 });
 
+test("quotaLine: the tighter window per source, ! at the limit, blocked and no-data marks", async () => {
+  const { quotaLine } = await import("./commands/quota.js");
+  const q = (name: string, five: string, week: string) => ({ name, five, week });
+  assert.equal(quotaLine([q("work", "13%", "64%"), q("home", "93%", "35%"), q("codex", "-", "81%"), q("mm", "?", "?"),
+    q("opencode", "-", "-"), q("agy", "0%", "-")], 90, new Set(["agy"]), 60_000), "work 64 · home 93! · codex 81 · mm ? · agy ⊘");
+  assert.equal(quotaLine([q("work", "10%", "20%")], 90, new Set(), 20 * 60_000), "work 20 (20 min)");
+  assert.match(quotaLine([], 90, new Set()), /\.\.\.$/); // never collected: "collecting..."
+  assert.equal(quotaLine([], 90, new Set(), 1000), "");
+});
+
 test("minimaxFromRemains: worst model per window, remaining % read as used", () => {
   const q = minimaxFromRemains({ model_remains: [
     { end_time: 1793290928500, weekly_end_time: 1793800527761, current_interval_remaining_percent: 77, current_weekly_remaining_percent: 90 },

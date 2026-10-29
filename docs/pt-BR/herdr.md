@@ -64,6 +64,24 @@ Dentro do herdr:
 - **Um lote por sessão:** depois de um conjunto de issues relacionadas → `/clear` (o estado fica no Plane e em
   `.orquestra/`).
 
+## Cota na barra de abas
+
+`orq quota --line` imprime uma linha para barra de status: a janela mais apertada de cada fonte, `!` no limite do pick
+(`policy.quota_limit`), `⊘` bloqueado, `?` sem dados. Ele lê o cache do board e nunca espera a rede (um cache velho
+dispara a mesma coleta em segundo plano que o board usa), então dá para chamar a cada minuto. Em
+`~/.config/herdr/config.toml`:
+
+```toml
+[ui]
+tab_bar_right = [
+  { type = "command", command = "orq quota --line", interval_seconds = 60, timeout_seconds = 5 },
+  { type = "hostname" },
+]
+tab_bar_right_separator = " · "
+```
+
+Depois `herdr server reload-config`. O board continua com o quadro completo (as duas janelas, notas, resets).
+
 ## Pop-up nativo quando algo termina
 O herdr manda avisos para o serviço de notificações do sistema (Linux: o do desktop; Windows: toast; macOS: Central de
 Notificações) quando o `~/.config/herdr/config.toml` tem:
