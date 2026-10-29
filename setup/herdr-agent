@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # herdr-agent → `orq agent` (TypeScript CLI in src/, built to dist/ by install.sh). Kept so existing callers keep working.
-# -T (the agent's own TUI in a herdr tab, or HERDR_AGENT_TUI=1) still runs the bash version, herdr-agent-tui.
+# -T (the agent's own screen) and HERDR_AGENT_TUI=1 are handled there too.
 # As before, children open in a herdr tab whenever the herdr server is up (ORQ_TERMINAL overrides).
 d=$(dirname "$(realpath "$0")")
-for a in "$@"; do [ "$a" = -- ] && break; [ "$a" = -T ] && exec "$d/herdr-agent-tui" "$@"; done
-[ "${HERDR_AGENT_TUI:-0}" = 1 ] && exec "$d/herdr-agent-tui" "$@"
 command -v herdr >/dev/null && herdr status server >/dev/null 2>&1 && export ORQ_TERMINAL=${ORQ_TERMINAL:-herdr}
 exec node "$d/../dist/cli.js" agent "$@"

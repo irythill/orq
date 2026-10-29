@@ -11,11 +11,17 @@
 //   session  = { from_log = "session: (\\S+)" }   # or "uuid": orq makes one and passes it as {session}
 //   answer   = "stdout"                    # stdout | file (the agent writes {out} itself)
 //   env      = { ACME_NO_MCP = "1" }
+//   tui      = "acme --on-turn-end {hook_cmd} {prompt_text}"   # -T: the agent's own screen (new session)
+//   tui_resume = "acme --resume {session} --on-turn-end {hook_cmd} {prompt_text}"   # -T -R with the screen closed
 //
 // Templates: words split on spaces ('...' or "..." keep spaces). {name} or {name:default}; a [group] is dropped when
 // any placeholder in it is empty, and repeated for a list placeholder ({gitroots}). Placeholders: prompt (file),
 // prompt_text, prompt_hint, out (answer file), dir (where the agent runs), repo (-d), model, effort, session, gitdir,
-// gitroots, gitroots_json, opencode_config, title, mode.
+// gitroots, gitroots_json, opencode_config, title, mode; in tui templates also the end-of-turn hook as hook_cmd (a
+// shell line), hook_json (an argv array, Codex's notify) and hook_settings (Claude's --settings).
+// The hook (`orq agent --turn <job> <turn_hook>`) reads the turn in the agent's own shape: claude (Stop hook JSON on
+// stdin), codex (notify JSON as the last argument), opencode (<session id> <answer file>, from orq's plugin) or text
+// (the answer on stdin, the session id as an argument).
 import type { Obj } from "./config.js";
 import { m } from "./i18n.js";
 
@@ -35,11 +41,15 @@ export interface AgentDef {
   env?: Record<string, string>;
   unset_env?: string[];
   mem_max?: string;
+  tui?: string; // -T: the agent's own interactive screen; {mode} is only used where the template says so
+  tui_resume?: string;
+  turn_hook?: "claude" | "codex" | "opencode" | "text";
 }
 
 const NOMCP_CODEX = "-c mcp_servers.plane.enabled=false -c mcp_servers.shadcn.enabled=false";
 const CLAUDE = "claude -p --strict-mcp-config --output-format stream-json --verbose [--model {model}] --effort {effort:low}";
-const OPENCODE = "opencode run --standalone --format json [-m {model}]"; // v2: effort goes in the model, "provider/model#variant"
+const CLAUDE_TUI = "claude --strict-mcp-config [--model {model}] --effort {effort:low}";
+const OPENCODE ="opencode run --standalone --format json [-m {model}]"; // v2: effort goes in the model, "provider/model#variant"
 const AGY = "agy --output-format stream-json --sandbox [--model {model}] [--effort {effort}]";
 const COPILOT = "-s -C {dir} --disable-builtin-mcps --disable-mcp-server plane --allow-tool 'shell(git diff:*)' " +
   "--allow-tool 'shell(git log:*)' --allow-tool 'shell(git show:*)' --deny-tool write [--model {model}] " +
@@ -53,6 +63,8 @@ export const BUILTIN_AGENTS: Record<string, AgentDef> = {
     run: `${CLAUDE} --session-id {session} {mode}`, resume: `${CLAUDE} --resume {session} {mode}`,
     readonly: "--permission-mode plan", write: "--permission-mode auto --add-dir {gitdir}",
     stdin: true, format: "claude", session: "uuid", accounts: true, unset_env: ["HERDR_PANE_ID"],
+    tui: `${CLAUDE_TUI} --session-id {session} {mode} --settings {hook_settings} {prompt_text}`,
+    tui_resume: `${CLAUDE_TUI} --resume {session} {mode} --settings {hook_settings} {prompt_text}`, turn_hook: "claude",
   },
   codex: {
     // Codex treats any .git inside a writable root as read only: the folders a commit needs are granted one by one.
@@ -62,12 +74,21 @@ export const BUILTIN_AGENTS: Record<string, AgentDef> = {
     resume: `codex exec resume {session} -c model_reasoning_effort={effort:low} ` +
       `-c sandbox_workspace_write.writable_roots={gitroots_json} ${NOMCP_CODEX} -o {out} -`,
     readonly: "", write: "[--add-dir {gitroots}]", stdin: true, format: "codex", answer: "file", throwaway: true,
+    // The screen: no approvals (nobody to approve), the same sandbox as exec; notify = end of turn.
+    tui: `codex [-m {model}] -c model_reasoning_effort={effort:low} -s workspace-write -a never -C {dir} {mode} ` +
+      `${NOMCP_CODEX} -c notify={hook_json} {prompt_text}`,
+    tui_resume: `codex resume {session} -c model_reasoning_effort={effort:low} -s workspace-write -a never ` +
+      `-c sandbox_workspace_write.writable_roots={gitroots_json} ${NOMCP_CODEX} -c notify={hook_json} {prompt_text}`,
+    turn_hook: "codex",
   },
   opencode: {
     // Permissions and MCPs off via OPENCODE_CONFIG_CONTENT. Headless has nobody to approve, so write = --auto (only
     // ever in a worktree) and read only = throwaway worktree with the edit tool denied.
     run: `${OPENCODE} {mode} {prompt_text}`, resume: `${OPENCODE} -s {session} {mode} {prompt_text}`, readonly: "", write: "--auto",
     format: "opencode", throwaway: true, env: { OPENCODE_CONFIG_CONTENT: "{opencode_config}" },
+    // The screen: no --auto ("ask" shows up for you); the model and orq's end-of-turn plugin go in the config.
+    tui: "opencode --standalone --prompt {prompt_text} {dir}", tui_resume: "opencode --standalone -s {session} --prompt {prompt_text} {dir}",
+    turn_hook: "opencode",
   },
   antigravity: {
     // --sandbox + accept-edits (no skip-permissions); headless denies commands outside agy's allowlist, so in practice

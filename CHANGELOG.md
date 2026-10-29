@@ -4,6 +4,22 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 [Keep a Changelog](https://keepachangelog.com/); versions follow `package.json`.
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
+## [Unreleased]
+### Added
+- `orq agent -T` (and `herdr-agent -T`): the agent's own screen in TypeScript, in a herdr tab **or a tmux window**
+  (it used to be the bash `herdr-agent-tui`, herdr only). Claude, Codex and OpenCode; any agent via `tui` /
+  `tui_resume` / `turn_hook` in `[agents.<name>]`. Every end of turn runs `orq agent --turn`, which writes
+  `.out.md`/`.id`/`.done` and notifies; `orq wait` works as with headless runs. `-R` types the follow-up into the open
+  screen (a bracketed paste in tmux, so multi-line prompts arrive whole) or, once it is closed, reopens the session.
+  `machine.tui = true` or `HERDR_AGENT_TUI=1` make it the default where it can run.
+### Fixed
+- OpenCode 2.x: MCP servers were not turned off in child runs (v2 silently drops an MCP entry without `type` and
+  `command`); the end-of-turn plugin uses the v2 plugin API.
+- A screen closed before its first turn ends writes `status=fail`, so `orq wait` no longer waits forever; closing the
+  tab or the tmux server cleans up the throwaway review worktree.
+### Removed
+- `setup/herdr-agent-tui` (the bash -T); a stale `~/.local/bin/herdr-agent-tui` link from an earlier install can go.
+
 ## [0.2.0] — 2026-10-29
 ### Added
 - `orq quota --line`: one line for a status bar (`work 64 · home 93! · codex 81`), the tighter window per source,

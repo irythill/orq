@@ -15,7 +15,7 @@ start. Below, `$WS` = workspace.
 **Inside herdr** (`HERDR_ENV=1`): children open in herdr tabs and their notices reach your pane — the flow below.
 **Outside herdr** (any terminal, tmux, any OS): the same flow with these swaps —
 - `herdr-agent ...` → `orq agent ...` (same flags; it is the same program). Children run in tmux windows inside tmux,
-  else in the background (their screen goes to a log; the answer is still `<prefix>.out.md`). No `-T`.
+  else in the background (their screen goes to a log; the answer is still `<prefix>.out.md`). `-T` needs tmux.
 - `herdr-claim` → `orq claim` (set `ORQ_CONDUCTOR_ID` to a fixed name per conductor), `herdr-deps` → `orq deps`.
 - **Completion signal:** no line arrives in your pane. After dispatching, run `orq wait <prefix>` **as a background
   task** (Claude Code: Bash with `run_in_background`); its exit wakes you and its output is the line
@@ -64,10 +64,10 @@ The output goes straight into `herdr-agent` (`herdr-agent $(orq pick ...) -g ...
 `opencode run` / `agy -p` / `copilot -p`) in a herdr tab (workspace = group `-g`, tab = title) with live output.
 When it finishes it writes `<prefix>.done` and sends ONE line `[HERDR-AGENT DONE] <title> status=ok|fail ...` to your
 pane; no MCP, and a **4 GB memory cap per agent** (own cgroup: if it blows up, only it dies). NEVER `herdr agent start`
-for children (no memory cap, no answer file). **Screen mode (`-T`, or `HERDR_AGENT_TUI=1`):** the tab shows the
-agent's own TUI instead of the log; same cap, same files, same signal (end-of-turn hook). The screen stays open after
-the turn (it holds memory until the tab closes); `-R` with the tab open types the follow-up into it. Use it when the
-user wants to watch. The repo must already be trusted in Codex/Claude (otherwise the TUI stops at the "trust this
+for children (no memory cap, no answer file). **Screen mode (`-T`, or `HERDR_AGENT_TUI=1`; herdr or tmux):** the tab
+shows the agent's own TUI instead of the log; same cap, same files, same signal (end-of-turn hook). The screen stays
+open after the turn (it holds memory until the tab closes); `-R` with the tab open types the follow-up into it. Use it
+when the user wants to watch. The repo must already be trusted in Codex/Claude (otherwise the TUI stops at the "trust this
 folder?" dialog — tell the user, don't approve it for them).
 
 ## 4. Dispatch the implementer
