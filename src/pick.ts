@@ -118,6 +118,18 @@ export function pick(inp: PickInput): PickResult {
   return { mode: "auto", best: cands[0], cands, notes };
 }
 
+const EFFORTS = ["low", "medium", "high"];
+
+/** A fix continues the implementer's session: the same runner arguments (agent, model, account) with the effort one
+ *  level up, capped at high. Keeping the model keeps the session's prompt cache; an unknown or absent effort stays. */
+export function escalate(args: string): string {
+  const p = args.trim().split(/\s+/);
+  const i = p.indexOf("-e");
+  const at = i >= 0 ? EFFORTS.indexOf(p[i + 1]) : -1;
+  if (at >= 0) p[i + 1] = EFFORTS[Math.min(at + 1, EFFORTS.length - 1)];
+  return p.join(" ");
+}
+
 /** The arguments for the agent runner, e.g. "-a codex -m gpt-6-sol -e low -c work". */
 export const asArgs = (c: Candidate) =>
   `-a ${c.agent}` + (c.model ? ` -m ${c.model}` : "") + (c.effort ? ` -e ${c.effort}` : "") + (c.acct ? ` -c ${c.acct}` : "");

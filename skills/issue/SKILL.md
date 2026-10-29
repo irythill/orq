@@ -76,6 +76,9 @@ verification commands, "base: origin/<BASE>; don't rebase/merge other branches; 
 messages following <path of the repo's commit conventions, see step 7>").
 Always include:
 - **Repo checklist:** copy the repo's "Checklist" column from the workspace `CLAUDE.md`.
+- **Decisions:** "end your final answer with a `## Decisions` section, at most 10 lines: what you chose and what you
+  ruled out, trade-offs, and what you left out on purpose and why". The reviewer reads it (step 5), so a deliberate
+  choice doesn't come back as a blocker.
 - **No tests in the child** (memory rule): "don't run jest/vitest; I run the related tests afterwards".
 - **Fresh branch:** "before your final answer: `git fetch origin <BASE> && git rebase origin/<BASE>`; on conflict stop
   and report; after the rebase repeat lint/tsc". Codex has no network: for it, you fetch and check in step 5.
@@ -102,7 +105,8 @@ In the child's prompt: "node_modules is shared (link): don't run install/add; if
 tell me".
 **Dispatch** (no MCP; memory cap; writes in automatic mode — that is why implementation only happens in a worktree):
 ```bash
-herdr-agent $(orq pick impl --level <level>) -g <group> -t "<ID> impl <repo>" -d $WT -o $O/impl-<repo> -- $O/impl-<repo>.md
+orq pick impl --level <level> > $O/impl-<repo>.pick    # the fix rounds reuse it (step 6)
+herdr-agent $(cat $O/impl-<repo>.pick) -g <group> -t "<ID> impl <repo>" -d $WT -o $O/impl-<repo> -- $O/impl-<repo>.md
 ```
 - The Claude account (`-c`) already comes from `orq pick` (the least used one under the limit).
 - Full final answer in `$O/impl-<repo>.out.md`; log in `.log`; the agent's session id in `.id`.
@@ -133,6 +137,11 @@ Child with `status=ok` → run the tests related to the diff, in their own tab, 
 **new failures** and pre-existing ones: if any test fails, it runs the same test files on an updated
 `origin/<BASE>` (whatever fails there is pre-existing). You get `[HERDR-AGENT DONE] verify ... new=N`.
 `new>0` → fix round with the list (step 6), no review. `new=0` → review.
+**Pre-existing failures get fixed too.** Any failure — tests listed as "already failing on origin/<BASE>", or a CI job
+(lint, biome, typecheck, shard, regression) failing on the PR or on the base — goes into a fix round on the issue's
+branch (separate `fix:`/`test:` commit naming the issue). Never close, move to In Review or call a PR done while
+something is red, new or old, and never widen a baseline or allowlist to silence it. Only if the fix is large or
+outside the issue's domain: ask the user first (then it ships as its own PR, not as a note).
 **Mandatory order every round (impl and each fix): child `ok` → verify → review.** Never dispatch the review (or an
 "early" fix) while this round's verify is pending, even if it is queued behind another verify: wait for
 `[HERDR-AGENT DONE] ... verify ...` and end your turn until then.
@@ -140,7 +149,8 @@ Child with `status=ok` → run the tests related to the diff, in their own tab, 
 ## 5. Cross review (always another vendor)
 ```bash
 herdr-agent $(orq pick review --level <level> --impl-agent <who implemented>) -b $BASE \
-  -g <group> -t "<ID> review <repo>" -d $WT -o $O/review-<repo> -r -i $O/impl-<repo>.md -i $O/verify-<repo>.txt \
+  -g <group> -t "<ID> review <repo>" -d $WT -o $O/review-<repo> -r -i $O/impl-<repo>.md -i $O/impl-<repo>.out.md \
+  -i $O/verify-<repo>.txt \
   -- $O/review-<repo>.md
 ```
 `-b $BASE` attaches the diff (`origin/$BASE...HEAD`): always use it. The review prompt works for any reviewer and says
@@ -156,16 +166,22 @@ implementer disagree about a blocker. It never becomes a round by itself: you we
 fails, don't review yet: send a fix "rebase on origin/<BASE> and repeat the checks".
 Always **in the same worktree `$WT`**, with the prompt in `$WS/.orquestra/<ID>/review-<repo>.md` = acceptance
 criteria + "review only the attached diff; answer APPROVED or a numbered list of problems (blocker/suggestion)".
+The implementer's answer (`impl-<repo>.out.md`) is attached for its `## Decisions` section only: the diff is the source
+of truth. The prompt says "a choice listed under Decisions is not a blocker unless it breaks an acceptance criterion or
+is wrong; then say why".
 Fixed review checklist, besides the criteria: (a) identifiers/keys consistent across the touched modules (same concept
 = same field); (b) dependency downgrade, override or pin → check the CVE/advisory behind the current version; (c) the
 repo checklist.
 
 ## 6. Loop
 Blocking problems → write the list to `$O/fix-<n>.md` and continue the implementer's session (any agent):
-`herdr-agent -a <same> [-c <same account>] -g <group> -t "<ID> fix<n> <repo>" -d $WT -o $O/impl-<repo> -R $(cat $O/impl-<repo>.id) -- $O/fix-<n>.md`.
-A fix is a continuation: same agent and session, no `orq pick`. Then a new `herdr-verify` (4b) and a new review
+`herdr-agent $(orq pick fix --same $O/impl-<repo>.pick) -g <group> -t "<ID> fix<n> <repo>" -d $WT -o $O/impl-<repo> -R $(cat $O/impl-<repo>.id) -- $O/fix-<n>.md`.
+A fix is a continuation: same agent, model, account and session, effort one level up (`--same` reads the implementer's
+pick; never a new `orq pick`, never `-a` alone — without `-m` the session resumes on the CLI's default model, which
+loses the prompt cache and hands the work to a weaker model). `fix-<n>.md` ends with "update the `## Decisions` section
+of your final answer for the whole branch". Then a new `herdr-verify` (4b) and a new review
 (`orq pick review` again). **Maximum: `orq config get policy.max_rounds` rounds**; over it → `orq pick impl
---exclude-agent <it>` only with the user's OK, or stop and report. Non-blocking suggestions go into the comment; they
+--exclude-agent <it> > $O/impl-<repo>.pick` only with the user's OK, or stop and report. Non-blocking suggestions go into the comment; they
 don't become a round.
 
 ## 7. Close
