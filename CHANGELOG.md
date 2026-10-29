@@ -6,6 +6,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Added
+- Quota for OpenCode on MiniMax: the Token Plan's 5h and weekly windows from `/v1/token_plan/remains`, with
+  `$MINIMAX_API_KEY` or the key OpenCode keeps in its `auth.json` (`$MINIMAX_API_HOST` for another region). `opencode`
+  is now `"builtin"` by default; without a MiniMax key it reads `-` as before.
 - `orq gc`: lists the issue worktrees that are safe to remove (PR merged with the local head, or content already in
   the base, which also catches squash merges) and removes them with `--yes`. Never touches a worktree with uncommitted
   changes, unpushed commits, a live claim or a running child. `/issue` uses it after the merge instead of `git cherry`;
