@@ -15,6 +15,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 - `/issue`: o implementador termina com uma seção `## Decisions` (escolhas, trade-offs, o que ficou de fora de
   propósito) e o reviewer a recebe; escolha documentada não vira blocker, a menos que quebre um critério ou esteja errada.
 ### Corrigido
+- Cota do Codex no plano free: a única janela é de 30 dias, que o coletor ignorava (mostrava `-`, e o `orq pick`
+  tratava um Codex com 80 % usado como ilimitado). A janela mais longa acima de 6 h agora ocupa o lugar da semana, com
+  uma nota quando não é semanal.
 - **As rodadas de fix mantinham a sessão do implementador, mas não o modelo.** O `/issue` retomava com
   `-a <agente> -R <sessão>` sem `-m`, e o Codex caía no modelo padrão da CLI (num workspace, 88 de 136 fixes rodaram
   num modelo diferente do da implementação, com a maior mediana de tokens novos: o cache de prompt é por modelo). Novo
