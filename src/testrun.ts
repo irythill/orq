@@ -2,7 +2,7 @@
 // memory cap (src/process.ts) and read its JSON report into "<file relative to the repo> :: <full test name>" lines.
 // The runner's own bin (node_modules/<runner>/package.json "bin") runs with this node, so Windows needs no shell;
 // without it, npx as before. Also the background job both share (launch on a TerminalHost, queue, .pid/.done, notify).
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream, existsSync, lstatSync, readFileSync, realpathSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
   type WriteStream } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
@@ -182,8 +182,10 @@ export async function inJob(j: TestJob, label: string, slots: number, body: (c: 
   return st === "ok" ? 0 : 1;
 }
 
-/** The conductor is a herdr pane: type the line into it (herdr-notify waits for it to leave a dialog). */
-export function notify(pane: string, line: string): void {
-  const local = join(dirname(CLI), "..", "setup", "herdr-notify");
-  spawnSync(existsSync(local) ? local : "herdr-notify", [pane, line], { stdio: "inherit" });
+/** The conductor is a herdr pane: type the line into it (herdr-notify waits for it to leave a dialog). In the
+ * background when the caller must not wait for that (an agent's end-of-turn hook holds its screen meanwhile). */
+export function notify(pane: string, line: string, background = false): void {
+  const local = join(dirname(CLI), "..", "setup", "herdr-notify"), cmd = existsSync(local) ? local : "herdr-notify";
+  if (background) spawn(cmd, [pane, line], { detached: true, stdio: "ignore" }).unref();
+  else spawnSync(cmd, [pane, line], { stdio: "inherit" });
 }

@@ -445,6 +445,104 @@ test("agent + wait: a fake agent from the config runs in the background, wait re
   assert.equal(run("agent", "-a", "nope", "-t", "x", "-d", root, "-o", O, "--", join(root, "p.md")).status, 2);
 });
 
+test("agent --turn: each agent's end-of-turn payload becomes .out.md, .id and .done (mode=tui)", () => {
+  const { root, env } = sandbox();
+  delete (env as Record<string, string | undefined>).HERDR_PANE_ID;
+  const O = join(root, "t"), job = `${O}.job.json`;
+  writeFileSync(job, JSON.stringify({ prefix: O, agent: "x", title: "T", parent: "" }));
+  const turn = (input: string | undefined, ...a: string[]) => spawnSync(process.execPath, [CLI, "agent", "--turn", job, ...a], { env, input, encoding: "utf8" });
+  const check = (answer: string, id: string, st = "ok") => {
+    assert.equal(readFileSync(`${O}.out.md`, "utf8"), answer);
+    assert.equal(readFileSync(`${O}.id`, "utf8").trim(), id);
+    assert.match(readFileSync(`${O}.done`, "utf8"), new RegExp(`^status=${st} rc=0 .* mode=tui`));
+  };
+  assert.equal(turn(undefined, "codex", JSON.stringify({ type: "agent-turn-complete", "thread-id": "th1", "last-assistant-message": "done A" })).status, 0);
+  check("done A", "th1");
+  writeFileSync(`${O}.done`, "old"); // other codex events are ignored
+  turn(undefined, "codex", JSON.stringify({ type: "something-else" }));
+  assert.equal(readFileSync(`${O}.done`, "utf8"), "old");
+  // Claude: the Stop hook's JSON on stdin; without last_assistant_message, the transcript's last text.
+  const tr = join(root, "tr.jsonl");
+  writeFileSync(tr, [{ type: "assistant", message: { content: [{ type: "text", text: "first" }] } }, { type: "user" },
+    { type: "assistant", message: { content: [{ type: "tool_use" }, { type: "text", text: "done B" }] } }].map((x) => JSON.stringify(x)).join("\n"));
+  turn(JSON.stringify({ session_id: "s2", transcript_path: tr }), "claude");
+  check("done B", "s2");
+  turn(JSON.stringify({ session_id: "s3", last_assistant_message: "done C" }), "claude");
+  check("done C", "s3");
+  writeFileSync(join(root, "turn.md"), "done D");
+  turn(undefined, "opencode", "ses_4", join(root, "turn.md"));
+  check("done D", "ses_4");
+  assert.equal(existsSync(join(root, "turn.md")), false);
+  turn("  \n", "text", "s5"); // a blank answer is a failure
+  check("  \n", "s5", "fail");
+  assert.equal(turn(undefined, "codex", "not json").status, 0); // never fails the agent
+  // -T needs a screen: in the background there is none; agents without a tui template refuse it.
+  writeFileSync(join(root, "p.md"), "hi\n");
+  const e = { ...env, ORQ_TERMINAL: "plain" };
+  const r = spawnSync(process.execPath, [CLI, "agent", "-a", "claude", "-T", "-t", "x", "-d", root, "-o", join(root, "o"), "--", join(root, "p.md")], { env: e, encoding: "utf8" });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /needs herdr or tmux/);
+  const c = spawnSync(process.execPath, [CLI, "agent", "-a", "copilot", "-r", "-T", "-t", "x", "-d", root, "-o", join(root, "o"), "--", join(root, "p.md")], { env: { ...e, ORQ_TERMINAL: "tmux" }, encoding: "utf8" });
+  assert.equal(c.status, 2);
+  assert.match(c.stderr, /no screen mode/);
+});
+
+const hasTmux = process.platform !== "win32" && spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
+test("agent -T: a fake screen agent in tmux answers each turn; -R types the follow-up into the open screen", { skip: !hasTmux && "no tmux" }, async () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "AGENT", "HERDR_AGENT_TUI"]) delete (env as Record<string, string | undefined>)[k];
+  const sock = join(root, "tmux.sock");
+  // Its own tmux server, started with the sandbox's environment (the runner in a new window inherits the server's).
+  assert.equal(spawnSync("tmux", ["-S", sock, "-f", "/dev/null", "new-session", "-d", "-s", "t", "-x", "120", "-y", "30"], { env }).status, 0);
+  try {
+    Object.assign(env, { TMUX: `${sock},0,0`, ORQ_TERMINAL: "tmux", HERDR_CLOSE_DELAY: "0" });
+    // The fake agent answers its prompt, then every line typed into its screen, through the text hook; "bye" exits.
+    const fake = join(root, "fake-tui.mjs");
+    writeFileSync(fake, `import { spawnSync } from "node:child_process";
+const hook = JSON.parse(process.argv[2]), sid = process.argv[3]; let n = 0;
+const answer = (t) => spawnSync(hook[0], [...hook.slice(1), sid], { input: "ANSWER " + (++n) + " " + t.trim() });
+answer(process.argv[4]);
+let buf = ""; process.stdin.setEncoding("utf8");
+process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.search(/[\\r\\n]/)) >= 0) { const l = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+  if (l === "bye") process.exit(0); if (l) answer(l); } });\n`);
+    const tpl = `'${process.execPath}' '${fake}' {hook_json} {session} {prompt_text}`;
+    mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+    writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { fake: {
+      run: "true", tui: tpl, tui_resume: tpl, turn_hook: "text", session: "uuid", mem_max: "off" } } }));
+    mkdirSync(join(root, "w"));
+    writeFileSync(join(root, "p.md"), "first\n");
+    const O = join(root, "out", "x");
+    const r = run("agent", "-a", "fake", "-T", "-t", "screen", "-d", join(root, "w"), "-o", O, "--", join(root, "p.md"));
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /screen → tmux:%\d+ \(TUI\)/);
+    const w = run("wait", "--timeout", "30", O);
+    assert.equal(w.status, 0, w.stdout + w.stderr);
+    assert.equal(readFileSync(`${O}.out.md`, "utf8"), "ANSWER 1 first");
+    assert.ok(existsSync(`${O}.pid`)); // the screen stays open after the turn
+    const sid = readFileSync(`${O}.id`, "utf8").trim();
+    writeFileSync(join(root, "p2.md"), "second\n");
+    const f = run("agent", "-a", "fake", "-T", "-R", sid, "-t", "screen", "-d", join(root, "w"), "-o", O, "--", join(root, "p2.md"));
+    assert.equal(f.status, 0, f.stderr);
+    assert.match(f.stdout, /follow-up typed into the open screen/);
+    assert.equal(run("wait", "--timeout", "30", O).status, 0);
+    assert.equal(readFileSync(`${O}.out.md`, "utf8"), "ANSWER 2 second");
+    // Closing the screen ends the runner; the last turn's .done stays.
+    const pane = readFileSync(`${O}.pane`, "utf8").trim().slice(5);
+    spawnSync("tmux", ["-S", sock, "send-keys", "-t", pane, "bye", "Enter"]);
+    for (let i = 0; i < 100 && existsSync(`${O}.pid`); i++) await new Promise((res) => setTimeout(res, 100));
+    assert.equal(existsSync(`${O}.pid`), false);
+    assert.match(readFileSync(`${O}.done`, "utf8"), /^status=ok .*mode=tui/);
+    // The window now holds a shell (HERDR_CLOSE_DELAY=0 keeps it): -R must reopen the session, never type into it.
+    writeFileSync(join(root, "p3.md"), "third\n");
+    const g = run("agent", "-a", "fake", "-T", "-R", sid, "-t", "screen", "-d", join(root, "w"), "-o", O, "--", join(root, "p3.md"));
+    assert.equal(g.status, 0, g.stderr);
+    assert.doesNotMatch(g.stdout, /typed/);
+    assert.notEqual(readFileSync(`${O}.pane`, "utf8").trim().slice(5), pane);
+    assert.equal(run("wait", "--timeout", "30", O).status, 0);
+    assert.equal(readFileSync(`${O}.out.md`, "utf8"), "ANSWER 1 third");
+  } finally { spawnSync("tmux", ["-S", sock, "kill-server"]); }
+});
+
 test("board: agents, queue, claims, quota and blocks from fake state files, plain when piped", () => {
   const { root, env, run } = sandbox(), st = join(root, "state", "orq"), ws = join(root, "ws"), now = Date.now();
   const iso = (ms: number) => new Date(ms).toISOString(), dead = spawnSync(process.execPath, ["-e", ""]).pid!;
