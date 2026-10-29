@@ -9,6 +9,10 @@ English: [CHANGELOG.md](CHANGELOG.md).
 - Cota do OpenCode na MiniMax: janelas de 5h e semanal do Token Plan via `/v1/token_plan/remains`, com
   `$MINIMAX_API_KEY` ou a chave que o OpenCode guarda no `auth.json` (`$MINIMAX_API_HOST` para outra região). O
   `opencode` agora é `"builtin"` por padrão; sem chave da MiniMax ele mostra `-`, como antes.
+- `orq gc`: lista as worktrees de issues que podem ser removidas (PR mergeado com o HEAD local, ou conteúdo já na
+  base, o que pega também squash merge) e as remove com `--yes`. Nunca mexe em worktree com mudança não commitada,
+  commit fora do remote, claim ativo ou agente rodando. O `/issue` usa no pós-merge no lugar do `git cherry`; o
+  `install.sh` instala um `orq-gc.timer` diário opcional (não ativado).
 - `/issue`: o prompt de fix pede o menor diff, nada fora dos blockers listados e um teste por blocker que falhe sem o
   fix; item que o implementador considera errado é respondido, não "corrigido".
 - `/issue`: da rodada 2 em diante, o review confere os blockers anteriores e o diff do próprio fix (`round-<n>.sha`..HEAD),
@@ -18,6 +22,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 - `/issue`: o implementador termina com uma seção `## Decisions` (escolhas, trade-offs, o que ficou de fora de
   propósito) e o reviewer a recebe; escolha documentada não vira blocker, a menos que quebre um critério ou esteja errada.
 ### Corrigido
+- Cota do Codex no plano free: a única janela é de 30 dias, que o coletor ignorava (mostrava `-`, e o `orq pick`
+  tratava um Codex com 80 % usado como ilimitado). A janela mais longa acima de 6 h agora ocupa o lugar da semana, com
+  uma nota quando não é semanal.
 - **As rodadas de fix mantinham a sessão do implementador, mas não o modelo.** O `/issue` retomava com
   `-a <agente> -R <sessão>` sem `-m`, e o Codex caía no modelo padrão da CLI (num workspace, 88 de 136 fixes rodaram
   num modelo diferente do da implementação, com a maior mediana de tokens novos: o cache de prompt é por modelo). Novo
