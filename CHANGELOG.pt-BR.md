@@ -6,6 +6,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Não lançado]
 ### Adicionado
+- `orq quota --line`: uma linha para barra de status (`work 64 · home 93! · codex 81`), a janela mais apertada de cada
+  fonte, `!` no limite do pick, `⊘` bloqueado. Lê o cache do board e nunca espera a rede, então uma entrada `command` do
+  `tab_bar_right` do herdr pode chamá-lo a cada minuto (docs/pt-BR/herdr.md).
 - `orq gc`: lista as worktrees de issues que podem ser removidas (PR mergeado com o HEAD local, ou conteúdo já na
   base, o que pega também squash merge) e as remove com `--yes`. Nunca mexe em worktree com mudança não commitada,
   commit fora do remote, claim ativo ou agente rodando. O `/issue` usa no pós-merge no lugar do `git cherry`; o

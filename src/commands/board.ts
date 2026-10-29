@@ -148,7 +148,7 @@ export function parseQuota(text: string): Quota[] {
   });
 }
 
-function quota(now: number): Snapshot["quota"] {
+export function quota(now: number): Snapshot["quota"] {
   let age: number | undefined;
   try { age = now - statSync(qfile()).mtimeMs; } catch { /* never collected */ }
   if (age === undefined || age > QTTL) startCollect();
