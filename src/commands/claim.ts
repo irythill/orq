@@ -15,7 +15,7 @@ export const USAGE = `orq claim [-w <workspace>] <ID> | -f <ID> | -r <ID> | -l  
 
 const field = (text: string, k: string) => new RegExp(`${k}=(\\S+)`).exec(text)?.[1] ?? "";
 
-function aliveOwner(text: string): boolean {
+export function aliveOwner(text: string): boolean {
   const id = field(text, "pane"), kind = field(text, "kind") || "herdr";
   if (kind === "herdr") return spawnSync("herdr", ["agent", "get", id], { stdio: "ignore" }).status === 0;
   const ttl = Number(process.env.ORQ_CLAIM_TTL_H ?? 24) * 3600_000;
