@@ -13,6 +13,7 @@
 // Output line (read by orq-pick and the board): "<name> 5h=NN% week=NN% [note]".
 //   -  = the plan has no such window (not limiting);  ? = no data (expired login, collector failed).
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -38,15 +39,18 @@ interface Cached { pct: Pct; resetsAt?: string }
 const KEEP_MS = 5 * 3600_000;
 const cacheFile = (name: string) => join(stateDir(), "quota", `${name}.json`);
 
-function remember(name: string, five: Cached, week: Cached): QuotaLine {
-  try { writeAtomic(cacheFile(name), JSON.stringify({ five, week, at: Date.now() })); } catch { /* best effort */ }
+// `acct` identifies the login behind a reading (antigravity: one login per machine, swapped by the user): a cache
+// written under another login must never stand in for this one.
+function remember(name: string, five: Cached, week: Cached, acct?: string): QuotaLine {
+  try { writeAtomic(cacheFile(name), JSON.stringify({ five, week, at: Date.now(), ...(acct ? { acct } : {}) })); } catch { /* best effort */ }
   return { name, five: five.pct, week: week.pct };
 }
 
 /** The cached reading (its age in the note), window by window; nothing usable → the "no data" line. */
-export function fromCache(name: string, why: string, now = Date.now()): QuotaLine {
+export function fromCache(name: string, why: string, now = Date.now(), acct?: string): QuotaLine {
   try {
-    const c = JSON.parse(readFileSync(cacheFile(name), "utf8")) as { five: Cached; week: Cached; at: number };
+    const c = JSON.parse(readFileSync(cacheFile(name), "utf8")) as { five: Cached; week: Cached; at: number; acct?: string };
+    if (acct !== undefined && c.acct !== acct) return noData(name, why); // another login's reading
     const still = (w: Cached): Pct | undefined => {
       if (w.resetsAt) { const t = Date.parse(w.resetsAt); if (!Number.isNaN(t)) return t > now ? w.pct : 0; }
       return now - c.at < KEEP_MS ? w.pct : undefined;
@@ -170,14 +174,17 @@ export function antigravityFromModels(models: Record<string, ModelQuota>, now = 
   return { five, week };
 }
 
-function agyToken(): { access?: string; expiry?: string } | undefined {
+export function agyToken(): { access?: string; expiry?: string; acct?: string } | undefined {
   // agy (go-keyring) keeps {"token": {access_token, expiry, ...}} under service "gemini", user "antigravity"
   // (on Windows go-keyring names the credential "gemini:antigravity").
   const raw = readSecret("gemini", "antigravity", "gemini:antigravity");
   if (!raw) return undefined;
   try {
     const t = JSON.parse(raw).token;
-    return { access: t?.access_token, expiry: t?.expiry };
+    // The refresh token is stable for a login and differs between accounts (the access token rotates hourly).
+    const id = t?.refresh_token ?? t?.id_token;
+    return { access: t?.access_token, expiry: t?.expiry,
+      ...(id ? { acct: createHash("sha256").update(String(id)).digest("hex").slice(0, 16) } : {}) };
   } catch { return undefined; }
 }
 
@@ -187,7 +194,7 @@ export async function antigravityQuota(): Promise<QuotaLine> {
   if (!t?.access) return noData(name, m("no agy login in the keyring", "sem login do agy no chaveiro"));
   // Never refresh it here (that is agy's login): an expired one just means "run agy once" (`agy models` is enough).
   const expired = m("login expired: run `agy models`", "login expirado: rode `agy models`");
-  if (t.expiry && Date.parse(t.expiry) < Date.now()) return fromCache(name, expired);
+  if (t.expiry && Date.parse(t.expiry) < Date.now()) return fromCache(name, expired, undefined, t.acct);
   try {
     const r = await fetch("https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", {
       method: "POST", body: "{}",
@@ -195,13 +202,13 @@ export async function antigravityQuota(): Promise<QuotaLine> {
       headers: { Authorization: `Bearer ${t.access}`, "Content-Type": "application/json", "User-Agent": "antigravity" },
       signal: AbortSignal.timeout(15_000),
     });
-    if (r.status === 401) return fromCache(name, expired);
-    if (!r.ok) return fromCache(name, `HTTP ${r.status}`);
+    if (r.status === 401) return fromCache(name, expired, undefined, t.acct);
+    if (!r.ok) return fromCache(name, `HTTP ${r.status}`, undefined, t.acct);
     const j = await r.json() as { models?: Record<string, ModelQuota> };
     const { five, week } = antigravityFromModels(j.models ?? {});
-    return remember(name, five, week);
+    return remember(name, five, week, t.acct);
   } catch (e) {
-    return fromCache(name, m("collector failed", "coletor falhou") + `: ${(e as Error).message}`);
+    return fromCache(name, m("collector failed", "coletor falhou") + `: ${(e as Error).message}`, undefined, t.acct);
   }
 }
 
@@ -250,7 +257,7 @@ export function minimaxFromRemains(j: { model_remains?: MiniMaxModel[] }): { fiv
     week: worst("current_weekly_remaining_percent", "weekly_end_time") };
 }
 
-function minimaxKey(): string | undefined {
+export function minimaxKey(): string | undefined {
   if (process.env.MINIMAX_API_KEY) return process.env.MINIMAX_API_KEY;
   const data = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
   try { return JSON.parse(readFileSync(join(data, "opencode", "auth.json"), "utf8")).minimax?.key; } catch { return undefined; }

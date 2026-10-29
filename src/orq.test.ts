@@ -93,6 +93,24 @@ test("block: add, list, remove, expire", () => {
   assert.equal(run("block", "x", "--until", "garbage").status, 2);
 });
 
+test("block: dropped once the agent is logged into another account", () => {
+  const { root, env, run } = sandbox();
+  const codex = join(root, "codex"); mkdirSync(codex);
+  const auth = (id: string) => writeFileSync(join(codex, "auth.json"), JSON.stringify({ tokens: { account_id: id } }));
+  const e = { ...env, CODEX_HOME: codex };
+  const go = (...a: string[]) => spawnSync(process.execPath, [CLI, ...a], { env: e, cwd: root, encoding: "utf8" });
+  auth("acct-1");
+  go("block", "codex", "--days", "3");
+  go("block", "copilot", "--days", "3"); // login unknown here (no gh): stays until its date
+  assert.match(go("block", "-l").stdout, /^codex /m);
+  auth("acct-1");
+  assert.match(go("block", "-l").stdout, /^codex /m); // same login: still blocked
+  auth("acct-2");
+  const list = go("block", "-l").stdout;
+  assert.doesNotMatch(list, /^codex /m); // switched account: block gone
+  assert.match(list, /^copilot /m);
+});
+
 test("unknown command exits 2", () => {
   assert.equal(sandbox().run("nope").status, 2);
 });
