@@ -146,6 +146,14 @@ roles  = ["review"]                      # here it only reviews; for someone els
 [agents.opencode.models.review]
 default = "minimax/MiniMax-M3"
 
+[agents.corvus]                          # a review tool, not a chat: no prompt, no session
+vendor  = "minimax"                      # the vendor of the model it runs, for the cross-vendor rule
+roles   = ["review"]
+run     = "corvus --markdown -b {base}"  # {base} = orq agent -b; it reads the diff itself
+write   = false
+ok_exit = [0, 1]                         # exit 1 = findings, still a verdict
+# filter = "jq -r '...'"                 # optional: its output → [blocker]/[suggestion] lines
+
 [policy]
 quota_limit = 90                         # ≥ 90% used → agent out
 [policy.weights]

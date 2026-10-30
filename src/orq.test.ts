@@ -473,6 +473,38 @@ test("agent + wait: a fake agent from the config runs in the background, wait re
   assert.equal(run("agent", "-a", "nope", "-t", "x", "-d", root, "-o", O, "--", join(root, "p.md")).status, 2);
 });
 
+test("agent: a review tool gets {base}, exits 1 on findings (ok_exit) and its output goes through the filter", () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  (env as Record<string, string>).ORQ_TERMINAL = "plain";
+  const repo = join(root, "r");
+  mkdirSync(repo);
+  for (const a of [["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"],
+    ["update-ref", "refs/remotes/origin/main", "HEAD"]]) spawnSync("git", ["-C", repo, ...a]);
+  const tool = join(root, "tool.mjs");
+  writeFileSync(tool, `console.log(JSON.stringify({ base: process.argv[2], sev: process.argv[3] })); process.exit(1);\n`);
+  const cfg = (filter: string) => writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { tool: {
+    run: `'${process.execPath}' '${tool}' {base} high`, write: false, ok_exit: [0, 1], filter, mem_max: "off" } } }));
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(root, "p.md"), "ignored\n");
+  const O = join(root, "out", "t");
+  const go = () => {
+    assert.equal(run("agent", "-a", "tool", "-t", "T", "-d", repo, "-o", O, "-r", "-b", "main", "--", join(root, "p.md")).status, 0);
+    return run("wait", "--timeout", "60", O);
+  };
+  cfg(`'${process.execPath}' -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);console.log("1. [blocker] "+j.base+" "+j.sev)})'`);
+  const ok = go();
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.match(ok.stdout, /status=ok rc=1/);
+  assert.equal(readFileSync(`${O}.out.md`, "utf8"), "1. [blocker] main high\n");
+  // A failing filter is no verdict: status=fail, and the log says why.
+  cfg("exit 3");
+  const bad = go();
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout, /status=fail rc=1/);
+  assert.match(readFileSync(`${O}.log`, "utf8"), /filter failed \(exit 3\)/);
+});
+
 test("agent --turn: each agent's end-of-turn payload becomes .out.md, .id and .done (mode=tui)", () => {
   const { root, env } = sandbox();
   delete (env as Record<string, string | undefined>).HERDR_PANE_ID;
