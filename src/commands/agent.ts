@@ -34,6 +34,7 @@ interface Job {
   env: Record<string, string>; unset: string[]; stdin: boolean; format: string; answer: string;
   session?: string; fromLog?: string; parent: string; host: Host; unit: string; cap?: number; swap?: number;
   mode: MemMode; throwaway: boolean; promptInDir: boolean; closeAfter: number; keep: boolean; tui?: boolean;
+  okExit?: number[]; filter?: string;
 }
 
 const git = (dir: string, ...a: string[]) => {
@@ -147,7 +148,7 @@ export async function agent(argv: string[]): Promise<number> {
   const vars: Vars = {
     prompt: P, prompt_text: tpl.includes("{prompt_text}") ? readFileSync(P, "utf8") : "",
     prompt_hint: `Read the file ${PF} (in the current folder, with your file-reading tool): it holds your complete instructions for this task. Follow them. ${PF} is not part of the code: don't review or edit it.`,
-    out: `${O}.out.md`, dir, repo, title: t, model: model === "auto" ? "" : model, effort, session,
+    out: `${O}.out.md`, dir, repo, base, title: t, model: model === "auto" ? "" : model, effort, session,
     gitdir: gd ?? "", gitroots: roots, gitroots_json: JSON.stringify(roots), mode: [], opencode_config: JSON.stringify(ocCfg),
     hook_cmd: hook.map(shq).join(" "), hook_json: JSON.stringify(hook),
     hook_settings: JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: hook.map(shq).join(" ") }] }] } }),
@@ -172,6 +173,7 @@ export async function agent(argv: string[]): Promise<number> {
     swap: parseSize(mach.agent_swap_max as string | undefined), mode: (mach.mem_enforce as MemMode | undefined) ?? "auto",
     throwaway, promptInDir: Boolean(def.prompt_in_dir), closeAfter,
     keep: process.env.HERDR_KEEP_TAB === "1" || process.env.ORQ_KEEP_TAB === "1" || closeAfter <= 0, tui,
+    okExit: def.ok_exit, filter: def.filter,
   };
   writeAtomic(`${O}.job.json`, JSON.stringify(job, null, 1));
   // Readable copy of the command (also what orq stats and herdr-board read).
@@ -375,8 +377,15 @@ async function runJob(file: string): Promise<number> {
   const sid = j.fromLog ? new RegExp(j.fromLog, "m").exec(logText)?.[1] : res.session ?? j.session;
   if (sid) writeFileSync(`${O}.id`, `${sid}\n`);
   if (rc === 0 && res.rc) rc = res.rc;
+  // A review tool exits non-zero on findings: an ok_exit code is a verdict (rc stays in .done), not a failure.
+  let verdict = rc === 0 || (j.okExit ?? []).includes(rc);
+  if (j.filter && verdict) {
+    const f = spawnSync("sh", ["-c", j.filter], { cwd: j.dir, input: readFileSync(`${O}.out.md`, "utf8"), encoding: "utf8", maxBuffer: 1 << 30 });
+    if (f.status === 0) writeFileSync(`${O}.out.md`, f.stdout);
+    else { appendFileSync(`${O}.log`, `[orq agent] filter failed (exit ${f.status}): ${f.stderr}\n`); verdict = false; }
+  }
   let answer = ""; try { answer = readFileSync(`${O}.out.md`, "utf8"); } catch { /* none */ }
-  const st = rc === 0 && /\S/.test(answer) ? "ok" : "fail"; // whitespace-only answer = failure
+  const st = verdict && /\S/.test(answer) ? "ok" : "fail"; // whitespace-only answer = failure
   writeAtomic(`${O}.done`, `status=${st} rc=${rc} at=${new Date().toISOString()} agent=${j.agent}\n`);
   rmSync(`${O}.pid`, { force: true });
   state({ status: st, rc, end: new Date().toISOString() });

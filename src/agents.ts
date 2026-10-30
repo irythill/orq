@@ -13,10 +13,12 @@
 //   env      = { ACME_NO_MCP = "1" }
 //   tui      = "acme --on-turn-end {hook_cmd} {prompt_text}"   # -T: the agent's own screen (new session)
 //   tui_resume = "acme --resume {session} --on-turn-end {hook_cmd} {prompt_text}"   # -T -R with the screen closed
+//   ok_exit  = [0, 1]                     # exit codes that still count as a verdict (a review tool exits 1 on findings)
+//   filter   = "jq -r '.findings[] | ...'" # shell line: gets the answer on stdin, its stdout becomes the answer
 //
 // Templates: words split on spaces ('...' or "..." keep spaces). {name} or {name:default}; a [group] is dropped when
 // any placeholder in it is empty, and repeated for a list placeholder ({gitroots}). Placeholders: prompt (file),
-// prompt_text, prompt_hint, out (answer file), dir (where the agent runs), repo (-d), model, effort, session, gitdir,
+// prompt_text, prompt_hint, out (answer file), dir (where the agent runs), repo (-d), base (-b), model, effort, session, gitdir,
 // gitroots, gitroots_json, opencode_config, title, mode; in tui templates also the end-of-turn hook as hook_cmd (a
 // shell line), hook_json (an argv array, Codex's notify) and hook_settings (Claude's --settings).
 // The hook (`orq agent --turn <job> <turn_hook>`) reads the turn in the agent's own shape: claude (Stop hook JSON on
@@ -44,6 +46,8 @@ export interface AgentDef {
   tui?: string; // -T: the agent's own interactive screen; {mode} is only used where the template says so
   tui_resume?: string;
   turn_hook?: "claude" | "codex" | "opencode" | "text";
+  ok_exit?: number[]; // exit codes that are a verdict, not a failure (default [0])
+  filter?: string; // shell line run on the answer (stdin → stdout), e.g. a tool's JSON → [blocker]/[suggestion]
 }
 
 const NOMCP_CODEX = "-c mcp_servers.plane.enabled=false -c mcp_servers.shadcn.enabled=false";
