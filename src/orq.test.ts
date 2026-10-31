@@ -745,6 +745,27 @@ test("claim: claim, refuse, release, take over a stale owner", () => {
   void run;
 });
 
+test("claim -l / --from: the herdr workspace's current label wins over the stored name while the pane is alive", { skip: process.platform === "win32" }, () => {
+  const { root, env } = sandbox(), bin = join(root, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "herdr"), `#!/bin/sh
+case "$1 $2" in
+  "agent get") exit 0 ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"p1","workspace_id":"w1"}]}}' ;;
+  "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"emp: orq-cms"}]}}' ;;
+  *) exit 0 ;;
+esac
+`, { mode: 0o755 });
+  const testEnv = { ...env, PATH: `${bin}:${(env as Record<string, string | undefined>).PATH}` };
+  mkdirSync(join(root, ".orquestra", "X-1"), { recursive: true });
+  writeFileSync(join(root, ".orquestra", "X-1", "owner"), `pane=p1 kind=herdr account=work at=${new Date().toISOString()} name=stored-name\n`);
+  const list = spawnSync(process.execPath, [CLI, "claim", "-w", root, "-l"], { env: testEnv, encoding: "utf8" });
+  assert.match(list.stdout, /X-1 "emp: orq-cms" pane=p1/);
+  const from = spawnSync(process.execPath, [CLI, "claim", "-w", root, "--from", "orq-cms"], { env: testEnv, encoding: "utf8" });
+  assert.equal(from.status, 0, from.stdout + from.stderr);
+  assert.match(from.stdout, /X-1 "emp: orq-cms" \(alive\)/);
+});
+
 test("ownerAlive: a herdr timeout reads as alive (indeterminate), never the same as a clean 'not found'", async () => {
   const { ownerAlive } = await import("./commands/claim.js");
   assert.equal(ownerAlive({ status: 0 }), true); // found, running
@@ -885,6 +906,35 @@ test("agent: a review tool gets {base}, exits 1 on findings (ok_exit) and its ou
   assert.match(readFileSync(`${O}.log`, "utf8"), /filter failed \(exit 3\)/);
 });
 
+test("agent: no_review match on the answer ends status=fail, even with an ok exit and a non-blank answer", () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  (env as Record<string, string>).ORQ_TERMINAL = "plain";
+  const repo = join(root, "r");
+  mkdirSync(repo);
+  for (const a of [["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"],
+    ["update-ref", "refs/remotes/origin/main", "HEAD"]]) spawnSync("git", ["-C", repo, ...a]);
+  const tool = join(root, "tool.mjs");
+  const say = (text: string) => writeFileSync(tool, `console.log(${JSON.stringify(text)}); process.exit(0);\n`);
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { corvus: {
+    run: `'${process.execPath}' '${tool}' {base}`, write: false, no_review: "Nada para revisar", mem_max: "off" } } }));
+  writeFileSync(join(root, "p.md"), "ignored\n");
+  const O = join(root, "out", "c");
+  const go = () => {
+    assert.equal(run("agent", "-a", "corvus", "-t", "T", "-d", repo, "-o", O, "-r", "-b", "main", "--", join(root, "p.md")).status, 0);
+    return run("wait", "--timeout", "60", O);
+  };
+  say("Nada para revisar nesta branch.");
+  const nothing = go();
+  assert.equal(nothing.status, 1);
+  assert.match(nothing.stdout, /status=fail rc=0/);
+  say("1. [blocker] main foo");
+  const findings = go();
+  assert.equal(findings.status, 0, findings.stdout + findings.stderr);
+  assert.match(findings.stdout, /status=ok rc=0/);
+});
+
 test("agent --turn: each agent's end-of-turn payload becomes .out.md, .id and .done (mode=tui)", () => {
   const { root, env } = sandbox();
   delete (env as Record<string, string | undefined>).HERDR_PANE_ID;
@@ -1019,7 +1069,7 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
   assert.deepEqual([a.issue, a.label, a.model, a.activity, a.cap], ["ABC-1", "impl-api", "claude-opus-5", "· Edit", 2 ** 32]);
   assert.ok(a.secs >= 89 && a.mem > 0, `secs=${a.secs} mem=${a.mem}`);
   assert.equal(j.queue.holders[0].label, "verify ABC-1 api");
-  assert.deepEqual(j.conductors, [{ id: "me@box", kind: "id", account: "work", alive: true, issues: ["ABC-1"] }]);
+  assert.deepEqual(j.conductors, [{ id: "me@box", kind: "id", account: "work", alive: true, issues: ["ABC-1"], name: "" }]);
   assert.deepEqual(j.quota.lines[0], { name: "work", five: "42%", week: "7%" });
   assert.deepEqual(j.ci.entries[0], { ws, issue: "ABC-1", repo: "api", branch: "work/plane-abc-1", pr: 9, sha: "abc1234", state: "failed", at: now });
   assert.equal(j.blocks.copilot.reason, "out");
@@ -1031,6 +1081,30 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
     "no quota collector: opencode", "copilot", "CHARTS", "MONITOR", "ABC-1", "failed"]) assert.ok(o.stdout.includes(s), `missing ${s}\n${o.stdout}`);
   const pt = spawnSync(process.execPath, [CLI, "board", "--once", "-w", ws], { env: { ...env, ORQ_LANG: "pt" }, encoding: "utf8" });
   assert.ok(pt.stdout.includes("fila de testes"), pt.stdout);
+});
+
+test("board: a conductor shows the herdr workspace's live label, falling back to the stored name when dead", { skip: process.platform === "win32" }, () => {
+  const { root, env } = sandbox(), ws = join(root, "ws"), bin = join(root, "bin");
+  mkdirSync(bin, { recursive: true }); mkdirSync(join(ws, ".orquestra", "X-1"), { recursive: true });
+  writeFileSync(join(bin, "herdr"), `#!/bin/sh
+case "$1 $2" in
+  "agent get") exit 0 ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"p1","workspace_id":"w1"}]}}' ;;
+  "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"emp: orq-cms"}]}}' ;;
+  *) exit 0 ;;
+esac
+`, { mode: 0o755 });
+  writeFileSync(join(ws, ".orquestra", "X-1", "owner"), `pane=p1 kind=herdr account=work at=${new Date().toISOString()} name=stored-name\n`);
+  const testEnv = { ...env, PATH: `${bin}:${(env as Record<string, string | undefined>).PATH}` };
+  const r = spawnSync(process.execPath, [CLI, "board", "--json", "-w", ws], { env: testEnv, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const j = JSON.parse(r.stdout);
+  assert.equal(j.conductors[0].name, "emp: orq-cms");
+  // A dead herdr pane: the stored name, never a live lookup.
+  writeFileSync(join(bin, "herdr"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const d = spawnSync(process.execPath, [CLI, "board", "--json", "-w", ws], { env: testEnv, encoding: "utf8" });
+  assert.equal(d.status, 0, d.stderr);
+  assert.deepEqual(JSON.parse(d.stdout).conductors, []); // dead conductors are filtered out of the board entirely
 });
 
 test("board: a second workspace with nothing collected yet never reads as fresh off the first's cache write", () => {
@@ -1426,4 +1500,29 @@ test("pick limits: week 95 for all, 5h by level, and nobody reviews their own co
   } };
   const noSelf = pickAgent({ ...base, cfg: sameVendor, role: "review", level: "medium", windows, implAgent: "x", implVendor: "a" });
   assert.deepEqual(noSelf.cands.map((c) => c.agent), ["y"]);
+});
+
+test("orq pick review|opinion: more than one declared agent and no --impl-agent/--impl-vendor exits 2", () => {
+  const { root, env } = sandbox();
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: {
+    x: { vendor: "a", roles: ["review", "opinion"], models: { review: { default: "mx" }, opinion: { default: "mx" } } },
+    y: { vendor: "b", roles: ["review", "opinion"], models: { review: { default: "my" }, opinion: { default: "my" } } },
+  } }));
+  const go = (...a: string[]) => spawnSync(process.execPath, [CLI, "pick", ...a], { env, cwd: root, encoding: "utf8" });
+  for (const role of ["review", "opinion"]) {
+    const bare = go(role);
+    assert.equal(bare.status, 2, bare.stdout + bare.stderr);
+    assert.match(bare.stderr, /more than one agent declared for/);
+    // --no-record/--explain do not change this.
+    assert.equal(go(role, "--no-record").status, 2);
+    assert.equal(go(role, "--explain").status, 2);
+    assert.equal(go(role, "--impl-agent", "x").status, 0);
+    assert.equal(go(role, "--impl-vendor", "a").status, 0);
+  }
+  // A single declared agent for the role: no guard needed.
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: {
+    x: { vendor: "a", roles: ["review"], models: { review: { default: "mx" } } },
+  } }));
+  assert.equal(go("review").status, 0);
 });

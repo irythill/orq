@@ -20,7 +20,7 @@ const field = (text: string, k: string) => new RegExp(`${k}=(\\S+)`).exec(text)?
 export const nameOf = (text: string) => / name=(.*)$/m.exec(text)?.[1].trim() ?? "";
 
 /** The label of the herdr workspace holding `pane` (the name the user sees), or "". */
-function herdrName(pane: string): string {
+export function herdrName(pane: string): string {
   const res = (args: string[]) => {
     const r = spawnSync("herdr", args, { encoding: "utf8", timeout: 5_000 });
     try { return JSON.parse(r.stdout).result; } catch { return undefined; }
@@ -62,8 +62,11 @@ export async function claim(argv: string[]): Promise<number> {
       const f = join(O, d, "owner");
       if (!existsSync(f)) continue;
       const t = readFileSync(f, "utf8").trim();
-      const n = nameOf(t);
-      console.log(`${d} ${n ? `"${n}" ` : ""}${t.replace(/ name=.*$/, "")} (${aliveOwner(t) ? "alive" : "dead"})`);
+      const alive = aliveOwner(t);
+      // The herdr workspace's current label while the pane is alive; the name stored at claim time otherwise
+      // (the user may have renamed the workspace since, or it may not be a herdr conductor at all).
+      const n = (alive && (field(t, "kind") || "herdr") === "herdr" ? herdrName(field(t, "pane")) : "") || nameOf(t);
+      console.log(`${d} ${n ? `"${n}" ` : ""}${t.replace(/ name=.*$/, "")} (${alive ? "alive" : "dead"})`);
     }
     return 0;
   }
@@ -86,9 +89,10 @@ export async function claim(argv: string[]): Promise<number> {
     const hits = (existsSync(O) ? readdirSync(O).filter((x) => !x.startsWith(".")) : []).flatMap((d) => {
       const f = join(O, d, "owner");
       if (!existsSync(f)) return [];
-      const t = readFileSync(f, "utf8").trim(), pane = field(t, "pane");
-      return pane !== me && (nameOf(t).toLowerCase().includes(q) || pane.toLowerCase().includes(q))
-        ? [{ id: d, f, pane, name: nameOf(t), alive: aliveOwner(t) }] : [];
+      const t = readFileSync(f, "utf8").trim(), pane = field(t, "pane"), alive = aliveOwner(t);
+      const name = (alive && (field(t, "kind") || "herdr") === "herdr" ? herdrName(pane) : "") || nameOf(t);
+      return pane !== me && (name.toLowerCase().includes(q) || pane.toLowerCase().includes(q))
+        ? [{ id: d, f, pane, name, alive }] : [];
     });
     if (!hits.length) { console.log(m(`no issue owned by a conductor matching "${from}"`, `nenhuma issue de um conductor que bata com "${from}"`)); return 1; }
     const owners = [...new Set(hits.map((h) => h.pane))];

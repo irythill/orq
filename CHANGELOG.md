@@ -40,6 +40,18 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 - `orq claim` records each conductor's name (its herdr workspace label, else `ORQ_CONDUCTOR_ID`), shows it in `-l`,
   and `orq claim --from <name> [-f]` finds (and takes over) a conductor's issues by any part of that name. `/issue`
   uses it when the user names another conductor, and resumes from `.orquestra/<ID>/` instead of starting over.
+  `orq claim -l`/`--from` and `orq board` now show the herdr workspace's **current** label while the pane is alive
+  (it may have been renamed since the claim), falling back to the name stored at claim time.
+- `orq pick review|opinion` exits 2 with a clear message when more than one agent is declared for the role and
+  neither `--impl-agent` nor `--impl-vendor` is given (`--no-record`/`--explain` do not change this): nothing to
+  filter the reviewer down by otherwise.
+- `agents.<name>.no_review`: a regex that, when it matches a review tool's answer (e.g. Corvus's "Nada para
+  revisar"), ends that `orq agent` run `status=fail` instead of `ok` — "nothing was reviewed" is not a verdict, so
+  `orq pick`'s fallback and the conductor treat it as not run.
+- `install.sh`: `orq-gc.service`/`orq-handoff.service` now find `node` under mise and nvm. Their `PATH` always
+  includes mise's shims directory (stable across versions); when `node` instead resolves to a version-specific
+  directory (mise's `activate` PATH, or nvm, which has no static shims dir) the installer writes a drop-in with
+  that real directory. A plain, system-package install is untouched either way.
 
 ### Fixed
 - Switching an agent's account no longer shows the old one's quota or block. The "last reading" quota cache is now
