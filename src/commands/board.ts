@@ -22,7 +22,7 @@ import { processTableAsync, treeMem } from "../process.js";
 import { collect, type Source } from "../quota.js";
 import { collectRuns, type Row, rows } from "../stats.js";
 import { load as loadBlocks } from "./block.js";
-import { herdrName, nameOf } from "./claim.js";
+import { herdrNames, nameOf } from "./claim.js";
 import { setValue } from "./set.js";
 
 export const USAGE = "orq board [-w <workspace>]... [--once] [--json] [--interval S]   live board: queue, agents, conductors, quota";
@@ -137,10 +137,12 @@ async function conductors(wss: string[]): Promise<Conductor[]> {
   }
   const ttl = Number(process.env.ORQ_CLAIM_TTL_H ?? 24) * 3600_000;
   const out = [...by.values()];
+  // One `herdr pane/workspace list` per refresh, shared by every conductor (not 2 spawns each).
+  const names = out.some((c) => c.kind === "herdr") ? herdrNames() : new Map<string, string>();
   await Promise.all(out.map(async (c) => {
     c.alive = c.kind === "herdr" ? await herdrAlive(c.id) : Date.now() - c.at < ttl;
     // Alive herdr conductor: the workspace's current label (the user may have renamed it since the claim).
-    if (c.alive && c.kind === "herdr") c.name = herdrName(c.id) || c.name;
+    if (c.alive && c.kind === "herdr") c.name = names.get(c.id) || c.name;
   }));
   return out.filter((c) => c.alive).map(({ at: _, ...c }) => ({ ...c, issues: c.issues.sort() }));
 }

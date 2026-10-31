@@ -236,7 +236,7 @@ function turn(file: string, kind: string, rest: string[]): number {
     } else { sid = rest[0]; answer = readFileSync(0, "utf8"); }
     writeFileSync(`${O}.out.md`, answer);
     if (sid) writeFileSync(`${O}.id`, `${sid}\n`);
-    const noReview = j.noReview !== undefined && new RegExp(j.noReview).test(answer);
+    const noReview = noReviewMatch(j.noReview, answer);
     const st = /\S/.test(answer) && !noReview ? "ok" : "fail";
     writeAtomic(`${O}.done`, `status=${st} rc=0 at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
     if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=0 answer: ${O}.out.md`, true);
@@ -258,6 +258,20 @@ function lastClaudeText(transcript: string): string {
     }
   } catch { /* no transcript */ }
   return text;
+}
+
+/** agents.<name>.no_review tested against the start of the answer (first line) or, for a short answer, the whole
+ *  thing — not anywhere in a long one, so a review that quotes the phrase while discussing real code doesn't match.
+ *  An invalid pattern is logged and ignored rather than killing the runner. */
+function noReviewMatch(pattern: string | undefined, answer: string): boolean {
+  if (pattern === undefined) return false;
+  let re: RegExp;
+  try { re = new RegExp(pattern, "m"); } catch (e) {
+    console.error(`orq agent: ignoring invalid agents.<name>.no_review pattern ${JSON.stringify(pattern)}: ${(e as Error).message}`);
+    return false;
+  }
+  const first = answer.split(/\r?\n/, 1)[0] ?? "";
+  return re.test(first) || (answer.trim().length <= 200 && re.test(answer));
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -388,7 +402,7 @@ async function runJob(file: string): Promise<number> {
   let answer = ""; try { answer = readFileSync(`${O}.out.md`, "utf8"); } catch { /* none */ }
   // A reviewer whose answer says nothing was reviewed (agents.<name>.no_review) is not a verdict either: pick's
   // fallback and the conductor must see it as not run, same as a whitespace-only answer.
-  const noReview = j.noReview !== undefined && new RegExp(j.noReview).test(answer);
+  const noReview = noReviewMatch(j.noReview, answer);
   const st = verdict && !noReview && /\S/.test(answer) ? "ok" : "fail"; // whitespace-only answer = failure
   writeAtomic(`${O}.done`, `status=${st} rc=${rc} at=${new Date().toISOString()} agent=${j.agent}\n`);
   rmSync(`${O}.pid`, { force: true });
