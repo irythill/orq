@@ -12,7 +12,7 @@ import { freemem, homedir, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { colorMode } from "../banner.js";
-import { type CiEntry, cacheFile as ciCacheFile, collectCi, loadCache as loadCiCache } from "../ci.js";
+import { collectCi, collectedAt, type CiEntry, loadCache as loadCiCache } from "../ci.js";
 import { getPath, loadConfig } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m, setLang } from "../i18n.js";
@@ -189,12 +189,13 @@ function startCollectCi(wss: string[]): void {
 
 // Age per requested workspace, not the shared cache file's mtime: ci.json holds every workspace's entries and
 // collectCi() rewrites the whole file on every run, so one workspace's collection would otherwise renew the
-// mtime for all of them and starve a second workspace that was never actually collected.
+// mtime for all of them and starve a second workspace that was never actually collected. collectedAt() reads a
+// per-workspace marker that collectCi() writes even when it finds zero entries (no claimed issue with a matching
+// worktree) — without it, a workspace with nothing to collect would look permanently stale (entries' own `at`
+// would never exist for it) and the board would relaunch the collector every redraw forever.
 function ci(wss: string[], now: number): Snapshot["ci"] {
   const entries = loadCiCache().filter((e) => wss.includes(e.ws));
-  const newest = new Map<string, number>();
-  for (const e of entries) newest.set(e.ws, Math.max(newest.get(e.ws) ?? 0, e.at));
-  const ages = wss.map((w) => (newest.has(w) ? now - newest.get(w)! : undefined));
+  const ages = wss.map((w) => { const at = collectedAt(w); return at === undefined ? undefined : now - at; });
   const age = ages.some((a) => a === undefined) ? undefined : Math.max(...(ages as number[]));
   if (age === undefined || age > QTTL) startCollectCi(wss);
   return { entries, age };

@@ -179,6 +179,15 @@ test("ci: aggregateChecks and parsePrStatus are pure (no gh, no PR, or a failure
     { pr: 5, sha: "abc123", state: "passed" });
   assert.deepEqual(parsePrStatus("not json"), { state: "none" });
   assert.deepEqual(parsePrStatus("{}"), { state: "none" }); // no PR open on that branch
+  // legacy commit-status checks (StatusContext: just `state`, no status/conclusion at all — Jenkins/CircleCI/old
+  // GitLab repos) must resolve to a real state, not get stuck in "running" forever for lack of status/conclusion.
+  assert.equal(aggregateChecks([{ __typename: "StatusContext", state: "SUCCESS" }]), "passed");
+  assert.equal(aggregateChecks([{ __typename: "StatusContext", state: "PENDING" }]), "queued");
+  assert.equal(aggregateChecks([{ __typename: "StatusContext", state: "FAILURE" }]), "failed");
+  assert.equal(aggregateChecks([{ __typename: "StatusContext", state: "ERROR" }]), "failed");
+  assert.equal(aggregateChecks([{ __typename: "StatusContext", state: "SUCCESS" }, { status: "COMPLETED", conclusion: "SUCCESS" }]), "passed");
+  // a cancelled workflow is a failure too, not a false "passed".
+  assert.equal(aggregateChecks([{ status: "COMPLETED", conclusion: "CANCELLED" }]), "failed");
 });
 
 test("ci: issueBranches matches the worktree whose branch ends in plane-<id>, case-insensitive", async () => {
@@ -423,10 +432,14 @@ test("humanizeQuotaLine: the core 'name 5h=.. week=..' stays intact; reset times
   const today = new Date(now); today.setHours(14, 30, 0, 0);
   const epoch = Math.floor(today.getTime() / 1000);
   const line = `work 5h=92% week=40% reset5h=${epoch} [note]`;
-  assert.equal(humanizeQuotaLine(line), "work 5h=92% week=40% (5h resets 14:30) [note]");
-  assert.equal(humanizeQuotaLine("work 5h=92% week=40% [note]"), "work 5h=92% week=40% [note]");
+  assert.equal(humanizeQuotaLine(line, now), "work 5h=92% week=40% (5h resets 14:30) [note]");
+  assert.equal(humanizeQuotaLine("work 5h=92% week=40% [note]", now), "work 5h=92% week=40% [note]");
   const bothResets = `work 5h=92% week=40% reset5h=${epoch} resetweek=${epoch + 86400}`;
-  assert.equal(humanizeQuotaLine(bothResets), `work 5h=92% week=40% (5h resets 14:30, week resets ${humanReset(epoch + 86400, now)})`);
+  assert.equal(humanizeQuotaLine(bothResets, now), `work 5h=92% week=40% (5h resets 14:30, week resets ${humanReset(epoch + 86400, now)})`);
+  // a day later, "today" has moved: the same epoch that read as "14:30" now reads as yesterday's weekday + time —
+  // humanizeQuotaLine must follow the `now` it's given, never the real clock (that's the bug this test guards).
+  const tomorrow = now + 86400_000;
+  assert.equal(humanizeQuotaLine(line, tomorrow), `work 5h=92% week=40% (5h resets ${humanReset(epoch, tomorrow)}) [note]`);
 });
 
 test("quotaLine: the tighter window per source, ! at the limit, blocked and no-data marks", async () => {
@@ -917,7 +930,7 @@ process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.search(/[\\r\
   } finally { spawnSync("tmux", ["-S", sock, "kill-server"]); }
 });
 
-test("board: agents, queue, claims, quota and blocks from fake state files, plain when piped", () => {
+test("board: agents, queue, claims, quota and blocks from fake state files, plain when piped", async () => {
   const { root, env, run } = sandbox(), st = join(root, "state", "orq"), ws = join(root, "ws"), now = Date.now();
   const iso = (ms: number) => new Date(ms).toISOString(), dead = spawnSync(process.execPath, ["-e", ""]).pid!;
   const pre = join(ws, ".orquestra", "ABC-1", "impl-api");
@@ -936,6 +949,14 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
   writeFileSync(join(st, "blocks.json"), JSON.stringify({ copilot: { until: now / 1000 + 86400, reason: "out" } }));
   writeFileSync(join(st, "board", "quota.txt"), "work 5h=42% week=7%\nopencode 5h=- week=- [no quota collector]\n");
   writeFileSync(join(st, "board", "ci.json"), JSON.stringify([{ ws, issue: "ABC-1", repo: "api", branch: "work/plane-abc-1", pr: 9, sha: "abc1234", state: "failed", at: now }]));
+  // Fake the cache's "collected at" marker too, else the board sees a never-collected workspace and starts a
+  // real detached `orq board --collect-ci`, which (finding no .worktrees here) would race to empty out this
+  // fake entry before the assertions below get to read it back. markCollected() resolves its path from
+  // XDG_STATE_HOME at call time (not from `env`, which only applies to the spawned `run()` children), so it's
+  // pointed at this test's own state dir just for the call.
+  const { markCollected } = await import("./ci.js");
+  const oldXdg = process.env.XDG_STATE_HOME; process.env.XDG_STATE_HOME = join(root, "state");
+  try { markCollected(ws, now); } finally { if (oldXdg === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = oldXdg; }
 
   const r = run("board", "--json", "-w", ws);
   assert.equal(r.status, 0, r.stderr);
@@ -972,6 +993,23 @@ test("board: a second workspace with nothing collected yet never reads as fresh 
   const j = JSON.parse(r.stdout);
   assert.deepEqual(j.ci.entries.map((e: { ws: string }) => e.ws), [ws1]);
   assert.equal(j.ci.age, undefined); // ws2 has no entry at all: never "fresh" just because ws1's write touched the file
+});
+
+test("board: a workspace with no claimed issue is marked collected, not stuck 'collecting...' forever", () => {
+  const { root, run } = sandbox(), ws = join(root, "ws");
+  mkdirSync(ws, { recursive: true });
+  const c = run("board", "-w", ws, "--collect-ci"); // no .orquestra at all: collectCi finds nothing to cache
+  assert.equal(c.status, 0, c.stderr);
+
+  const r = run("board", "--json", "-w", ws);
+  assert.equal(r.status, 0, r.stderr);
+  const j = JSON.parse(r.stdout);
+  assert.deepEqual(j.ci.entries, []);
+  assert.equal(typeof j.ci.age, "number"); // collected and empty must read as fresh, not as "never collected"
+
+  const o = run("board", "--once", "-w", ws);
+  assert.equal(o.status, 0, o.stderr);
+  assert.ok(o.stdout.includes("no claimed issue has a PR"), o.stdout); // not stuck on "collecting..."
 });
 
 test("board: render colors only when asked, activity from the log tail", async () => {
