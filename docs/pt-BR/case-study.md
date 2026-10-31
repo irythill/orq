@@ -26,30 +26,40 @@ resultados — enquanto agentes mais baratos implementam e fazem review.
 | 6–8 out | Limite de memória por agente, fila de testes, comparação com a base sob demanda, painel ao vivo, vários conductors por workspace |
 | 9 out | Escolha de agente baseada em dados (`orq-pick`), inglês e lançamento público |
 
-## Resultados (60 dias, 71 issues, 284 execuções de agente)
+## Resultados (últimos 30 dias, out. de 2026, 644 execuções de agente)
 
 Medianas por execução. "Tokens novos" exclui leituras de cache — é o que de fato pesa na quota de uma assinatura.
 
 | Papel | Agente / modelo | Execuções | Entregou | Aprovado na primeira review | Minutos | Tokens novos |
 |---|---|---|---|---|---|---|
-| implement | Codex gpt-6-sol | 14 | 93% | **78%** | **1.5** | **33k** |
-| implement | Codex gpt-6.1-sol | 28 | 100% | 71% | 3.5 | 57k |
-| implement | Claude Sonnet | 4 | 100% | 2 de 2 | 4.6 | 55k |
-| implement | OpenCode MiniMax | 1 | 100% | 0 de 1 | 1.0 | 313k |
-| review | Codex gpt-6-sol | 9 | 100% | — | 0.6 | 26k |
-| review | OpenCode MiniMax | 8 | 88% | — | 1.8 | 35k |
-| review | Claude Sonnet | 69 | 97% | — | 1.8 | 49k |
+| implement | Codex gpt-6-sol | 23 | 96% | **83%** | **1.9** | **37k** |
+| implement | Codex gpt-6.1-sol | 27 | 100% | 70% | 3.6 | 61k |
+| implement | Claude Sonnet | 20 | 90% | 53% | 4 | 59k |
+| implement | Codex gpt-6-luna | 11 | 100% | 50% | 1.6 | 68k |
+| implement | OpenCode MiniMax | 1 | 100% | 0% | 1.0 | 313k |
+| fix | Codex gpt-6-luna | 95 | 99% | — | 0.9 | 138k |
+| fix | Claude Sonnet | 72 | 94% | — | 3 | 58k |
+| fix | Claude modelo padrão | 5 | 40% | — | 2 | 26k |
+| review | Claude Sonnet | 98 | 98% | — | 1.6 | 49k |
+| review | OpenCode MiniMax | 73 | 89% | — | 3 | 67k |
+| review | Codex gpt-6-luna | 35 | 100% | — | 0.5 | 38k |
+| review | Codex gpt-6-sol | 25 | 100% | — | 0.5 | 30k |
+| review | Antigravity gemini-3.8-flash-high | 10 | 50% | — | 5.8 | 178k |
 
 O que os números disseram:
-- **Codex com gpt-6-sol é o burro de carga.** A melhor aprovação na primeira review com cerca de metade dos tokens do
-  modelo maior; o maior fica para issues pesadas.
-- **O Claude Sonnet estava fazendo review de quase tudo** (69 reviews) — na mesma quota de que os conductors Opus
-  precisam. Tirar as reviews dele foi a maior economia disponível.
-- **OpenCode com MiniMax faz review bem e barato**, mas a única tentativa de implementação dele reprovou na review e
-  gastou ~10× os tokens. Então, neste setup, ele só faz review. (Com o modelo padrão do provider, as reviews custam 3×
-  mais.)
-- Cada rodada de correção evitada economiza um ciclo inteiro de implementação → testes → review (60k–200k tokens). Esse
-  é o verdadeiro fator de custo, mais do que o preço por token.
+- **Codex com gpt-6-sol continua o burro de carga** para implementar: a melhor aprovação na primeira review (83%) com
+  o menor custo em tokens entre os concorrentes reais.
+- **O Claude Sonnet agora carrega tanto fix (72 execuções) quanto review (98 execuções)** — o maior consumidor da
+  própria quota entre todos os papéis.
+- **O modelo padrão do Claude é um risco em trabalho de fix**: só 40% saiu limpo — mas em apenas 5 execuções, amostra
+  pequena demais para concluir muita coisa.
+- **O gemini-3.8-flash-high do Antigravity reprovou em metade das reviews** (50%, 10 execuções), com o maior custo em
+  tokens (178k) e tempo (5.8 min) entre os reviewers — o mais caro e o menos confiável. O modelo Flash já foi removido
+  da config desde então.
+- **A única tentativa de implementação do OpenCode MiniMax continuou reprovando** (0% aprovado, 313k tokens); ficou
+  só com review.
+- Cada rodada de correção evitada economiza um ciclo inteiro de implementação → testes → review. Esse é o verdadeiro
+  fator de custo, mais do que o preço por token.
 
 ## O que quebrou, e o que aprendemos
 
@@ -91,6 +101,33 @@ naquela nova tentativa. As duas coisas agora são regras explícitas.
 **7. Editar um script em execução é uma armadilha.** O bash lê o script enquanto executa; editá-lo no lugar enquanto
 processos na fila estão bloqueados dentro dele faz com que retomem num offset deslocado. Aconteceu duas vezes. Agora as
 mudanças são desenvolvidas num worktree separado e entram substituindo os arquivos inteiros.
+
+**8. A janela de tempo de uma assinatura também acaba no meio do trabalho.** A janela de 5 horas de uma conta esvaziou
+enquanto um conductor ainda orquestrava. Solução: handoff automático de conductor para outra conta; o primeiro handoff
+real moveu dois conductors sem perder estado.
+
+**9. Os limites de escolha precisam variar por janela e por tarefa, não ser um número só.** O `orq-pick` agora limita
+o gasto a 95% do orçamento semanal, e a 90/85/80% da janela de 5 horas dependendo do peso da tarefa — tarefas mais
+pesadas ganham um teto mais apertado, porque uma tarefa pesada precisa de mais margem para terminar.
+
+**10. Saber quando a quota reseta importa tanto quanto medi-la.** Saber o horário do reset deixa um conductor escolher
+entre esperar a janela ou trocar de agente, e deixa o handoff pular uma troca quando o reset está a minutos de
+acontecer. Separadamente, um sinal de CI por issue deixa um conductor distinguir "ainda rodando" de "realmente falhou"
+sem adivinhar pela quota.
+
+**11. Um fix pode ser um bug em si.** Um agente "corrigiu" um achado de baixa severidade apagando a funcionalidade a
+que ele pertencia; outro adicionou uma checagem de prontidão que teria travado todo handoff real. Nenhum dos dois foi
+pego pelo pipeline — só por um humano ou conductor lendo o diff real do fix. Lição: um resultado de fix verde não é a
+mesma coisa que um resultado bom; alguém precisa ler.
+
+**12. "Nada para revisar" passou como review limpa.** Um reviewer que não retornou achados ficava idêntico a um
+reviewer que rodou e não achou nada. O orq não tem gate para isso; nessa sessão, a checagem foi feita na mão no
+script. É uma regra a seguir, não algo que o orq garanta.
+
+**13. Um loop de fix pode sair do escopo mais rápido do que bater no limite de rodadas.** Um loop que devia fechar
+um fix local virou uma discussão mais ampla que o fix nunca deveria resolver. Limites de rodada existem para parar
+loops descontrolados, mas não pegaram esse caso — reconferir se o escopo ainda é o original importa mais do que
+contar rodadas.
 
 ## Como é o dia agora
 
