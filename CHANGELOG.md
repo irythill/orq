@@ -11,8 +11,16 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   whenever another declared agent exists for the role. `policy.quota_limit` caps the 5h pick limit and sets the `!` in `orq quota --line`.
   **Migration:** `quota_limit` used to also cap the weekly window; it now only caps 5h, so configs that lowered it to
   keep accounts away from the weekly limit should set `policy.quota_week` explicitly instead.
+- `orq quota`'s human reset times ("resets 14:30") moved from right after each window to the end of the line, so
+  `<name> 5h=NN% week=NN%` always stays intact and easy to grep.
 
 ### Added
+- `orq ci [-w <workspace>]... [--json]`: CI/CD signal per claimed issue with a PR — queued, running, passed, failed
+  or none, from `gh pr view`'s checks on the branch the issue's worktree carries, collected live (it's the user
+  asking right now). Cached in the state dir like quota; `orq board` reads that same cache for a new CI column
+  and never blocks on the network. A run turning passed or failed pops a herdr notification, and a failure also
+  sends the owning conductor one line (`notify()`, or a stdout line for a non-herdr conductor), once per head
+  commit — a later commit that is still red notifies again.
 - Quota lines carry each window's reset time (epoch seconds) when the source gives one (Claude, Codex, Antigravity,
   MiniMax, Copilot's monthly reset), as `reset5h=`/`resetweek=` fields that old cached lines (and anything without
   them) still parse fine. `orq quota` shows them as a human time ("resets 14:30", or weekday + time past today).

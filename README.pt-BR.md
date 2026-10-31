@@ -203,11 +203,15 @@ quando ele pede uma decisão ou avisa que terminou.
 
 Para ver tudo de uma vez, deixe o **`orq board`** aberto numa aba ou janela (qualquer terminal, qualquer SO; o
 `herdr-board` o chama): fila de testes, agentes rodando (modelo, memória contra o limite, última ação), conductors e
-suas issues, memória, quota, bloqueios e o placar de 7 dias. `--once` imprime uma vez, `--json` para scripts. Com
-`ui.toast.delivery = "system"` na config do herdr, cada etapa concluída também gera uma notificação nativa do sistema.
-Para ver a cota sem abrir o board, o `orq quota --line` cabe na barra de abas do herdr (uma entrada `command` no
-`tab_bar_right`, [docs/pt-BR/herdr.md](docs/pt-BR/herdr.md#cota-na-barra-de-abas)). Depois dos merges, o `orq gc`
-lista e remove as worktrees de issues que ficaram para trás.
+suas issues, memória, quota, CI/CD de cada issue reivindicada, bloqueios e o placar de 7 dias. `--once` imprime uma
+vez, `--json` para scripts. Com `ui.toast.delivery = "system"` na config do herdr, cada etapa concluída também gera
+uma notificação nativa do sistema. Para ver a cota sem abrir o board, o `orq quota --line` cabe na barra de abas do
+herdr (uma entrada `command` no `tab_bar_right`, [docs/pt-BR/herdr.md](docs/pt-BR/herdr.md#cota-na-barra-de-abas)).
+O `orq ci` mostra os checks do PR de cada issue reivindicada (na fila, rodando, passou, falhou ou nenhum, lido via
+`gh` na hora — é uma consulta que o usuário pediu agora, então, diferente da coluna de CI do board, não lê só o
+cache); quando um deles vira verde ou vermelho sai uma notificação do herdr, e uma falha também avisa o conductor
+dono num aviso só por commit. Depois dos merges, o `orq gc` lista e remove as worktrees de issues que ficaram para
+trás.
 
 Várias issues ao mesmo tempo: um conductor por issue (de preferência em contas diferentes). O `herdr-claim` impede que
 dois conductors peguem a mesma issue. Detalhes, atalhos e cenários: [docs/pt-BR/herdr.md](docs/pt-BR/herdr.md).
@@ -236,6 +240,7 @@ dois conductors peguem a mesma issue. Detalhes, atalhos e cenários: [docs/pt-BR
 | `herdr-deps` | Liga as dependências do worktree às do repo principal (sem reinstalar) |
 | `orq baseline ...` (`herdr-baseline`) | Snapshot manual dos testes que falham na base (fora do fluxo) |
 | `orq gc [-w <workspace>] [--yes] [--days N] [--json]` | Lista worktrees de issues que podem ser removidas (PR mergeado, ou conteúdo já na base, inclusive squash merge); `--yes` as remove. Nunca mexe em trabalho não commitado, commit fora do remote, claim ativo ou agente rodando. `orq-gc.timer` diário opcional |
+| `orq ci [-w <workspace>] [--json]` | Status de CI/CD de cada issue reivindicada com PR: na fila, rodando, passou, falhou ou nenhum, coletado na hora via `gh` (o cache que ele preenche é o que a coluna de CI do `orq board` lê, sem nunca travar na rede). Quando vira verde ou vermelho sai uma notificação do herdr, e uma falha também avisa o conductor dono |
 | `orq quota --line` | Uma linha de cota para barra de status (`work 64 · home 94! · codex 81`), do cache do board, nunca da rede |
 | `orq setup` | Primeira configuração e instalação: ambiente, skills do Claude, config, workspace do conductor |
 | `orq completion bash\|zsh\|fish\|powershell` | Imprime o script de autocompletar do shell (veja Instalação) |

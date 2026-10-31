@@ -11,8 +11,16 @@ English: [CHANGELOG.md](CHANGELOG.md).
   sempre que houver outro agente declarado para o papel. `policy.quota_limit` limita a cota de 5h do pick e define o `!` do `orq quota --line`.
   **Migração:** `quota_limit` também limitava a janela semanal antes; agora só limita a de 5h, então configs que o
   baixaram para manter as contas longe do limite semanal devem definir `policy.quota_week` explicitamente.
+- Os horários de renovação do `orq quota` ("renova 14:30") saíram de logo depois de cada janela e foram para o fim da
+  linha, assim `<nome> 5h=NN% week=NN%` continua intacto e fácil de grepar.
 
 ### Adicionado
+- `orq ci [-w <workspace>]... [--json]`: sinal de CI/CD por issue reivindicada com PR — na fila, rodando, passou,
+  falhou ou nenhum, a partir dos checks que o `gh pr view` lê na branch que o worktree da issue carrega, coletado
+  na hora (é o usuário pedindo agora). Em cache no diretório de estado como a cota; o `orq board` lê esse mesmo
+  cache numa coluna de CI nova e nunca trava na rede. Quando um deles vira passou ou falhou sai uma notificação do
+  herdr, e uma falha também manda uma linha pro conductor dono (`notify()`, ou uma linha no stdout para um
+  conductor que não é herdr), uma vez por commit — um commit seguinte que continua vermelho avisa de novo.
 - As linhas de cota trazem o horário de renovação de cada janela (epoch em segundos) quando a fonte fornece um
   (Claude, Codex, Antigravity, MiniMax, a renovação mensal do Copilot), nos campos `reset5h=`/`resetweek=`; linhas
   antigas em cache (e qualquer coisa sem eles) continuam lendo normalmente. O `orq quota` mostra isso como horário
