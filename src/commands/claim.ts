@@ -34,7 +34,7 @@ function herdrName(pane: string): string {
 
 export function aliveOwner(text: string): boolean {
   const id = field(text, "pane"), kind = field(text, "kind") || "herdr";
-  if (kind === "herdr") return spawnSync("herdr", ["agent", "get", id], { stdio: "ignore" }).status === 0;
+  if (kind === "herdr") return spawnSync("herdr", ["agent", "get", id], { stdio: "ignore", timeout: 15_000 }).status === 0;
   const ttl = Number(process.env.ORQ_CLAIM_TTL_H ?? 24) * 3600_000;
   return Date.now() - Date.parse(field(text, "at")) < ttl;
 }
