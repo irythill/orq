@@ -168,6 +168,12 @@ function notifyDesktop(issue: string, repo: string, state: CiState): void {
  * notification, and on failed one line to the owning conductor — gated by `${state}:${sha}` in `notified`, so a
  * repeat collection of the same head commit never notifies twice, but a new commit that is still red does (the
  * mark carries the sha, so it is never redundant with the `prev` gate that skips a first sighting).
+ * The `prev` read, the notify decision and the `notified` mark all happen inside `withCacheLock`, alongside the
+ * save — otherwise a concurrent collector of the same workspace (`orq ci` in the foreground racing the board's
+ * detached collector) reads the same stale `prev`, both decide to notify and whichever saves last overwrites the
+ * other's freshly written `notified` mark, causing a third notification on the next collection.
+ * The notifications themselves fire after the lock is released: they must never hold up another collector's
+ * read-modify-write while they run.
  * A non-herdr owner (a plain terminal conductor, same check as handoff.ts) has no pane herdr-notify can reach, so
  * the line goes through `hooks.notice` (console.log by default) instead — never silently dropped, and never a
  * crash from `herdr agent get` failing. The owner notify is always detached (background=true): collectCi() must
@@ -180,26 +186,34 @@ export function collectCi(ws: string, hooks: { desktop?: typeof notifyDesktop; o
   // Detached: collectCi() must never block on a conductor stuck in a dialog (herdr-notify waits up to 30 min).
   const desktop = hooks.desktop ?? notifyDesktop, toOwner = hooks.owner ?? ((pane: string, line: string) => notify(pane, line, true)),
     notice = hooks.notice ?? ((l: string) => console.log(l));
-  const cache = loadCache(), mine: CiEntry[] = [];
   const now = Date.now(), worktrees = listWorktrees(ws);
-  for (const { id, owner, kind } of claimedIssues(ws)) {
-    for (const { repo, branch } of issueBranches(ws, id, worktrees)) {
+  const found = claimedIssues(ws).flatMap(({ id, owner, kind }) =>
+    issueBranches(ws, id, worktrees).map(({ repo, branch }) => ({ id, owner, kind, repo, branch, ...prStatus(join(ws, repo), branch) })));
+
+  const toNotify: { owner: string; kind: string; id: string; repo: string; state: CiState; sha: string }[] = [];
+  const mine: CiEntry[] = withCacheLock(() => {
+    const cache = loadCache(), mine: CiEntry[] = [];
+    for (const { id, owner, kind, repo, branch, pr, sha, state } of found) {
       const prev = cache.find((e) => e.ws === ws && e.issue === id && e.repo === repo && e.branch === branch);
-      const { pr, sha, state } = prStatus(join(ws, repo), branch);
       let notified = prev?.notified;
       const mark = sha ? `${state}:${sha}` : undefined;
       if (prev && (state === "passed" || state === "failed") && mark && notified !== mark) {
-        desktop(id, repo, state);
-        if (state === "failed" && owner) {
-          const line = `[ORQ CI] ${id} ${repo} failed (${sha!.slice(0, 7)})`;
-          if (kind === "herdr") toOwner(owner, line); else notice(line);
-        }
+        toNotify.push({ owner, kind, id, repo, state, sha: sha! });
         notified = mark;
       }
       mine.push({ ws, issue: id, repo, branch, ...(pr !== undefined ? { pr } : {}), ...(sha ? { sha } : {}), state, ...(notified ? { notified } : {}), at: now });
     }
+    saveCache([...cache.filter((e) => e.ws !== ws), ...mine]);
+    return mine;
+  });
+
+  for (const { owner, kind, id, repo, state, sha } of toNotify) {
+    desktop(id, repo, state);
+    if (state === "failed" && owner) {
+      const line = `[ORQ CI] ${id} ${repo} failed (${sha.slice(0, 7)})`;
+      if (kind === "herdr") toOwner(owner, line); else notice(line);
+    }
   }
-  withCacheLock(() => saveCache([...loadCache().filter((e) => e.ws !== ws), ...mine]));
   markCollected(ws, now);
   return mine;
 }
