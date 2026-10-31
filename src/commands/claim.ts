@@ -13,7 +13,7 @@ import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
 import { acquire, release } from "../lock.js";
 
-export const USAGE = `orq claim [-w <workspace>] <ID> | -f <ID> | -r <ID> | -l   issue owner among conductors (exit 1 = someone else's)
+export const USAGE = `orq claim [-w <workspace>] <ID> | -f <ID> | -r <ID> | -l | --register   issue owner among conductors (exit 1 = someone else's)
 orq claim [-w <workspace>] --from <name> [-f]   a conductor's issues by its name (part of it is enough); -f takes them all`;
 
 const field = (text: string, k: string) => new RegExp(`${k}=(\\S+)`).exec(text)?.[1] ?? "";
@@ -46,11 +46,12 @@ export async function claim(argv: string[]): Promise<number> {
     if (a === "-w") ws = resolve(argv[++i]);
     else if (a === "--from") from = argv[++i];
     else if (a === "-f") mode = "force"; else if (a === "-r") mode = "release"; else if (a === "-l") mode = "list";
+    else if (a === "--register") mode = "register";
     else if (!a.startsWith("-")) id = a; else { console.error(USAGE); return 2; }
   }
   const O = join(ws, ".orquestra");
   if (mode === "list") {
-    for (const d of existsSync(O) ? readdirSync(O) : []) {
+    for (const d of existsSync(O) ? readdirSync(O).filter((x) => !x.startsWith(".")) : []) {
       const f = join(O, d, "owner");
       if (!existsSync(f)) continue;
       const t = readFileSync(f, "utf8").trim();
@@ -65,10 +66,17 @@ export async function claim(argv: string[]): Promise<number> {
   const account = basename(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"));
   const ownerLine = () => `pane=${me} kind=${kind} account=${account} at=${new Date().toISOString()}`
     + (myName ? ` name=${myName}` : "") + "\n";
+  if (mode === "register") {
+    if (kind !== "herdr") return 0;
+    const dir = join(O, ".conductors"); mkdirSync(dir, { recursive: true });
+    writeAtomic(join(dir, me.replace(/[^A-Za-z0-9_-]/g, "_")),
+      `pane=${me} kind=herdr account=${account} at=${new Date().toISOString()} name=${myName || me}\n`);
+    return 0;
+  }
   if (from !== undefined) {
     if (!from) { console.error(USAGE); return 2; }
     const q = from.toLowerCase();
-    const hits = (existsSync(O) ? readdirSync(O) : []).flatMap((d) => {
+    const hits = (existsSync(O) ? readdirSync(O).filter((x) => !x.startsWith(".")) : []).flatMap((d) => {
       const f = join(O, d, "owner");
       if (!existsSync(f)) return [];
       const t = readFileSync(f, "utf8").trim(), pane = field(t, "pane");

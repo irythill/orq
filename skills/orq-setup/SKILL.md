@@ -61,7 +61,7 @@ Offer `$ORQ/examples/irythill/config.toml` as an example, saying clearly **it is
 
 ## 4. Policy
 Explain simply, then suggest the example's values and ask if they want to change any:
-- `quota_limit` (90): an agent at or above this % of its 5h/weekly quota is left out.
+- `quota_week` (95) and `quota_5h` (simple 90, medium 85, heavy 80): an agent at or above these % is left out.
 - weights — already suggested by `orq setup` from the parallel tasks: `quality` (did it deliver?), `tokens` (spent
   little?), `speed` (finished fast?), `rotation` (penalty for being picked recently, spreads the work).
 - `max_rounds` (2) review rounds before handing back; `machine.agent_mem_max` / `test_mem_max` come from `orq setup`

@@ -11,6 +11,7 @@ import { type Obj } from "./config.js";
 import { writeAtomic } from "./fsutil.js";
 import { m } from "./i18n.js";
 import { acquire, release } from "./lock.js";
+import { stateDir } from "./paths.js";
 import { killTree, type MemMode, parseSize, runCapped } from "./process.js";
 import { closeOwnTab, detectHost, type Host, launch } from "./terminal.js";
 
@@ -182,9 +183,20 @@ export async function inJob(j: TestJob, label: string, slots: number, body: (c: 
   return st === "ok" ? 0 : 1;
 }
 
+/** Where `orq handoff` records the pane that replaced a conductor's. */
+export const handoffFile = (pane: string) => join(stateDir(), "handoff", pane.replace(/\W/g, "_"));
+
 /** The conductor is a herdr pane: type the line into it (herdr-notify waits for it to leave a dialog). In the
  * background when the caller must not wait for that (an agent's end-of-turn hook holds its screen meanwhile). */
 export function notify(pane: string, line: string, background = false): void {
+  const seen = new Set<string>();
+  while (!seen.has(pane) && existsSync(handoffFile(pane))) {
+    seen.add(pane);
+    let next: string;
+    try { next = readFileSync(handoffFile(pane), "utf8").trim(); } catch { break; } // gone between the two calls
+    if (!next || next === pane) break;
+    pane = next; // follow repeated handoffs to the current conductor
+  }
   const local = join(dirname(CLI), "..", "setup", "herdr-notify"), cmd = existsSync(local) ? local : "herdr-notify";
   if (background) spawn(cmd, [pane, line], { detached: true, stdio: "ignore" }).unref();
   else spawnSync(cmd, [pane, line], { stdio: "inherit" });
