@@ -10,7 +10,7 @@ import { limitsFor, parseWindows, pick as pickAgent } from "./pick.js";
 import { parseLocal } from "./commands/block.js";
 import { handoffPrompt, owners, plan, tighter, trimHandoffContext } from "./commands/handoff.js";
 import { setTomlString } from "./toml-set.js";
-import { antigravityFromModels, copilotFromUser, fromCache, minimaxFromRemains } from "./quota.js";
+import { antigravityFromModels, copilotFromUser, fromCache, humanReset, minimaxFromRemains } from "./quota.js";
 
 process.env.ORQ_LANG = "en"; // messages checked below are the English ones
 const CLI = fileURLToPath(new URL("./cli.js", import.meta.url));
@@ -167,6 +167,212 @@ console.log(/--head work\\/plane-merged .*--state merged/.test(a) ? '[{"number":
   assert.equal(existsSync(dirty.path), true); assert.equal(existsSync(unpushed.path), true); assert.equal(existsSync(stale.path), true);
 });
 
+test("ci: aggregateChecks and parsePrStatus are pure (no gh, no PR, or a failure all read as none)", async () => {
+  const { aggregateChecks, parsePrStatus } = await import("./ci.js");
+  assert.equal(aggregateChecks([]), "none"); // no checks registered yet: not a false "passed"
+  assert.equal(aggregateChecks([{ status: "COMPLETED", conclusion: "SUCCESS" }]), "passed");
+  assert.equal(aggregateChecks([{ status: "QUEUED" }]), "queued");
+  assert.equal(aggregateChecks([{ status: "IN_PROGRESS" }]), "running");
+  assert.equal(aggregateChecks([{ status: "COMPLETED", conclusion: "FAILURE" }]), "failed");
+  assert.equal(aggregateChecks([{ status: "COMPLETED", conclusion: "FAILURE" }, { status: "QUEUED" }]), "failed"); // a failure always wins
+  assert.deepEqual(parsePrStatus('{"number":5,"headRefOid":"abc123","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}'),
+    { pr: 5, sha: "abc123", state: "passed" });
+  assert.deepEqual(parsePrStatus("not json"), { state: "none" });
+  assert.deepEqual(parsePrStatus("{}"), { state: "none" }); // no PR open on that branch
+});
+
+test("ci: issueBranches matches the worktree whose branch ends in plane-<id>, case-insensitive", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orq-ci-"));
+  const ws = join(root, "ws"), repo = join(ws, "demo");
+  mkdirSync(join(ws, ".worktrees"), { recursive: true });
+  const git = (cwd: string, ...args: string[]) => { const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  spawnSync("git", ["init", "-q", "-b", "main", repo]);
+  git(repo, "config", "user.email", "orq-test"); git(repo, "config", "user.name", "Test");
+  writeFileSync(join(repo, "f"), "x"); git(repo, "add", "."); git(repo, "commit", "-qm", "base");
+  const wt = join(ws, ".worktrees", "demo-plane-abc-123");
+  git(repo, "worktree", "add", "-qb", "work/plane-ABC-123", wt, "main");
+  const { issueBranches } = await import("./ci.js");
+  assert.deepEqual(issueBranches(ws, "abc-123"), [{ repo: "demo", branch: "work/plane-ABC-123" }]);
+  assert.deepEqual(issueBranches(ws, "nope"), []);
+  assert.deepEqual(issueBranches(join(root, "empty"), "abc-123"), []); // no .worktrees at all
+});
+
+test("collectCi: caches CI per issue; notifies per head SHA on a genuine transition to failed, again on a new red SHA", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orq-ci-"));
+  const st = mkdtempSync(join(tmpdir(), "orq-ci-state-"));
+  const old = process.env.XDG_STATE_HOME; process.env.XDG_STATE_HOME = st;
+  const ws = join(root, "ws"), repo = join(ws, "demo");
+  const oldGh = process.env.ORQ_GH;
+  try {
+    mkdirSync(join(ws, ".worktrees"), { recursive: true });
+    const git = (cwd: string, ...args: string[]) => { const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+    spawnSync("git", ["init", "-q", "-b", "main", repo]);
+    git(repo, "config", "user.email", "orq-test"); git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "f"), "x"); git(repo, "add", "."); git(repo, "commit", "-qm", "base");
+    git(repo, "worktree", "add", "-qb", "work/plane-abc-1", join(ws, ".worktrees", "demo-plane-abc-1"), "main");
+    mkdirSync(join(ws, ".orquestra", "ABC-1"), { recursive: true });
+    // kind=id (not herdr): aliveOwner() only checks the TTL, so this works with no herdr binary around.
+    writeFileSync(join(ws, ".orquestra", "ABC-1", "owner"), `pane=c1 kind=id account=a at=${new Date().toISOString()}\n`);
+
+    let sha = "sha1";
+    const rollupFile = join(root, "rollup.json"); writeFileSync(rollupFile, JSON.stringify([{ status: "IN_PROGRESS" }]));
+    const shaFile = join(root, "sha.txt"); writeFileSync(shaFile, sha);
+    const gh = join(root, "fake-gh.js");
+    writeFileSync(gh, `const fs = require("fs");
+console.log(JSON.stringify({ number: 9, headRefOid: fs.readFileSync(${JSON.stringify(shaFile)}, "utf8").trim(),
+  statusCheckRollup: JSON.parse(fs.readFileSync(${JSON.stringify(rollupFile)}, "utf8")) }));
+`);
+    process.env.ORQ_GH = gh;
+
+    const { collectCi, loadCache } = await import("./ci.js");
+    const calls: string[][] = [], logs: string[] = [];
+    const hooks = { desktop: (issue: string, repoName: string, state: string) => calls.push(["desktop", issue, repoName, state]),
+      owner: (pane: string, line: string) => calls.push(["owner", pane, line]) };
+    const origLog = console.log; console.log = (s: string) => logs.push(s);
+    let entries: ReturnType<typeof collectCi>;
+    try {
+      entries = collectCi(ws, hooks);
+      assert.equal(entries[0].state, "running"); assert.equal(calls.length, 0); assert.equal(logs.length, 0); // first sighting: nothing to transition from
+
+      writeFileSync(rollupFile, JSON.stringify([{ status: "COMPLETED", conclusion: "FAILURE" }]));
+      entries = collectCi(ws, hooks);
+      assert.equal(entries[0].state, "failed");
+      assert.deepEqual(calls, [["desktop", "ABC-1", "demo", "failed"]]); // id-kind owner: no herdr-notify, a stdout line instead
+      assert.deepEqual(logs, ["[ORQ CI] ABC-1 demo failed (sha1)"]);
+      assert.equal(entries[0].notified, "failed:sha1");
+      assert.ok(typeof entries[0].at === "number");
+      assert.deepEqual(loadCache().find((e) => e.issue === "ABC-1"), entries[0]);
+
+      calls.length = 0; logs.length = 0;
+      entries = collectCi(ws, hooks); // same SHA, still failed: must not notify again
+      assert.equal(entries[0].state, "failed"); assert.equal(calls.length, 0); assert.equal(logs.length, 0);
+
+      calls.length = 0; logs.length = 0;
+      sha = "sha2"; writeFileSync(shaFile, sha); // a new commit, still red: must notify again
+      entries = collectCi(ws, hooks);
+      assert.equal(entries[0].state, "failed");
+      assert.deepEqual(calls, [["desktop", "ABC-1", "demo", "failed"]]);
+      assert.deepEqual(logs, ["[ORQ CI] ABC-1 demo failed (sha2)"]);
+      assert.equal(entries[0].notified, "failed:sha2");
+    } finally { console.log = origLog; }
+  } finally {
+    if (old === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = old;
+    if (oldGh === undefined) delete process.env.ORQ_GH; else process.env.ORQ_GH = oldGh;
+  }
+});
+
+test("collectCi: a non-herdr owner gets a stdout notice on failure, never a herdr-notify crash", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orq-ci-"));
+  const st = mkdtempSync(join(tmpdir(), "orq-ci-state-"));
+  const old = process.env.XDG_STATE_HOME; process.env.XDG_STATE_HOME = st;
+  const ws = join(root, "ws"), repo = join(ws, "demo");
+  const oldGh = process.env.ORQ_GH;
+  try {
+    mkdirSync(join(ws, ".worktrees"), { recursive: true });
+    const git = (cwd: string, ...args: string[]) => { const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+    spawnSync("git", ["init", "-q", "-b", "main", repo]);
+    git(repo, "config", "user.email", "orq-test"); git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "f"), "x"); git(repo, "add", "."); git(repo, "commit", "-qm", "base");
+    git(repo, "worktree", "add", "-qb", "work/plane-abc-1", join(ws, ".worktrees", "demo-plane-abc-1"), "main");
+    mkdirSync(join(ws, ".orquestra", "ABC-1"), { recursive: true });
+    // kind=id: a plain terminal conductor, no herdr pane for herdr-notify to reach.
+    writeFileSync(join(ws, ".orquestra", "ABC-1", "owner"), `pane=c1 kind=id account=a at=${new Date().toISOString()}\n`);
+
+    const rollupFile = join(root, "rollup.json"); writeFileSync(rollupFile, JSON.stringify([{ status: "IN_PROGRESS" }]));
+    const gh = join(root, "fake-gh.js");
+    writeFileSync(gh, `const fs = require("fs");
+console.log(JSON.stringify({ number: 9, headRefOid: "sha1", statusCheckRollup: JSON.parse(fs.readFileSync(${JSON.stringify(rollupFile)}, "utf8")) }));
+`);
+    process.env.ORQ_GH = gh;
+
+    const { collectCi } = await import("./ci.js");
+    const ownerCalls: string[][] = [];
+    const hooks = { desktop: () => {}, owner: (pane: string, line: string) => ownerCalls.push([pane, line]) };
+    collectCi(ws, hooks); // first sighting
+
+    writeFileSync(rollupFile, JSON.stringify([{ status: "COMPLETED", conclusion: "FAILURE" }]));
+    const logs: string[] = [];
+    const origLog = console.log; console.log = (s: string) => logs.push(s);
+    let entries: Awaited<ReturnType<typeof collectCi>>;
+    try { entries = collectCi(ws, hooks); } finally { console.log = origLog; } // must not throw
+    assert.equal(entries[0].state, "failed");
+    assert.equal(ownerCalls.length, 0); // never routed to herdr-notify for a non-herdr owner
+    assert.ok(logs.some((l) => l.includes("[ORQ CI] ABC-1 demo failed")), logs.join("\n"));
+  } finally {
+    if (old === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = old;
+    if (oldGh === undefined) delete process.env.ORQ_GH; else process.env.ORQ_GH = oldGh;
+  }
+});
+
+test("orq ci: a claimed issue's PR state, 'none' with no gh and no PR", () => {
+  const { root, env, run } = sandbox(), ws = join(root, "ws"), repo = join(ws, "demo");
+  const git = (cwd: string, ...args: string[]) => { const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  mkdirSync(join(ws, ".worktrees"), { recursive: true });
+  spawnSync("git", ["init", "-q", "-b", "main", repo]);
+  git(repo, "config", "user.email", "orq-test"); git(repo, "config", "user.name", "Test");
+  writeFileSync(join(repo, "f"), "x"); git(repo, "add", "."); git(repo, "commit", "-qm", "base");
+  git(repo, "worktree", "add", "-qb", "work/plane-abc-1", join(ws, ".worktrees", "demo-plane-abc-1"), "main");
+  mkdirSync(join(ws, ".orquestra", "ABC-1"), { recursive: true });
+  writeFileSync(join(ws, ".orquestra", "ABC-1", "owner"), `pane=c1 kind=id account=a at=${new Date().toISOString()}\n`);
+
+  const noGh = run("ci", "-w", ws, "--json");
+  assert.equal(noGh.status, 0, noGh.stderr);
+  assert.deepEqual(JSON.parse(noGh.stdout).map((e: { state: string }) => e.state), ["none"]);
+
+  const gh = join(root, "fake-gh.js");
+  writeFileSync(gh, `console.log(JSON.stringify({ number: 9, headRefOid: "sha1", statusCheckRollup: [{"status":"COMPLETED","conclusion":"SUCCESS"}] }))`);
+  (env as Record<string, string | undefined>).ORQ_GH = gh;
+  const withGh = run("ci", "-w", ws, "--json");
+  assert.equal(withGh.status, 0, withGh.stderr);
+  const [e] = JSON.parse(withGh.stdout);
+  assert.deepEqual([e.issue, e.repo, e.pr, e.state], ["ABC-1", "demo", 9, "passed"]);
+  assert.match(run("ci", "-w", ws).stdout, /ABC-1 demo work\/plane-abc-1 #9 passed/);
+});
+
+test("orq ci --json: a failing owner's notice never leaks into stdout, herdr or not", () => {
+  const { root, env, run } = sandbox(), ws = join(root, "ws"), repo = join(ws, "demo");
+  const git = (cwd: string, ...args: string[]) => { const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  mkdirSync(join(ws, ".worktrees"), { recursive: true });
+  spawnSync("git", ["init", "-q", "-b", "main", repo]);
+  git(repo, "config", "user.email", "orq-test"); git(repo, "config", "user.name", "Test");
+  writeFileSync(join(repo, "f"), "x"); git(repo, "add", "."); git(repo, "commit", "-qm", "base");
+  git(repo, "worktree", "add", "-qb", "work/plane-abc-1", join(ws, ".worktrees", "demo-plane-abc-1"), "main");
+  mkdirSync(join(ws, ".orquestra", "ABC-1"), { recursive: true });
+  // kind=id: a non-herdr owner's "[ORQ CI] ... failed" notice (src/ci.ts's default `notice` hook) would otherwise
+  // go to console.log, landing in front of the JSON on stdout — orq ci --json must route it to stderr instead.
+  writeFileSync(join(ws, ".orquestra", "ABC-1", "owner"), `pane=c1 kind=id account=a at=${new Date().toISOString()}\n`);
+
+  const gh = join(root, "fake-gh.js");
+  writeFileSync(gh, `console.log(JSON.stringify({ number: 9, headRefOid: "sha1", statusCheckRollup: [{"status":"COMPLETED","conclusion":"SUCCESS"}] }))`);
+  (env as Record<string, string | undefined>).ORQ_GH = gh;
+  run("ci", "-w", ws, "--json"); // first sighting: records "passed", nothing to notify yet
+
+  writeFileSync(gh, `console.log(JSON.stringify({ number: 9, headRefOid: "sha1", statusCheckRollup: [{"status":"COMPLETED","conclusion":"FAILURE"}] }))`);
+  const r = run("ci", "-w", ws, "--json");
+  assert.equal(r.status, 0, r.stderr);
+  const [e] = JSON.parse(r.stdout); // throws if the notice leaked in front of the JSON
+  assert.deepEqual([e.issue, e.state], ["ABC-1", "failed"]);
+  assert.match(r.stderr, /\[ORQ CI\] ABC-1 demo failed/); // not dropped, just not on stdout
+});
+
+test("orq ci: with no -w, finds claimed issues from the workspace root (_workspace), not the bare cwd", () => {
+  const { root, env, run } = sandbox(), ws = join(root, "ws"), repo = join(ws, "demo");
+  const git = (cwd: string, ...args: string[]) => { const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  mkdirSync(join(ws, ".orq"), { recursive: true });
+  writeFileSync(join(ws, ".orq", "workspace.json"), "{}");
+  mkdirSync(join(ws, ".worktrees"), { recursive: true });
+  spawnSync("git", ["init", "-q", "-b", "main", repo]);
+  git(repo, "config", "user.email", "orq-test"); git(repo, "config", "user.name", "Test");
+  writeFileSync(join(repo, "f"), "x"); git(repo, "add", "."); git(repo, "commit", "-qm", "base");
+  git(repo, "worktree", "add", "-qb", "work/plane-abc-1", join(ws, ".worktrees", "demo-plane-abc-1"), "main");
+  mkdirSync(join(ws, ".orquestra", "ABC-1"), { recursive: true });
+  writeFileSync(join(ws, ".orquestra", "ABC-1", "owner"), `pane=c1 kind=id account=a at=${new Date().toISOString()}\n`);
+
+  const r = spawnSync(process.execPath, [CLI, "ci", "--json"], { env, cwd: repo, encoding: "utf8" }); // cwd = <ws>/demo, not ws
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).map((e: { issue: string }) => e.issue), ["ABC-1"]);
+});
+
 test("codexFromSession: last rate_limits, windows by length, reset windows read 0, reset times when still ahead", async () => {
   const { codexFromSession } = await import("./quota.js");
   const ev = (p: number, s: number, resets: number) => JSON.stringify({ payload: { rate_limits: {
@@ -211,14 +417,16 @@ test("humanReset: today's time, else weekday + time", async () => {
   assert.equal(humanReset(Math.floor(future.getTime() / 1000), now), `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][future.getDay()]} 09:05`);
 });
 
-test("humanizeQuotaLine: epoch reset fields become a human time inline, dropped otherwise", async () => {
+test("humanizeQuotaLine: the core 'name 5h=.. week=..' stays intact; reset times move to the end", async () => {
   const { humanizeQuotaLine } = await import("./commands/quota.js");
   const now = Date.parse("2026-10-31T10:00:00");
   const today = new Date(now); today.setHours(14, 30, 0, 0);
   const epoch = Math.floor(today.getTime() / 1000);
   const line = `work 5h=92% week=40% reset5h=${epoch} [note]`;
-  assert.equal(humanizeQuotaLine(line), "work 5h=92% (resets 14:30) week=40% [note]");
+  assert.equal(humanizeQuotaLine(line), "work 5h=92% week=40% (5h resets 14:30) [note]");
   assert.equal(humanizeQuotaLine("work 5h=92% week=40% [note]"), "work 5h=92% week=40% [note]");
+  const bothResets = `work 5h=92% week=40% reset5h=${epoch} resetweek=${epoch + 86400}`;
+  assert.equal(humanizeQuotaLine(bothResets), `work 5h=92% week=40% (5h resets 14:30, week resets ${humanReset(epoch + 86400, now)})`);
 });
 
 test("quotaLine: the tighter window per source, ! at the limit, blocked and no-data marks", async () => {
@@ -727,6 +935,7 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
   writeFileSync(join(ws, ".orquestra", "ABC-1", "owner"), `pane=me@box kind=id account=work at=${iso(now)}\n`);
   writeFileSync(join(st, "blocks.json"), JSON.stringify({ copilot: { until: now / 1000 + 86400, reason: "out" } }));
   writeFileSync(join(st, "board", "quota.txt"), "work 5h=42% week=7%\nopencode 5h=- week=- [no quota collector]\n");
+  writeFileSync(join(st, "board", "ci.json"), JSON.stringify([{ ws, issue: "ABC-1", repo: "api", branch: "work/plane-abc-1", pr: 9, sha: "abc1234", state: "failed", at: now }]));
 
   const r = run("board", "--json", "-w", ws);
   assert.equal(r.status, 0, r.stderr);
@@ -738,21 +947,37 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
   assert.equal(j.queue.holders[0].label, "verify ABC-1 api");
   assert.deepEqual(j.conductors, [{ id: "me@box", kind: "id", account: "work", alive: true, issues: ["ABC-1"] }]);
   assert.deepEqual(j.quota.lines[0], { name: "work", five: "42%", week: "7%" });
+  assert.deepEqual(j.ci.entries[0], { ws, issue: "ABC-1", repo: "api", branch: "work/plane-abc-1", pr: 9, sha: "abc1234", state: "failed", at: now });
   assert.equal(j.blocks.copilot.reason, "out");
 
   const o = run("board", "--once", "-w", ws);
   assert.equal(o.status, 0, o.stderr);
   assert.ok(!o.stdout.includes("\x1b"), "no escape codes when piped");
   for (const s of ["TRANSPORT", "verify ABC-1 api", "impl-api", "claude-opus-5", "· Edit", "runner gone", "rc=3", "me@box", "42%",
-    "no quota collector: opencode", "copilot", "CHARTS"]) assert.ok(o.stdout.includes(s), `missing ${s}\n${o.stdout}`);
+    "no quota collector: opencode", "copilot", "CHARTS", "MONITOR", "ABC-1", "failed"]) assert.ok(o.stdout.includes(s), `missing ${s}\n${o.stdout}`);
   const pt = spawnSync(process.execPath, [CLI, "board", "--once", "-w", ws], { env: { ...env, ORQ_LANG: "pt" }, encoding: "utf8" });
   assert.ok(pt.stdout.includes("fila de testes"), pt.stdout);
+});
+
+test("board: a second workspace with nothing collected yet never reads as fresh off the first's cache write", () => {
+  const { root, run } = sandbox(), st = join(root, "state", "orq"), ws1 = join(root, "ws1"), ws2 = join(root, "ws2");
+  mkdirSync(join(st, "board"), { recursive: true }); mkdirSync(ws1, { recursive: true }); mkdirSync(ws2, { recursive: true });
+  // ci.json is one shared file: a fresh collection for ws1 only must not make ws2 (absent from it) look fresh too,
+  // which the file's own mtime would say if age were read from it instead of from each entry's own `at`.
+  writeFileSync(join(st, "board", "ci.json"), JSON.stringify([
+    { ws: ws1, issue: "ABC-1", repo: "api", branch: "work/plane-abc-1", state: "passed", at: Date.now() }]));
+
+  const r = run("board", "--json", "-w", ws1, "-w", ws2);
+  assert.equal(r.status, 0, r.stderr);
+  const j = JSON.parse(r.stdout);
+  assert.deepEqual(j.ci.entries.map((e: { ws: string }) => e.ws), [ws1]);
+  assert.equal(j.ci.age, undefined); // ws2 has no entry at all: never "fresh" just because ws1's write touched the file
 });
 
 test("board: render colors only when asked, activity from the log tail", async () => {
   const { render, activity, dur } = await import("./commands/board.js");
   const s = { at: new Date().toISOString(), mem: { used: 1, total: 2 }, workspaces: ["/w"], queue: { holders: [], waiters: [] },
-    agents: [], conductors: [], quota: { lines: [] }, blocks: {}, scoreboard: [] };
+    agents: [], conductors: [], quota: { lines: [] }, ci: { entries: [] }, blocks: {}, scoreboard: [] };
   assert.ok(!render(s, "gunmetal", 80, "none").join("\n").includes("\x1b"));
   assert.ok(render(s, "gunmetal", 80, "true").join("\n").includes("\x1b[48;2;25;27;29m"));
   assert.ok(render(s, "gunmetal", 80, "basic").join("\n").includes("\x1b[36m"));
