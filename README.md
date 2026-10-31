@@ -157,6 +157,7 @@ ok_exit = [0, 1]                         # exit 1 = findings, still a verdict
 [conductor]
 handoff_at = 85                          # % of the window → orq handoff moves the conductor to another account
 max_per_account = 2                      # an account already holding this many conductors is never a handoff target
+reset_grace_min = 15                     # every window over the trigger resetting within this many minutes skips the move
 
 [policy]
 quota_week = 95                          # ≥ 95% of the week → agent out

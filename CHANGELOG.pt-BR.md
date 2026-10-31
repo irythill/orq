@@ -13,11 +13,18 @@ English: [CHANGELOG.md](CHANGELOG.md).
   baixaram para manter as contas longe do limite semanal devem definir `policy.quota_week` explicitamente.
 
 ### Adicionado
+- As linhas de cota trazem o horário de renovação de cada janela (epoch em segundos) quando a fonte fornece um
+  (Claude, Codex, Antigravity, MiniMax, a renovação mensal do Copilot), nos campos `reset5h=`/`resetweek=`; linhas
+  antigas em cache (e qualquer coisa sem eles) continuam lendo normalmente. O `orq quota` mostra isso como horário
+  humano ("renova 14:30", ou dia da semana + horário quando não é hoje). O `orq pick --explain` e sua mensagem de
+  exit 3 dizem quando um agente sem cota volta.
 - `orq handoff`: quando a conta Claude de um conductor chega a `conductor.handoff_at` (padrão 85% na janela de 5h, ou
   o limite semanal), abre um space novo no herdr numa conta com folga, move as issues e os avisos dos filhos para lá
   e manda o novo conductor retomar. Os alvos se espalham entre as contas em vez de sempre preencher a de menor uso:
   conta os conductors vivos por conta primeiro e escolhe a com menos deles (depois o menor uso), pulando qualquer
-  conta em `conductor.max_per_account` (padrão 2). Salva um trecho recente do pane antigo como contexto não confiável
+  conta em `conductor.max_per_account` (padrão 2). Uma mudança é pulada quando toda janela acima de `conductor.handoff_at`
+  (5h e/ou semanal) renova dentro de `conductor.reset_grace_min` (padrão 15) minutos, a menos que a leitura de cota esteja ilegível.
+  Salva um trecho recente do pane antigo como contexto não confiável
   para o novo conductor; uma falha de leitura não interrompe a transferência. Registra
   conductors sem issue que estejam trabalhando em PR/merge. `setup/orq-handoff.timer` roda a cada 5 minutos.
 - `orq agent -R` aplica `policy.max_rounds`: conta os follow-ups por sessão (qualquer que seja o nome do prefixo) e

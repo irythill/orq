@@ -152,6 +152,7 @@ default = "minimax/MiniMax-M3"
 [conductor]
 handoff_at = 85                          # % da janela → o orq handoff move o conductor para outra conta
 max_per_account = 2                      # conta que já tem esse tanto de conductors nunca é alvo do handoff
+reset_grace_min = 15                     # toda janela acima do gatilho renova dentro desses minutos → pula a mudança
 
 [policy]
 quota_limit = 90                         # caps the 5h pick limit; also sets ! in `orq quota --line`

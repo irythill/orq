@@ -36,7 +36,7 @@ export interface Agent {
 }
 export interface QItem { label: string; pid: number; secs: number; mem?: number }
 export interface Conductor { id: string; kind: string; account: string; alive: boolean; issues: string[] }
-export interface Quota { name: string; five: string; week: string; note?: string }
+export interface Quota { name: string; five: string; week: string; reset5h?: number; resetWeek?: number; note?: string }
 export interface Snapshot {
   at: string; mem: { used: number; total: number }; workspaces: string[];
   queue: { holders: QItem[]; waiters: QItem[] }; agents: Agent[]; conductors: Conductor[];
@@ -143,8 +143,9 @@ const qfile = () => join(qdir(), "quota.txt");
 
 export function parseQuota(text: string): Quota[] {
   return text.split(/\r?\n/).flatMap((l) => {
-    const r = /^(\S+) 5h=(\S+) week=(\S+)(?: \[(.*)\])?/.exec(l.trim());
-    return r ? [{ name: r[1], five: r[2], week: r[3], ...(r[4] ? { note: r[4] } : {}) }] : [];
+    const r = /^(\S+) 5h=(\S+) week=(\S+)(?: reset5h=(\d+))?(?: resetweek=(\d+))?(?: \[(.*)\])?/.exec(l.trim());
+    return r ? [{ name: r[1], five: r[2], week: r[3], ...(r[4] ? { reset5h: Number(r[4]) } : {}),
+      ...(r[5] ? { resetWeek: Number(r[5]) } : {}), ...(r[6] ? { note: r[6] } : {}) }] : [];
   });
 }
 

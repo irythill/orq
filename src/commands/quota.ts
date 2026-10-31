@@ -1,10 +1,11 @@
-// orq quota [name...]   quota of each source in [quota] (default: all) — lines "<name> 5h=NN% week=NN% [note]"
+// orq quota [name...]   quota of each source in [quota] (default: all) — lines "<name> 5h=NN% week=NN% [note]", with
+//                       reset5h=/resetweek= epochs shown inline as human times (e.g. "5h=92% (resets 14:30)")
 // orq quota --line      one line for a status bar (herdr's tab_bar_right command entry): the board's cache, never
 //                       the network — a stale cache starts the board's background collection, like the board does.
 import { getPath, loadConfig } from "../config.js";
 import { m } from "../i18n.js";
 import { limitsFor } from "../pick.js";
-import { collect, type Source } from "../quota.js";
+import { collect, humanReset, type Source } from "../quota.js";
 import { type Quota, quota as cached } from "./board.js";
 import { load as loadBlocks } from "./block.js";
 
@@ -12,6 +13,16 @@ export const USAGE = `orq quota [name...]                   quota per agent/acco
 orq quota --line                      one line for a status bar, from the board's cache (e.g. herdr tab_bar_right)`;
 
 const pct = (p: string) => (/^\d+%$/.test(p) ? Number(p.slice(0, -1)) : undefined);
+
+/** A "name 5h=.. reset5h=<epoch> week=.. resetweek=<epoch> [note]" line → the same with human reset times inline
+ *  (e.g. "5h=92% (resets 14:30)") and the raw epoch fields dropped. */
+export function humanizeQuotaLine(line: string): string {
+  let out = line;
+  const r5 = /reset5h=(\d+)/.exec(line), rw = /resetweek=(\d+)/.exec(line);
+  if (r5) out = out.replace(/ reset5h=\d+/, "").replace(/5h=\S+/, (s) => `${s} (${m("resets", "renova")} ${humanReset(Number(r5[1]))})`);
+  if (rw) out = out.replace(/ resetweek=\d+/, "").replace(/week=\S+/, (s) => `${s} (${m("resets", "renova")} ${humanReset(Number(rw[1]))})`);
+  return out;
+}
 
 /** "work 64 · home 93! · codex 81 · minimax ?": the tighter of the two windows per source; ! when either window is
  *  at or over the medium-task pick limit for that window (5h: `policy.quota_5h.medium`/`quota_limit`, week:
@@ -41,6 +52,6 @@ export async function quota(argv: string[]): Promise<number> {
     return 0;
   }
   const sources = (getPath(cfg, "quota") ?? {}) as Record<string, Source>;
-  for (const l of await collect(sources, argv)) console.log(l);
+  for (const l of await collect(sources, argv)) console.log(humanizeQuotaLine(l));
   return 0;
 }
