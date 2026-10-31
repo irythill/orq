@@ -1,5 +1,5 @@
 // orq quota [name...]   quota of each source in [quota] (default: all) — lines "<name> 5h=NN% week=NN% [note]", with
-//                       reset5h=/resetweek= epochs shown inline as human times (e.g. "5h=92% (resets 14:30)")
+//                       reset5h=/resetweek= epochs shown as human times at the end (e.g. "5h=92% week=40% (5h resets 14:30)")
 // orq quota --line      one line for a status bar (herdr's tab_bar_right command entry): the board's cache, never
 //                       the network — a stale cache starts the board's background collection, like the board does.
 import { getPath, loadConfig } from "../config.js";
@@ -14,14 +14,19 @@ orq quota --line                      one line for a status bar, from the board'
 
 const pct = (p: string) => (/^\d+%$/.test(p) ? Number(p.slice(0, -1)) : undefined);
 
-/** A "name 5h=.. reset5h=<epoch> week=.. resetweek=<epoch> [note]" line → the same with human reset times inline
- *  (e.g. "5h=92% (resets 14:30)") and the raw epoch fields dropped. */
-export function humanizeQuotaLine(line: string): string {
-  let out = line;
+/** A "name 5h=.. reset5h=<epoch> week=.. resetweek=<epoch> [note]" line → the same "name 5h=.. week=.." kept intact,
+ *  with the raw epoch fields dropped and human reset times ("resets 14:30") moved to the end of the line, before
+ *  any [note]. */
+export function humanizeQuotaLine(line: string, now = Date.now()): string {
   const r5 = /reset5h=(\d+)/.exec(line), rw = /resetweek=(\d+)/.exec(line);
-  if (r5) out = out.replace(/ reset5h=\d+/, "").replace(/5h=\S+/, (s) => `${s} (${m("resets", "renova")} ${humanReset(Number(r5[1]))})`);
-  if (rw) out = out.replace(/ resetweek=\d+/, "").replace(/week=\S+/, (s) => `${s} (${m("resets", "renova")} ${humanReset(Number(rw[1]))})`);
-  return out;
+  if (!r5 && !rw) return line;
+  let out = line.replace(/ reset5h=\d+/, "").replace(/ resetweek=\d+/, "");
+  const parts: string[] = [];
+  if (r5) parts.push(`${m("5h", "5h")} ${m("resets", "renova")} ${humanReset(Number(r5[1]), now)}`);
+  if (rw) parts.push(`${m("week", "semana")} ${m("resets", "renova")} ${humanReset(Number(rw[1]), now)}`);
+  const reset = `(${parts.join(", ")})`;
+  const note = /(\[.*\])$/.exec(out);
+  return note ? `${out.slice(0, note.index).trimEnd()} ${reset} ${note[1]}` : `${out.trimEnd()} ${reset}`;
 }
 
 /** "work 64 · home 93! · codex 81 · minimax ?": the tighter of the two windows per source; ! when either window is

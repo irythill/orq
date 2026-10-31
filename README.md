@@ -210,10 +210,13 @@ You only come back when it asks for a decision or says it's done.
 
 To see everything at once, keep **`orq board`** open in a tab or window (any terminal, any OS; `herdr-board` calls it):
 test queue, running agents (model, memory against the cap, last action), conductors and their issues, memory, quota,
-blocks and the 7-day scoreboard. `--once` prints it once, `--json` for scripts. With
+CI/CD per claimed issue, blocks and the 7-day scoreboard. `--once` prints it once, `--json` for scripts. With
 `ui.toast.delivery = "system"` in herdr's config, each finished step also pops up a native OS notification.
 For quota without opening the board, `orq quota --line` fits herdr's tab bar (a `tab_bar_right` command entry,
-[docs/herdr.md](docs/herdr.md#quota-in-the-tab-bar)). After merges, `orq gc` lists and removes the issue worktrees
+[docs/herdr.md](docs/herdr.md#quota-in-the-tab-bar)). `orq ci` shows each claimed issue's PR checks (queued, running,
+passed, failed or none, read from `gh` right then — it is a status check the user asked for, so unlike the board's
+CI column it does not just read the cache); a run turning red or green also pops a herdr notification, and a
+failure pings the owning conductor once per commit. After merges, `orq gc` lists and removes the issue worktrees
 left behind.
 
 Several issues at once: one conductor per issue (ideally on different accounts). `herdr-claim` keeps two conductors
@@ -243,6 +246,7 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 | `herdr-deps` | Links the worktree's dependencies to the main repo's (no reinstall) |
 | `orq baseline ...` (`herdr-baseline`) | Manual snapshot of the tests failing on the base (outside the flow) |
 | `orq gc [-w <workspace>] [--yes] [--days N] [--json]` | Lists issue worktrees that are safe to remove (PR merged, or content already in the base, squash merges included); `--yes` removes them. Never touches uncommitted work, unpushed commits, a live claim or a running agent. Optional daily `orq-gc.timer` |
+| `orq ci [-w <workspace>] [--json]` | CI/CD status per claimed issue with a PR: queued, running, passed, failed or none, collected live via `gh` right then (the cache it fills is what `orq board`'s CI column reads, never blocking on the network). A run turning red or green pops a herdr notification, and a failure also pings the owning conductor |
 | `orq quota --line` | One line of quota for a status bar (`work 64 · home 94! · codex 81`), from the board's cache, never the network |
 | `orq setup` | First configuration and install: environment, skills for Claude, config, conductor workspace |
 | `orq completion bash\|zsh\|fish\|powershell` | Prints the shell completion script (see Install) |
