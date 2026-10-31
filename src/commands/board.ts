@@ -122,7 +122,7 @@ async function conductors(wss: string[]): Promise<Conductor[]> {
   const by = new Map<string, Conductor & { at: number }>();
   for (const ws of wss) {
     const O = join(ws, ".orquestra");
-    for (const id of existsSync(O) ? readdirSync(O) : []) {
+    for (const id of existsSync(O) ? readdirSync(O).filter((x) => !x.startsWith(".")) : []) {
       const t = read(join(O, id, "owner")).trim();
       if (!t) continue;
       const who = field(t, "pane"), at = Date.parse(field(t, "at")) || 0;

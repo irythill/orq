@@ -23,7 +23,9 @@ export const DEFAULTS: Obj = {
   },
   agents: {}, // only agents declared here are available; run templates: built in for 5 (src/agents.ts), or `run = ...`
   policy: {
-    quota_limit: 90, // quota % from which an agent/account is skipped
+    quota_limit: 90, // also caps the 5h pick limit; marks ! in `orq quota --line`
+    quota_week: 95, // weekly % from which an agent/account is skipped
+    quota_5h: { simple: 90, medium: 85, heavy: 80 }, // same for the 5h window, per task level
     max_rounds: 2, // fix rounds before stopping and calling the user
     review: "other-vendor", // other-vendor | any
   },

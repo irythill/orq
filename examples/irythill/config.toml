@@ -88,8 +88,14 @@ default = "auto"          # "auto" = the plan's default model
 #   quickness = the same, with the median duration
 # With fewer than `min_samples` runs, delivery/economy/quickness use `prior` and the candidate gets the `explore` bonus.
 # ---------------------------------------------------------------------------------------------------------------
+[conductor]
+handoff_at = 85            # % of the 5h window (or policy.quota_week) → orq handoff moves the conductor
+model      = "opus"
+max_per_account = 2        # an account already holding this many alive conductors is never a handoff target
+
 [policy]
-quota_limit = 90          # ≥ this (5h or weekly) → candidate out
+quota_week = 95           # ≥ this of the week → candidate out
+quota_5h = { simple = 90, medium = 85, heavy = 80 }   # same for the 5h window, by task level
 max_rounds  = 2
 review      = "other-vendor"   # other-vendor | any
 history_days = 30

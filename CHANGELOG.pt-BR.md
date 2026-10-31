@@ -5,7 +5,21 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Não lançado]
+### Alterado
+- Limites do `orq pick`: 95% da semana (`policy.quota_week`) e, na janela de 5h, 90/85/80% para tarefas
+  simple/medium/heavy (`policy.quota_5h`), em todos os agentes. Um agente nunca revisa nem opina sobre o próprio código,
+  sempre que houver outro agente declarado para o papel. `policy.quota_limit` limita a cota de 5h do pick e define o `!` do `orq quota --line`.
+  **Migração:** `quota_limit` também limitava a janela semanal antes; agora só limita a de 5h, então configs que o
+  baixaram para manter as contas longe do limite semanal devem definir `policy.quota_week` explicitamente.
+
 ### Adicionado
+- `orq handoff`: quando a conta Claude de um conductor chega a `conductor.handoff_at` (padrão 85% na janela de 5h, ou
+  o limite semanal), abre um space novo no herdr numa conta com folga, move as issues e os avisos dos filhos para lá
+  e manda o novo conductor retomar. Os alvos se espalham entre as contas em vez de sempre preencher a de menor uso:
+  conta os conductors vivos por conta primeiro e escolhe a com menos deles (depois o menor uso), pulando qualquer
+  conta em `conductor.max_per_account` (padrão 2). Salva um trecho recente do pane antigo como contexto não confiável
+  para o novo conductor; uma falha de leitura não interrompe a transferência. Registra
+  conductors sem issue que estejam trabalhando em PR/merge. `setup/orq-handoff.timer` roda a cada 5 minutos.
 - `orq agent -R` aplica `policy.max_rounds`: conta os follow-ups por sessão (qualquer que seja o nome do prefixo) e
   recusa o próximo com exit 4; `-F` libera com o OK do usuário. O `/issue` fixa os nomes `fix-<n>` / `review-<repo>-<n>`
   e limita a validação visual (screenshots) a uma tentativa barata.

@@ -33,7 +33,7 @@ export async function gc(argv: string[], clock: () => number = Date.now): Promis
   let ghUnavailable = false, fetchWarned = false;
   const root = join(ws, ".worktrees");
   const orq = join(ws, ".orquestra");
-  const issues = existsSync(orq) ? readdirSync(orq) : [];
+  const issues = existsSync(orq) ? readdirSync(orq).filter((x) => !x.startsWith(".")) : [];
   for (const repoName of readdirSync(ws, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)) {
     const repo = join(ws, repoName);
     if (!existsSync(join(repo, ".git"))) continue;
