@@ -26,29 +26,39 @@ weighs results — while cheaper agents implement and review.
 | Oct 6–8 | Memory caps per agent, test queue, on-demand base comparison, live board, several conductors per workspace |
 | Oct 9 | Data-driven agent choice (`orq-pick`), English and public release |
 
-## Results (60 days, 71 issues, 284 agent runs)
+## Results (last 30 days, Oct 2026, 644 agent runs)
 
 Medians per run. "New tokens" excludes cache reads — what actually weighs on a subscription's quota.
 
 | Role | Agent / model | Runs | Delivered | Approved on first review | Minutes | New tokens |
 |---|---|---|---|---|---|---|
-| implement | Codex gpt-6-sol | 14 | 93% | **78%** | **1.5** | **33k** |
-| implement | Codex gpt-6.1-sol | 28 | 100% | 71% | 3.5 | 57k |
-| implement | Claude Sonnet | 4 | 100% | 2 of 2 | 4.6 | 55k |
-| implement | OpenCode MiniMax | 1 | 100% | 0 of 1 | 1.0 | 313k |
-| review | Codex gpt-6-sol | 9 | 100% | — | 0.6 | 26k |
-| review | OpenCode MiniMax | 8 | 88% | — | 1.8 | 35k |
-| review | Claude Sonnet | 69 | 97% | — | 1.8 | 49k |
+| implement | Codex gpt-6-sol | 23 | 96% | **83%** | **1.9** | **37k** |
+| implement | Codex gpt-6.1-sol | 27 | 100% | 70% | 3.6 | 61k |
+| implement | Claude Sonnet | 20 | 90% | 53% | 4 | 59k |
+| implement | Codex gpt-6-luna | 11 | 100% | 50% | 1.6 | 68k |
+| implement | OpenCode MiniMax | 1 | 100% | 0% | 1.0 | 313k |
+| fix | Codex gpt-6-luna | 95 | 99% | — | 0.9 | 138k |
+| fix | Claude Sonnet | 72 | 94% | — | 3 | 58k |
+| fix | Claude default model | 5 | 40% | — | 2 | 26k |
+| review | Claude Sonnet | 98 | 98% | — | 1.6 | 49k |
+| review | OpenCode MiniMax | 73 | 89% | — | 3 | 67k |
+| review | Codex gpt-6-luna | 35 | 100% | — | 0.5 | 38k |
+| review | Codex gpt-6-sol | 25 | 100% | — | 0.5 | 30k |
+| review | Antigravity gemini-3.8-flash-high | 10 | 50% | — | 5.8 | 178k |
 
 What the numbers said:
-- **Codex with gpt-6-sol is the workhorse.** The best first-review approval at about half the tokens of the larger
-  model; the larger one is kept for heavy issues.
-- **Claude Sonnet was reviewing almost everything** (69 reviews) — on the same quota the Opus conductors need. Moving
-  reviews elsewhere was the biggest saving available.
-- **OpenCode with MiniMax reviews well and cheaply**, but its one implementation attempt failed review and spent ~10×
-  the tokens. So in this setup it only reviews. (With the provider's default model, reviews cost 3× more.)
-- Every fix round avoided saves a whole implement → test → review cycle (60k–200k tokens). That is the real cost
-  driver, more than the price per token.
+- **Codex with gpt-6-sol is still the workhorse** for implementing: best first-review approval (83%) at the lowest
+  token cost of any real contender.
+- **Claude Sonnet now carries both fix (72 runs) and review (98 runs)** — the single heaviest user of its own quota
+  across roles.
+- **Claude's default model is a liability on fix work**: only 40% landed clean — but on 5 runs, too small a sample to
+  conclude much.
+- **Antigravity's gemini-3.8-flash-high failed half its reviews** (50%, 10 runs) while costing the most tokens
+  (178k) and the most time (5.8 min) of any reviewer — costliest and least reliable. The Flash model has since been
+  dropped from the config.
+- **OpenCode MiniMax's one implementation attempt still failed** (0% approved, 313k tokens); kept to reviewing only.
+- Every fix round avoided saves a whole implement → test → review cycle. That is the real cost driver, more than
+  the price per token.
 
 ## What broke, and what we learned
 
@@ -89,6 +99,31 @@ retry. Both are now explicit rules.
 **7. Editing a running script is a trap.** Bash reads scripts as it executes them; editing one in place while queued
 processes are blocked inside it makes them resume at a shifted offset. It happened twice. Now changes are developed in
 a separate worktree and land by replacing files whole.
+
+**8. A subscription's time window runs out mid-work too.** An account's 5-hour window emptied while a conductor was
+still orchestrating. Fix: automatic conductor handoff to another account; the first real handoff moved two conductors
+without losing state.
+
+**9. Pick limits need to vary by window and task, not be one number.** `orq-pick` now caps spend at 95% of the weekly
+budget, and at 90/85/80% of the 5-hour window depending on the task's weight — heavier tasks get a tighter ceiling,
+because a heavy task needs more room left to finish.
+
+**10. Knowing when quota resets matters as much as tracking it.** Reset times let a conductor choose between waiting
+out a window and switching agents, and let handoff skip a move when a reset is minutes away. Separately, a CI signal
+per issue lets a conductor tell "still running" from "actually failed" without guessing from quota alone.
+
+**11. A fix can be a bug of its own.** One agent "fixed" a low-severity finding by deleting the feature it was
+attached to; another added a readiness check that would have hung every real handoff. Neither was caught by the
+pipeline — only by a human or conductor reading the fix's actual diff. Lesson: a green fix result is not the same as
+a good one; something has to read it.
+
+**12. "Nothing to review" passed as a clean review.** A reviewer that returned no findings looked identical to a
+reviewer that ran and found nothing. orq has no gate for this; in that session, the check was done by hand in the
+script. It's a rule to follow, not something orq enforces.
+
+**13. A fix loop can wander out of scope faster than it hits its round limit.** One loop meant to land a local fix
+grew into a broader discussion the fix was never meant to settle. Round limits exist to stop runaway loops, but they
+didn't catch this — re-checking whether the scope is still the original one matters more than counting rounds.
 
 ## What the day looks like now
 
