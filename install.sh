@@ -184,7 +184,12 @@ say "${B}$(m "orq gc timer" "timer do orq gc")${N}"
 if systemd_ok; then
   link "$ROOT/setup/orq-gc.service" "$UNIT_DIR/orq-gc.service"
   link "$ROOT/setup/orq-gc.timer" "$UNIT_DIR/orq-gc.timer"
+  link "$ROOT/setup/orq-handoff.service" "$UNIT_DIR/orq-handoff.service"
+  link "$ROOT/setup/orq-handoff.timer" "$UNIT_DIR/orq-handoff.timer"
   run systemctl --user daemon-reload
+  say "  $(m "to hand conductors off before an account runs out, set the workspace and enable it:" "para trocar o conductor de conta antes da cota acabar, defina o workspace e ative:")"
+  say "    systemctl --user edit orq-handoff.service   # [Service] Environment=ORQ_HANDOFF_WORKSPACE=<workspace>"
+  say "    systemctl --user enable --now orq-handoff.timer"
   say "  $(m "to remove merged worktrees daily, set the workspace and enable it:" "para remover worktrees mergeadas todo dia, defina o workspace e ative:")"
   say "    systemctl --user edit orq-gc.service   # [Service] Environment=ORQ_GC_WORKSPACE=<workspace>"
   say "    systemctl --user enable --now orq-gc.timer"

@@ -149,8 +149,12 @@ roles  = ["review"]                      # here it only reviews; for someone els
 [agents.opencode.models.review]
 default = "minimax/MiniMax-M3"
 
+[conductor]
+handoff_at = 85                          # % da janela → o orq handoff move o conductor para outra conta
+max_per_account = 2                      # conta que já tem esse tanto de conductors nunca é alvo do handoff
+
 [policy]
-quota_limit = 90                         # ≥ 90% used → agent out
+quota_limit = 90                         # caps the 5h pick limit; also sets ! in `orq quota --line`
 [policy.weights]
 quality  = 0.40                          # did it deliver? (impl: approved on the first review)
 tokens   = 0.45                          # did it spend little?
