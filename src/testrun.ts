@@ -198,6 +198,6 @@ export function notify(pane: string, line: string, background = false): void {
     pane = next; // follow repeated handoffs to the current conductor
   }
   const local = join(dirname(CLI), "..", "setup", "herdr-notify"), cmd = existsSync(local) ? local : "herdr-notify";
-  if (background) spawn(cmd, [pane, line], { detached: true, stdio: "ignore" }).unref();
+  if (background) spawn(cmd, [pane, line], { detached: true, stdio: "ignore" }).on("error", () => { /* a notice never takes the caller down */ }).unref();
   else spawnSync(cmd, [pane, line], { stdio: "inherit" });
 }

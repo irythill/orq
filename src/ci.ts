@@ -201,6 +201,7 @@ export function collectCi(ws: string, hooks: { desktop?: typeof notifyDesktop; o
         toNotify.push({ owner, kind, id, repo, state, sha: sha! });
         notified = mark;
       }
+      if (!prev && mark) notified = mark; // first sighting: known, not news
       mine.push({ ws, issue: id, repo, branch, ...(pr !== undefined ? { pr } : {}), ...(sha ? { sha } : {}), state, ...(notified ? { notified } : {}), at: now });
     }
     saveCache([...cache.filter((e) => e.ws !== ws), ...mine]);
