@@ -900,7 +900,7 @@ test("handoff prompt mentions saved old-screen context only when the file exists
   assert.match(withoutFile, /No issue was claimed/);
 });
 
-test("conductor registration makes an idle pane visible to handoff and ignores dot entries", async () => {
+test("conductor registration makes an idle pane visible to handoff and ignores dot entries", { skip: process.platform === "win32" }, async () => { // fake herdr is a sh script
   const { root, env, run } = sandbox(), ws = join(root, "ws"), bin = join(root, "bin");
   mkdirSync(bin, { recursive: true }); mkdirSync(ws, { recursive: true });
   const fake = join(bin, "herdr"); writeFileSync(fake, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
