@@ -94,7 +94,7 @@ if [ "$UNINSTALL" = 1 ]; then
   fi
   for u in orq-gc.service orq-handoff.service; do
     conf="$UNIT_DIR/$u.d/orq-node.conf"
-    [ -e "$conf" ] && { rm -f "$conf"; echo "  remove  $conf"; }
+    [ -e "$conf" ] && { run rm -f "$conf"; echo "  remove  $conf"; }
   done
   say "${B}herdr plugin${N}"
   if command -v herdr >/dev/null && herdr plugin list 2>/dev/null | grep -q "$ROOT/herdr-plugin"; then
@@ -205,7 +205,7 @@ if systemd_ok; then
       ;;
     *)
       node_dir=$(dirname "$node_bin")
-      say "  $(m "node found outside the services' default PATH ($node_dir, mise active-version PATH or nvm): writing a drop-in" "node fora do PATH padrão dos serviços ($node_dir, PATH de versão ativa do mise ou nvm): escrevendo um drop-in")"
+      say "  $(m "node found outside the services' default PATH ($node_dir, mise active-version PATH or nvm): writing a drop-in (re-run this installer after switching node versions)" "node fora do PATH padrão dos serviços ($node_dir, PATH de versão ativa do mise ou nvm): escrevendo um drop-in (rode o instalador de novo ao trocar a versão do node)")"
       for u in orq-gc.service orq-handoff.service; do
         run mkdir -p "$UNIT_DIR/$u.d"
         if [ "$DRY" = 1 ]; then echo "  [dry-run] write $UNIT_DIR/$u.d/orq-node.conf"

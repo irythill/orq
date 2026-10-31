@@ -22,7 +22,7 @@ import { processTableAsync, treeMem } from "../process.js";
 import { collect, type Source } from "../quota.js";
 import { collectRuns, type Row, rows } from "../stats.js";
 import { load as loadBlocks } from "./block.js";
-import { herdrNames, nameOf } from "./claim.js";
+import { herdrNamesAsync, nameOf } from "./claim.js";
 import { setValue } from "./set.js";
 
 export const USAGE = "orq board [-w <workspace>]... [--once] [--json] [--interval S]   live board: queue, agents, conductors, quota";
@@ -137,8 +137,9 @@ async function conductors(wss: string[]): Promise<Conductor[]> {
   }
   const ttl = Number(process.env.ORQ_CLAIM_TTL_H ?? 24) * 3600_000;
   const out = [...by.values()];
-  // One `herdr pane/workspace list` per refresh, shared by every conductor (not 2 spawns each).
-  const names = out.some((c) => c.kind === "herdr") ? herdrNames() : new Map<string, string>();
+  // One `herdr pane/workspace list` per refresh, shared by every conductor (not 2 spawns each), off the event
+  // loop (execFile, not spawnSync) so a slow/busy herdr daemon delays only this redraw, never key handling.
+  const names = out.some((c) => c.kind === "herdr") ? await herdrNamesAsync() : new Map<string, string>();
   await Promise.all(out.map(async (c) => {
     c.alive = c.kind === "herdr" ? await herdrAlive(c.id) : Date.now() - c.at < ttl;
     // Alive herdr conductor: the workspace's current label (the user may have renamed it since the claim).
