@@ -270,6 +270,51 @@ console.log(JSON.stringify({ number: 9, headRefOid: fs.readFileSync(${JSON.strin
   }
 });
 
+test("collectCi: a concurrent collector's fresher notified mark is never overwritten or double-notified", async () => {
+  const root = mkdtempSync(join(tmpdir(), "orq-ci-"));
+  const st = mkdtempSync(join(tmpdir(), "orq-ci-state-"));
+  const old = process.env.XDG_STATE_HOME; process.env.XDG_STATE_HOME = st;
+  const ws = join(root, "ws"), repo = join(ws, "demo");
+  const oldGh = process.env.ORQ_GH;
+  try {
+    mkdirSync(join(ws, ".worktrees"), { recursive: true });
+    const git = (cwd: string, ...args: string[]) => { const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+    spawnSync("git", ["init", "-q", "-b", "main", repo]);
+    git(repo, "config", "user.email", "orq-test"); git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "f"), "x"); git(repo, "add", "."); git(repo, "commit", "-qm", "base");
+    git(repo, "worktree", "add", "-qb", "work/plane-abc-1", join(ws, ".worktrees", "demo-plane-abc-1"), "main");
+    mkdirSync(join(ws, ".orquestra", "ABC-1"), { recursive: true });
+    writeFileSync(join(ws, ".orquestra", "ABC-1", "owner"), `pane=c1 kind=id account=a at=${new Date().toISOString()}\n`);
+
+    const { collectCi, cacheFile } = await import("./ci.js");
+    // A prior (non-terminal) sighting, so this collection is a genuine transition, not a first sighting.
+    mkdirSync(join(st, "orq", "board"), { recursive: true });
+    writeFileSync(cacheFile(), JSON.stringify([{ ws, issue: "ABC-1", repo: "demo", branch: "work/plane-abc-1", state: "running", at: 1 }]));
+
+    // Simulates another collector (e.g. `orq board --collect-ci`) finishing its own read-modify-write — with the
+    // notified mark for this exact failure already set — while *this* collection's network call is in flight.
+    const gh = join(root, "fake-gh.js");
+    writeFileSync(gh, `const fs = require("fs");
+const file = ${JSON.stringify(cacheFile())};
+const cache = JSON.parse(fs.readFileSync(file, "utf8"));
+for (const e of cache) if (e.issue === "ABC-1") e.notified = "failed:sha1";
+fs.writeFileSync(file, JSON.stringify(cache));
+console.log(JSON.stringify({ number: 9, headRefOid: "sha1", statusCheckRollup: [{ status: "COMPLETED", conclusion: "FAILURE" }] }));
+`);
+    process.env.ORQ_GH = gh;
+
+    const calls: string[][] = [];
+    const hooks = { desktop: (issue: string, repoName: string, state: string) => calls.push(["desktop", issue, repoName, state]),
+      owner: (pane: string, line: string) => calls.push(["owner", pane, line]) };
+    const entries = collectCi(ws, hooks);
+    assert.equal(calls.length, 0); // the concurrent collector already notified for failed:sha1 — no duplicate
+    assert.equal(entries[0].notified, "failed:sha1"); // its mark survives, not clobbered by our own stale read
+  } finally {
+    if (old === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = old;
+    if (oldGh === undefined) delete process.env.ORQ_GH; else process.env.ORQ_GH = oldGh;
+  }
+});
+
 test("collectCi: a non-herdr owner gets a stdout notice on failure, never a herdr-notify crash", async () => {
   const root = mkdtempSync(join(tmpdir(), "orq-ci-"));
   const st = mkdtempSync(join(tmpdir(), "orq-ci-state-"));
