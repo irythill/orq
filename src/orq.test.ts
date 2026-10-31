@@ -167,18 +167,58 @@ console.log(/--head work\\/plane-merged .*--state merged/.test(a) ? '[{"number":
   assert.equal(existsSync(dirty.path), true); assert.equal(existsSync(unpushed.path), true); assert.equal(existsSync(stale.path), true);
 });
 
-test("codexFromSession: last rate_limits, windows by length, reset windows read 0", async () => {
+test("codexFromSession: last rate_limits, windows by length, reset windows read 0, reset times when still ahead", async () => {
   const { codexFromSession } = await import("./quota.js");
   const ev = (p: number, s: number, resets: number) => JSON.stringify({ payload: { rate_limits: {
     primary: { used_percent: p, window_minutes: 300, resets_at: resets },
     secondary: { used_percent: s, window_minutes: 10080, resets_at: resets + 1000 } } } });
-  assert.deepEqual(codexFromSession(`${ev(10, 20, 2000)}\n{"x":1}\n${ev(42.7, 77, 2000)}\n`, 1000), { five: 42, week: 77 });
-  assert.deepEqual(codexFromSession(ev(10, 20, 500), 1000), { five: 0, week: 20 });
+  assert.deepEqual(codexFromSession(`${ev(10, 20, 2000)}\n{"x":1}\n${ev(42.7, 77, 2000)}\n`, 1000),
+    { five: 42, week: 77, reset5h: 2000, resetWeek: 3000 });
+  // the 5h window already reset (past resets_at): it reads 0 and carries no reset time; the week one is still ahead.
+  assert.deepEqual(codexFromSession(ev(10, 20, 500), 1000), { five: 0, week: 20, resetWeek: 1500 });
   assert.equal(codexFromSession('{"nothing":true}', 1000), undefined);
   // Free plan: a single 30-day window. It must count (it used to read "-", i.e. no limit, at 80 %).
   const free = JSON.stringify({ payload: { rate_limits: { primary: { used_percent: 80, window_minutes: 43200, resets_at: 9000 },
     secondary: null } } });
-  assert.deepEqual(codexFromSession(free, 1000), { five: "-", week: 80, span: 43200 });
+  assert.deepEqual(codexFromSession(free, 1000), { five: "-", week: 80, span: 43200, resetWeek: 9000 });
+});
+
+test("quota reset times: format adds them where parseQuota/parseWindows/board's parseQuota still read the rest", async () => {
+  const { format } = await import("./quota.js");
+  const { parseQuota, parseWindows } = await import("./pick.js");
+  const { parseQuota: parseQuotaBoard } = await import("./commands/board.js");
+  const withResets = format({ name: "work", five: 92, week: 40, reset5h: 1000, resetWeek: 2000, note: "x" });
+  assert.equal(withResets, "work 5h=92% week=40% reset5h=1000 resetweek=2000 [x]");
+  assert.deepEqual(parseQuota(withResets), { work: 92 });
+  assert.deepEqual(parseWindows(withResets).work, { five: 92, week: 40, resetFive: 1000, resetWeek: 2000 });
+  assert.deepEqual(parseQuotaBoard(withResets), [{ name: "work", five: "92%", week: "40%", reset5h: 1000, resetWeek: 2000, note: "x" }]);
+  // an old cached line, no reset fields at all: still parses the same way everywhere.
+  const old = "work 5h=92% week=40% [x]";
+  assert.deepEqual(parseQuota(old), { work: 92 });
+  assert.deepEqual(parseWindows(old).work, { five: 92, week: 40 });
+  assert.deepEqual(parseQuotaBoard(old), [{ name: "work", five: "92%", week: "40%", note: "x" }]);
+  // only one window carries a reset time.
+  const halfReset = format({ name: "codex", five: 50, week: 10, resetWeek: 3000 });
+  assert.deepEqual(parseWindows(halfReset).codex, { five: 50, week: 10, resetWeek: 3000 });
+});
+
+test("humanReset: today's time, else weekday + time", async () => {
+  const { humanReset } = await import("./quota.js");
+  const now = Date.parse("2026-10-31T10:00:00");
+  const today = new Date(now); today.setHours(14, 30, 0, 0);
+  assert.equal(humanReset(Math.floor(today.getTime() / 1000), now), "14:30");
+  const future = new Date(now); future.setDate(future.getDate() + 2); future.setHours(9, 5, 0, 0);
+  assert.equal(humanReset(Math.floor(future.getTime() / 1000), now), `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][future.getDay()]} 09:05`);
+});
+
+test("humanizeQuotaLine: epoch reset fields become a human time inline, dropped otherwise", async () => {
+  const { humanizeQuotaLine } = await import("./commands/quota.js");
+  const now = Date.parse("2026-10-31T10:00:00");
+  const today = new Date(now); today.setHours(14, 30, 0, 0);
+  const epoch = Math.floor(today.getTime() / 1000);
+  const line = `work 5h=92% week=40% reset5h=${epoch} [note]`;
+  assert.equal(humanizeQuotaLine(line), "work 5h=92% (resets 14:30) week=40% [note]");
+  assert.equal(humanizeQuotaLine("work 5h=92% week=40% [note]"), "work 5h=92% week=40% [note]");
 });
 
 test("quotaLine: the tighter window per source, ! at the limit, blocked and no-data marks", async () => {
@@ -231,8 +271,11 @@ test("quota: a failed reading falls back to the last good one, window by window"
       five: { pct: 100, resetsAt: "2026-10-12T14:00:00Z" }, week: { pct: 8, resetsAt: "2026-10-18T04:00:00Z" } }));
     const q = fromCache("acc", "HTTP 429", at + 10 * 60_000);
     assert.equal(q.five, 100); assert.equal(q.week, 8); assert.match(q.note!, /HTTP 429; .*10 min/);
+    assert.equal(q.reset5h, Date.parse("2026-10-12T14:00:00Z") / 1000);
+    assert.equal(q.resetWeek, Date.parse("2026-10-18T04:00:00Z") / 1000);
     const later = fromCache("acc", "HTTP 429", at + 3 * h);             // 5h window reset, week still open
     assert.equal(later.five, 0); assert.equal(later.week, 8);
+    assert.equal(later.reset5h, undefined); assert.equal(later.resetWeek, Date.parse("2026-10-18T04:00:00Z") / 1000);
     writeFileSync(join(st, "orq", "quota", "acc.json"), JSON.stringify({ at, five: { pct: 50 }, week: { pct: "-" } }));
     assert.equal(fromCache("acc", "x", at + h).five, 50);               // no reset time: kept up to 5 h
     assert.equal(fromCache("acc", "x", at + 6 * h).five, "?");
@@ -243,8 +286,16 @@ test("quota: copilot premium requests become the monthly figure in the week slot
   const q = copilotFromUser({ quota_snapshots: { premium_interactions: { percent_remaining: 77, unlimited: false } },
     quota_reset_date: "2026-11-01" });
   assert.equal(q.five, "-"); assert.equal(q.week, 23); assert.match(q.note!, /2026-11-01/);
+  assert.equal(q.resetWeek, Date.parse("2026-11-01T00:00") / 1000); // local midnight, not UTC midnight
   assert.equal(copilotFromUser({ quota_snapshots: { premium_interactions: { unlimited: true } } }).week, "-");
   assert.equal(copilotFromUser({}).week, "?");
+});
+
+test("quota: copilot's bare reset date reads as local midnight, matching the day the note shows", () => {
+  const q = copilotFromUser({ quota_snapshots: { premium_interactions: { percent_remaining: 50 } }, quota_reset_date: "2026-11-01" });
+  const d = new Date(q.resetWeek! * 1000);
+  // a UTC-midnight read would land on 2026-10-31 evening in any zone west of UTC: must stay on the 1st, at 00:00 local.
+  assert.deepEqual([d.getFullYear(), d.getMonth(), d.getDate(), d.getHours()], [2026, 10, 1, 0]);
 });
 
 test("quota: antigravity takes the worst model per window (reset within 6 h = 5h window, later = week)", () => {
@@ -299,6 +350,48 @@ test("pick: fixed role takes the first usable agent in order, never one outside 
   const auto = pick({ ...base, cfg: { agents, roles: { reviewer: { pool: ["claude", "opencode"] } } }, role: "review",
     implVendor: "anthropic", quota: {} });
   assert.equal(auto.best?.agent, "opencode"); // claude: same vendor (built-in vendor)
+});
+
+test("pick: an out-of-quota account's note says when it comes back", async () => {
+  const { pick, parseQuota, parseWindows } = await import("./pick.js");
+  const agents = { codex: { quota: ["codex"], models: { impl: { default: "gpt-6-sol@low" } } } };
+  const base = { level: "medium" as const, exclude: new Set<string>(), stats: [], blocks: new Set<string>(), recent: [] };
+  const cfg = { agents, roles: { primary: { agent: "codex" } } };
+  const line = "codex 5h=95% week=10% reset5h=1900000000 resetweek=1900003600";
+  const r = pick({ ...base, cfg, role: "impl", quota: parseQuota(line), windows: parseWindows(line) });
+  assert.equal(r.best, undefined);
+  assert.match(r.notes[0], /codex=95 \(back .+\)/);
+});
+
+test("pick: 'back' is the latest reset among the windows over their limit, not the soonest", async () => {
+  const { pick, parseQuota, parseWindows } = await import("./pick.js");
+  const agents = { codex: { quota: ["codex"], models: { impl: { default: "gpt-6-sol@low" } } } };
+  const base = { level: "medium" as const, exclude: new Set<string>(), stats: [], blocks: new Set<string>(), recent: [] };
+  const cfg = { agents, roles: { primary: { agent: "codex" } } };
+  // both 5h (limit 85) and week (limit 95) are over: reset5h is earlier than resetweek, but the account is only
+  // usable again once the week window resets too — the note must show the later time, not the earlier one.
+  const line = "codex 5h=95% week=97% reset5h=1900000000 resetweek=1900100000";
+  const r = pick({ ...base, cfg, role: "impl", quota: parseQuota(line), windows: parseWindows(line) });
+  const { humanReset } = await import("./quota.js");
+  assert.match(r.notes[0], new RegExp(`back ${humanReset(1900100000).replace(/[:.]/g, "\\$&")}`));
+  // 5h is over its limit but carries no reset time: no time can be promised, so none is shown.
+  const noReset = "codex 5h=95% week=10% resetweek=1900003600";
+  const r2 = pick({ ...base, cfg, role: "impl", quota: parseQuota(noReset), windows: parseWindows(noReset) });
+  assert.doesNotMatch(r2.notes[0], /back/);
+});
+
+test("pick: a '-' window (no such limit, e.g. copilot's monthly plan) is never over, so 'back' still shows", async () => {
+  const { pick, parseQuota, parseWindows } = await import("./pick.js");
+  const agents = { copilot: { quota: ["copilot"], models: { impl: { default: "gpt-6-sol@low" } } } };
+  const base = { level: "medium" as const, exclude: new Set<string>(), stats: [], blocks: new Set<string>(), recent: [] };
+  const cfg = { agents, roles: { primary: { agent: "copilot" } } };
+  // 5h has no limit ("-") and must not be treated as over; only the week window (over 95) gates the account, and
+  // its reset time alone must be enough for "back <hora>" to show.
+  const line = "copilot 5h=- week=97% resetweek=1900100000";
+  const r = pick({ ...base, cfg, role: "impl", quota: parseQuota(line), windows: parseWindows(line) });
+  assert.equal(r.best, undefined);
+  const { humanReset } = await import("./quota.js");
+  assert.match(r.notes[0], new RegExp(`copilot=97 \\(back ${humanReset(1900100000).replace(/[:.]/g, "\\$&")}\\)`));
 });
 
 test("suggestRoles: the maintainer's setup comes out of plain answers", async () => {
@@ -862,6 +955,22 @@ test("handoff plan: moves at the limit to the emptiest account, skips blocked an
   assert.equal(plan("d", u, 85, new Set(), none), undefined);
   assert.equal(tighter("100%", "69%"), 100);
   assert.equal(tighter("-", "?"), undefined);
+});
+
+test("handoff allOverReset: requires every window over the trigger to reset, in the future, to skip the move", async () => {
+  const { allOverReset } = await import("./commands/handoff.js");
+  const now = Date.parse("2026-10-31T10:00:00");
+  const soon = Math.floor(now / 1000) + 600, far = Math.floor(now / 1000) + 3600 * 24;
+  // both 5h and week are at/over the trigger (85): 5h resets soon, week only a day later — the move must wait for
+  // the later one, not skip just because the window that triggered it (the tighter one, 5h) resets soon.
+  assert.equal(allOverReset("90%", "96%", soon, far, 85, 10, now), far);
+  // 5h over the trigger with no reset time at all: can't promise anything, so don't skip the move.
+  assert.equal(allOverReset("90%", "96%", undefined, far, 85, 10, now), undefined);
+  // the reset already happened (in the past): that window isn't actually still over, don't hold the move on it.
+  const past = Math.floor(now / 1000) - 600;
+  assert.equal(allOverReset("90%", "10%", past, far, 85, 10, now), undefined);
+  // neither window is over the trigger: nothing to wait for.
+  assert.equal(allOverReset("10%", "10%", soon, far, 85, 10, now), undefined);
 });
 
 test("handoff plan: spreads across accounts by fewest conductors first, falling back to usage on a tie", () => {
