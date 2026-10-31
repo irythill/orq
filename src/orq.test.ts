@@ -700,6 +700,14 @@ test("claim: claim, refuse, release, take over a stale owner", () => {
   void run;
 });
 
+test("ownerAlive: a herdr timeout reads as alive (indeterminate), never the same as a clean 'not found'", async () => {
+  const { ownerAlive } = await import("./commands/claim.js");
+  assert.equal(ownerAlive({ status: 0 }), true); // found, running
+  assert.equal(ownerAlive({ status: 1 }), false); // clean exit, not found
+  assert.equal(ownerAlive({ status: null, error: Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }) }), true); // busy herdr, not dead
+  assert.equal(ownerAlive({ status: null, error: Object.assign(new Error("boom"), { code: "ENOENT" }) }), false); // no herdr binary at all
+});
+
 test("process: sizes, tree memory, and the watchdog kills a tree over the cap", async () => {
   const { parseSize, treeMem, runCapped } = await import("./process.js");
   assert.equal(parseSize("4G"), 4 * 2 ** 30); assert.equal(parseSize("512M"), 512 * 2 ** 20);
@@ -1012,6 +1020,32 @@ test("board: a workspace with no claimed issue is marked collected, not stuck 'c
   assert.ok(o.stdout.includes("no claimed issue has a PR"), o.stdout); // not stuck on "collecting..."
 });
 
+test("board --collect-ci: a failing non-herdr owner's notice lands in ci.log, never dropped by the detached collector's stdio:ignore", () => {
+  const { root, env, run } = sandbox(), ws = join(root, "ws"), repo = join(ws, "demo");
+  const git = (cwd: string, ...args: string[]) => { const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  mkdirSync(join(ws, ".worktrees"), { recursive: true });
+  spawnSync("git", ["init", "-q", "-b", "main", repo]);
+  git(repo, "config", "user.email", "orq-test"); git(repo, "config", "user.name", "Test");
+  writeFileSync(join(repo, "f"), "x"); git(repo, "add", "."); git(repo, "commit", "-qm", "base");
+  git(repo, "worktree", "add", "-qb", "work/plane-abc-1", join(ws, ".worktrees", "demo-plane-abc-1"), "main");
+  mkdirSync(join(ws, ".orquestra", "ABC-1"), { recursive: true });
+  // kind=id: a plain terminal conductor (no herdr pane) — same owner shape the real detached collector sees.
+  writeFileSync(join(ws, ".orquestra", "ABC-1", "owner"), `pane=c1 kind=id account=a at=${new Date().toISOString()}\n`);
+
+  const gh = join(root, "fake-gh.js");
+  writeFileSync(gh, `console.log(JSON.stringify({ number: 9, headRefOid: "sha1", statusCheckRollup: [{"status":"COMPLETED","conclusion":"SUCCESS"}] }))`);
+  (env as Record<string, string | undefined>).ORQ_GH = gh;
+  assert.equal(run("board", "-w", ws, "--collect-ci").status, 0); // first sighting: passed, nothing to notify
+
+  writeFileSync(gh, `console.log(JSON.stringify({ number: 9, headRefOid: "sha1", statusCheckRollup: [{"status":"COMPLETED","conclusion":"FAILURE"}] }))`);
+  const r = run("board", "-w", ws, "--collect-ci");
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /\[ORQ CI\]/); // stdio:ignore in production; the board's own run() capture must stay quiet too
+
+  const log = readFileSync(join(env.XDG_STATE_HOME!, "orq", "board", "ci.log"), "utf8");
+  assert.match(log, /\[ORQ CI\] ABC-1 demo failed \(sha1\)/);
+});
+
 test("board: render colors only when asked, activity from the log tail", async () => {
   const { render, activity, dur } = await import("./commands/board.js");
   const s = { at: new Date().toISOString(), mem: { used: 1, total: 2 }, workspaces: ["/w"], queue: { holders: [], waiters: [] },
@@ -1205,6 +1239,30 @@ test("notify: never throws on an unreadable or cyclic handoff chain", async () =
     assert.doesNotThrow(() => notify("a", "msg"));
   } finally {
     if (old === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = old;
+  }
+});
+
+test("notify: background=true (collectCi's default for an owner) returns before a slow herdr-notify finishes", { skip: process.platform === "win32" }, async () => {
+  const { notify } = await import("./testrun.js");
+  const bin = mkdtempSync(join(tmpdir(), "orq-herdr-"));
+  const fake = join(bin, "herdr");
+  // "agent get" sleeps, simulating a conductor stuck in a dialog (herdr-notify waits up to 30 min for real).
+  writeFileSync(fake, `#!/usr/bin/env bash
+case "$1 $2" in
+  "agent get") sleep 1.5; echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  *) exit 0 ;;
+esac
+`, { mode: 0o755 });
+  const old = process.env.PATH; process.env.PATH = `${bin}:${old ?? ""}`;
+  try {
+    const t0 = Date.now();
+    notify("some-pane", "line", true); // background: must not wait for the subprocess
+    assert.ok(Date.now() - t0 < 500, "background notify blocked on herdr-notify");
+    const t1 = Date.now();
+    notify("some-pane", "line"); // foreground (default): proves the two really differ, not just both being fast
+    assert.ok(Date.now() - t1 >= 1000, "foreground notify should have blocked on herdr-notify");
+  } finally {
+    if (old === undefined) delete process.env.PATH; else process.env.PATH = old;
   }
 });
 
