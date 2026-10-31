@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, type Obj } from "../config.js";
 import { m } from "../i18n.js";
-import { asArgs, escalate, parseQuota, pick as choose } from "../pick.js";
+import { asArgs, escalate, parseQuota, parseWindows, pick as choose } from "../pick.js";
 import { expand, stateDir } from "../paths.js";
 import { collect, type Source } from "../quota.js";
 import { PICK_ROLES, type PickRole, vendorOf } from "../roles.js";
@@ -62,7 +62,8 @@ export async function pick(argv: string[]): Promise<number> {
   const recent = (existsSync(picksF) ? readFileSync(picksF, "utf8").split("\n").filter(Boolean).slice(-200) : [])
     .map((l) => { try { return JSON.parse(l); } catch { return {}; } })
     .filter((p) => p.role === role).slice(-window);
-  const res = choose({ cfg, role, level, implVendor, exclude, stats, quota: parseQuota(await quotaText(cfg)),
+  const qt = await quotaText(cfg);
+  const res = choose({ cfg, role, level, implVendor, implAgent, exclude, stats, quota: parseQuota(qt), windows: parseWindows(qt),
     blocks: new Set(Object.keys(loadBlocks())), recent });
   if (!res.best) {
     console.error(`orq pick: ${m("no candidate for ", "nenhum candidato para ")}${role}`

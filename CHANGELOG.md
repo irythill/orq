@@ -5,7 +5,21 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
+### Changed
+- `orq pick` limits: 95% of the week (`policy.quota_week`) and, on the 5h window, 90/85/80% for simple/medium/heavy
+  tasks (`policy.quota_5h`), for every agent. An agent is never picked to review or give an opinion on its own code,
+  whenever another declared agent exists for the role. `policy.quota_limit` caps the 5h pick limit and sets the `!` in `orq quota --line`.
+  **Migration:** `quota_limit` used to also cap the weekly window; it now only caps 5h, so configs that lowered it to
+  keep accounts away from the weekly limit should set `policy.quota_week` explicitly instead.
+
 ### Added
+- `orq handoff`: when a conductor's Claude account reaches `conductor.handoff_at` (default 85% of the 5h window, or the weekly limit), opens a new
+  herdr space on an account with room, moves its issues and children's notices there and tells the new
+  conductor to resume. Targets spread across accounts instead of always filling the lowest-usage one: it counts alive
+  conductors per account first and picks the one with the fewest (then the lowest usage), skipping any at
+  `conductor.max_per_account` (default 2). It saves a trimmed recent transcript from the old pane as untrusted context
+  for the new conductor; a failed read does not stop the move. It registers idle conductors
+  doing PR/merge work. `setup/orq-handoff.timer` runs it every 5 minutes.
 - `orq agent -R` enforces `policy.max_rounds`: it counts follow-ups per session (whatever the prefix is called) and
   refuses the next with exit 4; `-F` overrides with the user's OK. `/issue` fixes the `fix-<n>` / `review-<repo>-<n>`
   names and limits visual validation (screenshots) to one cheap attempt.

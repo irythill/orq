@@ -154,8 +154,13 @@ write   = false
 ok_exit = [0, 1]                         # exit 1 = findings, still a verdict
 # filter = "jq -r '...'"                 # optional: its output → [blocker]/[suggestion] lines
 
+[conductor]
+handoff_at = 85                          # % of the window → orq handoff moves the conductor to another account
+max_per_account = 2                      # an account already holding this many conductors is never a handoff target
+
 [policy]
-quota_limit = 90                         # ≥ 90% used → agent out
+quota_week = 95                          # ≥ 95% of the week → agent out
+quota_5h = { simple = 90, medium = 85, heavy = 80 }  # same for the 5h window, by task level
 [policy.weights]
 quality  = 0.40                          # did it deliver? (impl: approved on the first review)
 tokens   = 0.45                          # did it spend little?

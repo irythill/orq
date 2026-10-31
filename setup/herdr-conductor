@@ -34,4 +34,5 @@ fi
 
 herdr pane rename "$HERDR_PANE_ID" conductor >/dev/null 2>&1 || true
 cd "$WS"
+if command -v orq >/dev/null 2>&1; then env "${ENVV[@]}" orq claim -w "$WS" --register >/dev/null 2>&1 || true; fi
 exec env "${ENVV[@]}" claude ${RESUME:+--resume "$RESUME"} -n "conductor-$(basename "$WS")" ${MODEL:+--model "$MODEL"} --append-system-prompt "$(cat "$F")"

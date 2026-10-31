@@ -3,6 +3,7 @@
 //                       the network — a stale cache starts the board's background collection, like the board does.
 import { getPath, loadConfig } from "../config.js";
 import { m } from "../i18n.js";
+import { limitsFor } from "../pick.js";
 import { collect, type Source } from "../quota.js";
 import { type Quota, quota as cached } from "./board.js";
 import { load as loadBlocks } from "./block.js";
@@ -12,15 +13,19 @@ orq quota --line                      one line for a status bar, from the board'
 
 const pct = (p: string) => (/^\d+%$/.test(p) ? Number(p.slice(0, -1)) : undefined);
 
-/** "work 64 · home 93! · codex 81 · minimax ?": the tighter of the two windows per source; ! at or over the pick
- *  limit, ⊘ blocked (orq block), ? no data; sources with no window at all ("-" and "-") are left out. */
-export function quotaLine(lines: Quota[], limit: number, blocked: Set<string>, age?: number): string {
+/** "work 64 · home 93! · codex 81 · minimax ?": the tighter of the two windows per source; ! when either window is
+ *  at or over the medium-task pick limit for that window (5h: `policy.quota_5h.medium`/`quota_limit`, week:
+ *  `policy.quota_week`) — the same thresholds `orq pick` applies for an unspecified task level; ⊘ blocked
+ *  (orq block), ? no data; sources with no window at all ("-" and "-") are left out. */
+export function quotaLine(lines: Quota[], limit5: number, limitWeek: number, blocked: Set<string>, age?: number): string {
   const parts = lines.filter((q) => q.five !== "-" || q.week !== "-").map((q) => {
     if (blocked.has(q.name)) return `${q.name} ⊘`;
-    const ns = [pct(q.five), pct(q.week)].filter((n): n is number => n !== undefined);
+    const five = pct(q.five), week = pct(q.week);
+    const ns = [five, week].filter((n): n is number => n !== undefined);
     if (!ns.length) return `${q.name} ?`;
     const top = Math.max(...ns);
-    return `${q.name} ${top}${top >= limit ? "!" : ""}`;
+    const over = (five !== undefined && five >= limit5) || (week !== undefined && week >= limitWeek);
+    return `${q.name} ${top}${over ? "!" : ""}`;
   });
   if (!parts.length) return age === undefined ? m("quota: collecting...", "cota: coletando...") : "";
   const old = age !== undefined && age > 15 * 60_000 ? ` (${Math.round(age / 60_000)} min)` : "";
@@ -31,7 +36,8 @@ export async function quota(argv: string[]): Promise<number> {
   const { cfg } = loadConfig();
   if (argv[0] === "--line") {
     const q = cached(Date.now());
-    console.log(quotaLine(q.lines, Number(getPath(cfg, "policy.quota_limit") ?? 90), new Set(Object.keys(loadBlocks())), q.age));
+    const [limit5, limitWeek] = limitsFor((getPath(cfg, "policy") ?? {}) as Record<string, unknown>, "medium");
+    console.log(quotaLine(q.lines, limit5, limitWeek, new Set(Object.keys(loadBlocks())), q.age));
     return 0;
   }
   const sources = (getPath(cfg, "quota") ?? {}) as Record<string, Source>;

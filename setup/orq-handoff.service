@@ -1,0 +1,11 @@
+# `orq handoff`: moves a conductor low on quota to a new herdr space on another Claude account.
+# Set the workspace(s) in a drop-in:
+#   systemctl --user edit orq-handoff.service   →   [Service]  Environment=ORQ_HANDOFF_WORKSPACE=%h/Code/project
+[Unit]
+Description=orq handoff: move conductors low on quota to another account
+
+[Service]
+Type=oneshot
+TimeoutStartSec=10min
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env orq handoff -w ${ORQ_HANDOFF_WORKSPACE}
