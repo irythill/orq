@@ -170,13 +170,16 @@ function notifyDesktop(issue: string, repo: string, state: CiState): void {
  * mark carries the sha, so it is never redundant with the `prev` gate that skips a first sighting).
  * A non-herdr owner (a plain terminal conductor, same check as handoff.ts) has no pane herdr-notify can reach, so
  * the line goes through `hooks.notice` (console.log by default) instead — never silently dropped, and never a
- * crash from `herdr agent get` failing.
- * `hooks` lets tests swap the notifiers for ones with no side effects, and lets `orq ci --json` keep its stdout
- * to just the JSON (both default notifiers can otherwise write a stray line in front of it); production code
- * that isn't `--json` never passes it.
+ * crash from `herdr agent get` failing. The owner notify is always detached (background=true): collectCi() must
+ * never block on a conductor stuck in a dialog.
+ * `hooks` lets tests swap the notifiers for ones with no side effects, lets `orq ci --json` keep its stdout to
+ * just the JSON, and lets the board's detached collector (stdio: "ignore") persist `notice` to a file instead of
+ * the default console.log, which would otherwise vanish.
  */
 export function collectCi(ws: string, hooks: { desktop?: typeof notifyDesktop; owner?: typeof notify; notice?: (line: string) => void } = {}): CiEntry[] {
-  const desktop = hooks.desktop ?? notifyDesktop, toOwner = hooks.owner ?? notify, notice = hooks.notice ?? ((l: string) => console.log(l));
+  // Detached: collectCi() must never block on a conductor stuck in a dialog (herdr-notify waits up to 30 min).
+  const desktop = hooks.desktop ?? notifyDesktop, toOwner = hooks.owner ?? ((pane: string, line: string) => notify(pane, line, true)),
+    notice = hooks.notice ?? ((l: string) => console.log(l));
   const cache = loadCache(), mine: CiEntry[] = [];
   const now = Date.now(), worktrees = listWorktrees(ws);
   for (const { id, owner, kind } of claimedIssues(ws)) {

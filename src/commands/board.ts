@@ -7,7 +7,7 @@
 // Refreshes every --interval s on a TTY; otherwise (or with --once) prints once; --json for scripts.
 // Keys: q quits · r refreshes the quota · l language · t theme (ui.theme: gunmetal | chrome | lcd | terminal).
 import { execFile, spawn } from "node:child_process";
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync } from "node:fs";
 import { freemem, homedir, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -201,8 +201,11 @@ function ci(wss: string[], now: number): Snapshot["ci"] {
   return { entries, age };
 }
 
+// Detached (stdio: "ignore"): collectCi()'s default notice (console.log) would otherwise vanish into /dev/null,
+// so a non-herdr conductor's "CI failed" line is appended to a log file instead.
 function collectCiAll(wss: string[]): number {
-  for (const ws of wss) collectCi(ws);
+  const notice = (l: string) => appendFileSync(join(qdir(), "ci.log"), `${l}\n`);
+  for (const ws of wss) collectCi(ws, { notice });
   return 0;
 }
 
