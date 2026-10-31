@@ -186,6 +186,25 @@ if systemd_ok; then
   link "$ROOT/setup/orq-gc.timer" "$UNIT_DIR/orq-gc.timer"
   link "$ROOT/setup/orq-handoff.service" "$UNIT_DIR/orq-handoff.service"
   link "$ROOT/setup/orq-handoff.timer" "$UNIT_DIR/orq-handoff.timer"
+  # These units' own PATH already covers a plain install and mise (its shims dir is static); nvm has no such
+  # static dir, so when node resolves outside both, drop in the real one so the timers still find it.
+  node_bin=$(command -v node || true)
+  case "$node_bin" in
+    ""|/usr/*|/bin/*|*/.local/share/mise/shims/*) ;;
+    *)
+      node_dir=$(dirname "$node_bin")
+      say "  $(m "node found outside the services' default PATH ($node_dir, mise active-version PATH or nvm): writing a drop-in" "node fora do PATH padrão dos serviços ($node_dir, PATH de versão ativa do mise ou nvm): escrevendo um drop-in")"
+      for u in orq-gc.service orq-handoff.service; do
+        run mkdir -p "$UNIT_DIR/$u.d"
+        if [ "$DRY" = 1 ]; then echo "  [dry-run] write $UNIT_DIR/$u.d/orq-node.conf"
+        else
+          printf '[Service]\nEnvironment=PATH=%s:%%h/.local/bin:/usr/local/bin:/usr/bin:/bin:%%h/.local/share/mise/shims\n' "$node_dir" \
+            > "$UNIT_DIR/$u.d/orq-node.conf"
+          echo "  write   $UNIT_DIR/$u.d/orq-node.conf"
+        fi
+      done
+      ;;
+  esac
   run systemctl --user daemon-reload
   say "  $(m "to hand conductors off before an account runs out, set the workspace and enable it:" "para trocar o conductor de conta antes da cota acabar, defina o workspace e ative:")"
   say "    systemctl --user edit orq-handoff.service   # [Service] Environment=ORQ_HANDOFF_WORKSPACE=<workspace>"
