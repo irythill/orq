@@ -10,8 +10,10 @@
 //   false                left out of the list entirely
 //   "none"               no collector: never skipped for quota; use `orq block` when it runs out
 //   { command = "..." }  any command printing lines "<name> 5h=NN% week=NN% [note]"
-// Output line (read by orq-pick and the board): "<name> 5h=NN% week=NN% [note]".
+// Output line (read by orq-pick and the board): "<name> 5h=NN% week=NN% [reset5h=epoch] [resetweek=epoch] [note]".
 //   -  = the plan has no such window (not limiting);  ? = no data (expired login, collector failed).
+//   reset5h/resetweek (epoch seconds, optional) sit between the windows and the note: whichever window's reset time
+//   the collector could read, when it's known.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -24,12 +26,26 @@ import { stateDir } from "./paths.js";
 import { m } from "./i18n.js";
 
 export type Pct = number | "-" | "?";
-export interface QuotaLine { name: string; five: Pct; week: Pct; note?: string }
+export interface QuotaLine { name: string; five: Pct; week: Pct; reset5h?: number; resetWeek?: number; note?: string }
 export type Source = "builtin" | "none" | false | { command: string };
 
 const show = (p: Pct) => (typeof p === "number" ? `${Math.floor(p)}%` : p);
-export const format = (q: QuotaLine) => `${q.name} 5h=${show(q.five)} week=${show(q.week)}${q.note ? ` [${q.note}]` : ""}`;
+// reset5h/resetweek (epoch seconds) sit between the windows and the note: parseQuota/parseWindows only look at the
+// first three words, so old cached lines (no reset fields) and lines with them both parse the same way.
+export const format = (q: QuotaLine) => `${q.name} 5h=${show(q.five)} week=${show(q.week)}`
+  + (q.reset5h !== undefined ? ` reset5h=${q.reset5h}` : "") + (q.resetWeek !== undefined ? ` resetweek=${q.resetWeek}` : "")
+  + (q.note ? ` [${q.note}]` : "");
 const noData = (name: string, note: string): QuotaLine => ({ name, five: "?", week: "?", note });
+
+const WD: [string, string][] = [["Sun", "dom"], ["Mon", "seg"], ["Tue", "ter"], ["Wed", "qua"], ["Thu", "qui"], ["Fri", "sex"], ["Sat", "sáb"]];
+/** A reset epoch (seconds) as "14:30" when it falls today, else weekday + time. */
+export function humanReset(epochSec: number, now = Date.now()): string {
+  const d = new Date(epochSec * 1000), n = new Date(now);
+  const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (d.toDateString() === n.toDateString()) return hhmm;
+  const [en, pt] = WD[d.getDay()];
+  return `${m(en, pt)} ${hhmm}`;
+}
 
 // --- last good reading per account ----------------------------------------------------------------------------------
 // The usage endpoint rate-limits (HTTP 429) — often exactly when an account is busy or exhausted. Then the last good
@@ -39,11 +55,17 @@ interface Cached { pct: Pct; resetsAt?: string }
 const KEEP_MS = 5 * 3600_000;
 const cacheFile = (name: string) => join(stateDir(), "quota", `${name}.json`);
 
+const resetOf = (w: Cached): number | undefined => {
+  const t = w.resetsAt ? Date.parse(w.resetsAt) : NaN;
+  return Number.isNaN(t) ? undefined : Math.floor(t / 1000);
+};
+
 // `acct` identifies the login behind a reading (antigravity: one login per machine, swapped by the user): a cache
 // written under another login must never stand in for this one.
 function remember(name: string, five: Cached, week: Cached, acct?: string): QuotaLine {
   try { writeAtomic(cacheFile(name), JSON.stringify({ five, week, at: Date.now(), ...(acct ? { acct } : {}) })); } catch { /* best effort */ }
-  return { name, five: five.pct, week: week.pct };
+  const r5 = resetOf(five), rw = resetOf(week);
+  return { name, five: five.pct, week: week.pct, ...(r5 !== undefined ? { reset5h: r5 } : {}), ...(rw !== undefined ? { resetWeek: rw } : {}) };
 }
 
 /** The cached reading (its age in the note), window by window; nothing usable → the "no data" line. */
@@ -58,7 +80,10 @@ export function fromCache(name: string, why: string, now = Date.now(), acct?: st
     const five = still(c.five), week = still(c.week);
     if (five !== undefined && week !== undefined) {
       const min = Math.round((now - c.at) / 60_000);
-      return { name, five, week, note: `${why}; ` + m(`last reading, ${min} min ago`, `última leitura, há ${min} min`) };
+      const r5 = resetOf(c.five), rw = resetOf(c.week);
+      return { name, five, week, ...(r5 !== undefined && r5 * 1000 > now ? { reset5h: r5 } : {}),
+        ...(rw !== undefined && rw * 1000 > now ? { resetWeek: rw } : {}),
+        note: `${why}; ` + m(`last reading, ${min} min ago`, `última leitura, há ${min} min`) };
     }
   } catch { /* no cache */ }
   return noData(name, why);
@@ -122,7 +147,8 @@ interface Window { used_percent?: number; window_minutes?: number; resets_at?: n
 
 /** The last rate_limits in a Codex session (.jsonl): a window up to 6 h = 5h; the longest one over that (10080 = week,
  *  43200 on the free plan = 30 days) fills the week slot, with `span` (minutes) when it isn't a week; reset → 0. */
-export function codexFromSession(text: string, nowSec: number): { five: Pct; week: Pct; span?: number } | undefined {
+export function codexFromSession(text: string, nowSec: number):
+  { five: Pct; week: Pct; span?: number; reset5h?: number; resetWeek?: number } | undefined {
   let last: { primary?: Window; secondary?: Window } | undefined;
   for (const line of text.split("\n")) {
     if (!line.includes('"rate_limits"')) continue;
@@ -140,10 +166,13 @@ export function codexFromSession(text: string, nowSec: number): { five: Pct; wee
   if (!last) return undefined;
   const ws = [last.primary, last.secondary].filter((w): w is Window => !!w);
   const pct = (w?: Window): Pct => !w ? "-" : (w.resets_at ?? 0) < nowSec ? 0 : Math.floor(w.used_percent ?? 0);
+  const reset = (w?: Window): number | undefined => w?.resets_at !== undefined && w.resets_at >= nowSec ? w.resets_at : undefined;
   const short = ws.find((x) => (x.window_minutes ?? 0) <= 360);
   const long = ws.filter((x) => (x.window_minutes ?? 0) > 360).sort((a, b) => b.window_minutes! - a.window_minutes!)[0];
   const span = long && long.window_minutes !== 10080 ? long.window_minutes : undefined;
-  return { five: pct(short), week: pct(long), ...(span ? { span } : {}) };
+  const r5 = reset(short), rw = reset(long);
+  return { five: pct(short), week: pct(long), ...(span ? { span } : {}), ...(r5 !== undefined ? { reset5h: r5 } : {}),
+    ...(rw !== undefined ? { resetWeek: rw } : {}) };
 }
 
 export function codexQuota(): QuotaLine {
@@ -219,10 +248,16 @@ export function copilotFromUser(j: unknown): QuotaLine {
     quota_reset_date?: string };
   const p = u?.quota_snapshots?.premium_interactions;
   if (!p) return noData("copilot", m("no premium request data", "sem dados de requisições premium"));
+  // A bare date ("2026-11-01") would parse as UTC midnight: local midnight matches the date the note itself shows
+  // (same fix as parseLocal in commands/block.ts).
+  const at = u.quota_reset_date
+    ? Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(u.quota_reset_date) ? `${u.quota_reset_date}T00:00` : u.quota_reset_date)
+    : NaN;
+  const resetWeek = Number.isNaN(at) ? {} : { resetWeek: Math.floor(at / 1000) };
   if (p.unlimited) return { name: "copilot", five: "-", week: "-", note: m("unlimited", "ilimitado") };
   if (typeof p.percent_remaining !== "number") return noData("copilot", m("no premium request data", "sem dados de requisições premium"));
   const reset = u.quota_reset_date ? m(`, resets ${u.quota_reset_date}`, `, renova em ${u.quota_reset_date}`) : "";
-  return { name: "copilot", five: "-", week: Math.max(0, 100 - p.percent_remaining),
+  return { name: "copilot", five: "-", week: Math.max(0, 100 - p.percent_remaining), ...resetWeek,
     note: m("monthly premium requests", "requisições premium do mês") + reset };
 }
 
