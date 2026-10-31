@@ -22,6 +22,7 @@ import { processTableAsync, treeMem } from "../process.js";
 import { collect, type Source } from "../quota.js";
 import { collectRuns, type Row, rows } from "../stats.js";
 import { load as loadBlocks } from "./block.js";
+import { herdrNamesAsync, nameOf } from "./claim.js";
 import { setValue } from "./set.js";
 
 export const USAGE = "orq board [-w <workspace>]... [--once] [--json] [--interval S]   live board: queue, agents, conductors, quota";
@@ -36,7 +37,7 @@ export interface Agent {
   state: "running" | "died" | "ok" | "fail"; rc?: number; secs: number; mem?: number; cap?: number; activity?: string;
 }
 export interface QItem { label: string; pid: number; secs: number; mem?: number }
-export interface Conductor { id: string; kind: string; account: string; alive: boolean; issues: string[] }
+export interface Conductor { id: string; kind: string; account: string; alive: boolean; issues: string[]; name: string }
 export interface Quota { name: string; five: string; week: string; reset5h?: number; resetWeek?: number; note?: string }
 export interface Snapshot {
   at: string; mem: { used: number; total: number }; workspaces: string[];
@@ -128,14 +129,22 @@ async function conductors(wss: string[]): Promise<Conductor[]> {
       const t = read(join(O, id, "owner")).trim();
       if (!t) continue;
       const who = field(t, "pane"), at = Date.parse(field(t, "at")) || 0;
-      const c = by.get(who) ?? { id: who, kind: field(t, "kind") || "herdr", account: field(t, "account"), alive: false, issues: [], at };
+      const c = by.get(who) ?? { id: who, kind: field(t, "kind") || "herdr", account: field(t, "account"), alive: false, issues: [], at, name: nameOf(t) };
+      if (!c.name) c.name = nameOf(t);
       c.issues.push(id); c.at = Math.max(c.at, at);
       by.set(who, c);
     }
   }
   const ttl = Number(process.env.ORQ_CLAIM_TTL_H ?? 24) * 3600_000;
   const out = [...by.values()];
-  await Promise.all(out.map(async (c) => { c.alive = c.kind === "herdr" ? await herdrAlive(c.id) : Date.now() - c.at < ttl; }));
+  // One `herdr pane/workspace list` per refresh, shared by every conductor (not 2 spawns each), off the event
+  // loop (execFile, not spawnSync) so a slow/busy herdr daemon delays only this redraw, never key handling.
+  const names = out.some((c) => c.kind === "herdr") ? await herdrNamesAsync() : new Map<string, string>();
+  await Promise.all(out.map(async (c) => {
+    c.alive = c.kind === "herdr" ? await herdrAlive(c.id) : Date.now() - c.at < ttl;
+    // Alive herdr conductor: the workspace's current label (the user may have renamed it since the claim).
+    if (c.alive && c.kind === "herdr") c.name = names.get(c.id) || c.name;
+  }));
   return out.filter((c) => c.alive).map(({ at: _, ...c }) => ({ ...c, issues: c.issues.sort() }));
 }
 
@@ -302,7 +311,7 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
 
   section("MASTER", m("conductors", "conductors"));
   for (const k of s.conductors)
-    out.push(` ${c.ok}●${c.r} ${c.mut}${fit(k.id, 22)}${c.r} ${c.ink2}${fit(k.account || "-", 14)}${c.r} ${c.ink}${k.issues.join(" ")}${c.r}`);
+    out.push(` ${c.ok}●${c.r} ${c.mut}${fit(k.name || k.id, 22)}${c.r} ${c.ink2}${fit(k.account || "-", 14)}${c.r} ${c.ink}${k.issues.join(" ")}${c.r}`);
   if (!s.conductors.length) out.push(` ${c.mut}${m("no claimed issues", "nenhuma issue reivindicada")}${c.r}`);
 
   section("MONITOR", m("CI/CD", "CI/CD"));

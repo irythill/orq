@@ -15,6 +15,7 @@
 //   tui_resume = "acme --resume {session} --on-turn-end {hook_cmd} {prompt_text}"   # -T -R with the screen closed
 //   ok_exit  = [0, 1]                     # exit codes that still count as a verdict (a review tool exits 1 on findings)
 //   filter   = "jq -r '.findings[] | ...'" # shell line: gets the answer on stdin, its stdout becomes the answer
+//   no_review = "Nada para revisar"       # regex: a match in the answer means nothing was reviewed → status=fail
 //
 // Templates: words split on spaces ('...' or "..." keep spaces). {name} or {name:default}; a [group] is dropped when
 // any placeholder in it is empty, and repeated for a list placeholder ({gitroots}). Placeholders: prompt (file),
@@ -48,6 +49,7 @@ export interface AgentDef {
   turn_hook?: "claude" | "codex" | "opencode" | "text";
   ok_exit?: number[]; // exit codes that are a verdict, not a failure (default [0])
   filter?: string; // shell line run on the answer (stdin → stdout), e.g. a tool's JSON → [blocker]/[suggestion]
+  no_review?: string; // regex: a match in the answer means "nothing was reviewed" → status=fail, not a verdict
 }
 
 const NOMCP_CODEX = "-c mcp_servers.plane.enabled=false -c mcp_servers.shadcn.enabled=false";
