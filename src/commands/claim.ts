@@ -19,17 +19,28 @@ orq claim [-w <workspace>] --from <name> [-f]   a conductor's issues by its name
 const field = (text: string, k: string) => new RegExp(`${k}=(\\S+)`).exec(text)?.[1] ?? "";
 export const nameOf = (text: string) => / name=(.*)$/m.exec(text)?.[1].trim() ?? "";
 
+const herdrList = (args: string[]) => {
+  const r = spawnSync("herdr", args, { encoding: "utf8", timeout: 5_000 });
+  try { return JSON.parse(r.stdout).result; } catch { return undefined; }
+};
+
+/** pane_id -> the label of the herdr workspace holding it (the name the user sees), for every live pane. One
+ *  `pane list` + one `workspace list` call, however many panes are being looked up. */
+export function herdrNames(): Map<string, string> {
+  const panes = herdrList(["pane", "list"])?.panes as { pane_id: string; workspace_id?: string }[] | undefined;
+  const workspaces = herdrList(["workspace", "list"])?.workspaces as { workspace_id: string; label?: string }[] | undefined;
+  const labelOf = new Map((workspaces ?? []).map((w) => [w.workspace_id, w.label ?? ""]));
+  const out = new Map<string, string>();
+  for (const p of panes ?? []) {
+    const label = p.workspace_id ? labelOf.get(p.workspace_id) : undefined;
+    if (label) out.set(p.pane_id, label);
+  }
+  return out;
+}
+
 /** The label of the herdr workspace holding `pane` (the name the user sees), or "". */
 export function herdrName(pane: string): string {
-  const res = (args: string[]) => {
-    const r = spawnSync("herdr", args, { encoding: "utf8", timeout: 5_000 });
-    try { return JSON.parse(r.stdout).result; } catch { return undefined; }
-  };
-  const ws = (res(["pane", "list"])?.panes as { pane_id: string; workspace_id?: string }[] | undefined)
-    ?.find((p) => p.pane_id === pane)?.workspace_id;
-  if (!ws) return "";
-  return (res(["workspace", "list"])?.workspaces as { workspace_id: string; label?: string }[] | undefined)
-    ?.find((w) => w.workspace_id === ws)?.label ?? "";
+  return herdrNames().get(pane) ?? "";
 }
 
 /** A `herdr agent get` result → owner alive. A timeout (busy daemon, slow herdr) must not read as a dead owner:
@@ -90,8 +101,10 @@ export async function claim(argv: string[]): Promise<number> {
       const f = join(O, d, "owner");
       if (!existsSync(f)) return [];
       const t = readFileSync(f, "utf8").trim(), pane = field(t, "pane"), alive = aliveOwner(t);
-      const name = (alive && (field(t, "kind") || "herdr") === "herdr" ? herdrName(pane) : "") || nameOf(t);
-      return pane !== me && (name.toLowerCase().includes(q) || pane.toLowerCase().includes(q))
+      const live = alive && (field(t, "kind") || "herdr") === "herdr" ? herdrName(pane) : "";
+      const stored = nameOf(t), name = live || stored;
+      const names = [live, stored].filter(Boolean);
+      return pane !== me && (names.some((n) => n.toLowerCase().includes(q)) || pane.toLowerCase().includes(q))
         ? [{ id: d, f, pane, name, alive }] : [];
     });
     if (!hits.length) { console.log(m(`no issue owned by a conductor matching "${from}"`, `nenhuma issue de um conductor que bata com "${from}"`)); return 1; }

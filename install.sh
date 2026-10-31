@@ -92,6 +92,10 @@ if [ "$UNINSTALL" = 1 ]; then
   else
     unlink_ours "$unit"
   fi
+  for u in orq-gc.service orq-handoff.service; do
+    conf="$UNIT_DIR/$u.d/orq-node.conf"
+    [ -e "$conf" ] && { rm -f "$conf"; echo "  remove  $conf"; }
+  done
   say "${B}herdr plugin${N}"
   if command -v herdr >/dev/null && herdr plugin list 2>/dev/null | grep -q "$ROOT/herdr-plugin"; then
     say "  remove  plugin orq"; run herdr plugin unlink orq >/dev/null
@@ -190,7 +194,15 @@ if systemd_ok; then
   # static dir, so when node resolves outside both, drop in the real one so the timers still find it.
   node_bin=$(command -v node || true)
   case "$node_bin" in
-    ""|/usr/*|/bin/*|*/.local/share/mise/shims/*) ;;
+    ""|/usr/*|/bin/*|*/.local/share/mise/shims/*)
+      for u in orq-gc.service orq-handoff.service; do
+        conf="$UNIT_DIR/$u.d/orq-node.conf"
+        if [ -e "$conf" ]; then
+          if [ "$DRY" = 1 ]; then echo "  [dry-run] remove $conf"
+          else rm -f "$conf"; echo "  remove  $conf"; fi
+        fi
+      done
+      ;;
     *)
       node_dir=$(dirname "$node_bin")
       say "  $(m "node found outside the services' default PATH ($node_dir, mise active-version PATH or nvm): writing a drop-in" "node fora do PATH padrão dos serviços ($node_dir, PATH de versão ativa do mise ou nvm): escrevendo um drop-in")"
