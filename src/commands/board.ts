@@ -7,11 +7,12 @@
 // Refreshes every --interval s on a TTY; otherwise (or with --once) prints once; --json for scripts.
 // Keys: q quits · r refreshes the quota · l language · t theme (ui.theme: gunmetal | chrome | lcd | terminal).
 import { execFile, spawn } from "node:child_process";
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync } from "node:fs";
 import { freemem, homedir, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { colorMode } from "../banner.js";
+import { collectCi, collectedAt, type CiEntry, loadCache as loadCiCache } from "../ci.js";
 import { getPath, loadConfig } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m, setLang } from "../i18n.js";
@@ -40,7 +41,8 @@ export interface Quota { name: string; five: string; week: string; reset5h?: num
 export interface Snapshot {
   at: string; mem: { used: number; total: number }; workspaces: string[];
   queue: { holders: QItem[]; waiters: QItem[] }; agents: Agent[]; conductors: Conductor[];
-  quota: { lines: Quota[]; age?: number }; blocks: Record<string, { until: number; reason?: string }>; scoreboard: Row[];
+  quota: { lines: Quota[]; age?: number }; ci: { entries: CiEntry[]; age?: number };
+  blocks: Record<string, { until: number; reason?: string }>; scoreboard: Row[];
 }
 
 const read = (f: string) => { try { return readFileSync(f, "utf8"); } catch { return ""; } };
@@ -172,6 +174,41 @@ async function collectQuota(): Promise<number> {
   return 0;
 }
 
+// CI: the same never-block-the-board rule as quota — a stale cache starts `orq board --collect-ci -w <ws>...`
+// detached, reusing this same timer instead of a new one; the board itself only ever reads the cache file.
+function startCollectCi(wss: string[]): void {
+  const lock = join(qdir(), "ci.pid");
+  const pid = Number(read(lock));
+  if (pid > 0 && alive(pid)) return;
+  mkdirSync(qdir(), { recursive: true });
+  const c = spawn(process.execPath, [CLI, "board", ...wss.flatMap((w) => ["-w", w]), "--collect-ci"],
+    { detached: true, stdio: "ignore", windowsHide: true });
+  if (c.pid) writeAtomic(lock, String(c.pid));
+  c.unref();
+}
+
+// Age per requested workspace, not the shared cache file's mtime: ci.json holds every workspace's entries and
+// collectCi() rewrites the whole file on every run, so one workspace's collection would otherwise renew the
+// mtime for all of them and starve a second workspace that was never actually collected. collectedAt() reads a
+// per-workspace marker that collectCi() writes even when it finds zero entries (no claimed issue with a matching
+// worktree) — without it, a workspace with nothing to collect would look permanently stale (entries' own `at`
+// would never exist for it) and the board would relaunch the collector every redraw forever.
+function ci(wss: string[], now: number): Snapshot["ci"] {
+  const entries = loadCiCache().filter((e) => wss.includes(e.ws));
+  const ages = wss.map((w) => { const at = collectedAt(w); return at === undefined ? undefined : now - at; });
+  const age = ages.some((a) => a === undefined) ? undefined : Math.max(...(ages as number[]));
+  if (age === undefined || age > QTTL) startCollectCi(wss);
+  return { entries, age };
+}
+
+// Detached (stdio: "ignore"): collectCi()'s default notice (console.log) would otherwise vanish into /dev/null,
+// so a non-herdr conductor's "CI failed" line is appended to a log file instead.
+function collectCiAll(wss: string[]): number {
+  const notice = (l: string) => appendFileSync(join(qdir(), "ci.log"), `${l}\n`);
+  for (const ws of wss) collectCi(ws, { notice });
+  return 0;
+}
+
 let sb: { at: number; ws: string; rows: Row[] } | undefined;
 function scoreboard(ws: string, now: number): Row[] {
   if (!sb || sb.ws !== ws || now - sb.at > 60_000) {
@@ -189,7 +226,7 @@ export async function snapshot(wss: string[], table?: Table): Promise<Snapshot> 
   return {
     at: new Date(now).toISOString(), mem: { used: totalmem() - freemem(), total: totalmem() }, workspaces: wss,
     queue: { holders: q.holders.map(item), waiters: q.waiters.map(item) }, agents: agents(table, now),
-    conductors: await conductors(wss), quota: quota(now), blocks: loadBlocks(), scoreboard: scoreboard(wss[0], now),
+    conductors: await conductors(wss), quota: quota(now), ci: ci(wss, now), blocks: loadBlocks(), scoreboard: scoreboard(wss[0], now),
   };
 }
 
@@ -268,6 +305,12 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
     out.push(` ${c.ok}●${c.r} ${c.mut}${fit(k.id, 22)}${c.r} ${c.ink2}${fit(k.account || "-", 14)}${c.r} ${c.ink}${k.issues.join(" ")}${c.r}`);
   if (!s.conductors.length) out.push(` ${c.mut}${m("no claimed issues", "nenhuma issue reivindicada")}${c.r}`);
 
+  section("MONITOR", m("CI/CD", "CI/CD"));
+  const ciMark: Record<CiEntry["state"], string> = { passed: `${c.ok}✓`, failed: `${c.err}✗`, running: `${c.acc}●`, queued: `${c.mut}‖`, none: `${c.mut}·` };
+  for (const e of s.ci.entries)
+    out.push(` ${ciMark[e.state]}${c.r} ${c.ink}${fit(e.issue, 10)}${c.r} ${c.ink2}${fit(e.repo, 14)}${c.r} ${c.mut}${fit(e.branch, 24)}${c.r} ${c.ink}${(e.pr ? `#${e.pr}` : "-").padEnd(6)}${c.r} ${c.ink2}${e.state}${c.r}`);
+  if (!s.ci.entries.length) out.push(` ${c.mut}${s.ci.age === undefined ? m("collecting...", "coletando...") : m("no claimed issue has a PR", "nenhuma issue reivindicada tem PR")}${c.r}`);
+
   section("MIXER", m("quota", "cota"));
   const win = (v: string, tag: string) => {
     const n = /^(\d+)%?$/.exec(v)?.[1];
@@ -311,6 +354,7 @@ export async function board(argv: string[]): Promise<number> {
     else if (a === "--once") once = true; else if (a === "--json") json = true;
     else if (a === "--interval") interval = Math.max(1, Number(argv[++i]) || 3);
     else if (a === "--collect-quota") return collectQuota();
+    else if (a === "--collect-ci") return collectCiAll(wss);
     else if (a === "-h" || a === "--help") { console.log(USAGE); return 0; }
     else { console.error(USAGE); return 2; }
   }
