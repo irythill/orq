@@ -13,11 +13,17 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   keep accounts away from the weekly limit should set `policy.quota_week` explicitly instead.
 
 ### Added
+- Quota lines carry each window's reset time (epoch seconds) when the source gives one (Claude, Codex, Antigravity,
+  MiniMax, Copilot's monthly reset), as `reset5h=`/`resetweek=` fields that old cached lines (and anything without
+  them) still parse fine. `orq quota` shows them as a human time ("resets 14:30", or weekday + time past today).
+  `orq pick --explain` and its exit-3 message say when an agent out on quota comes back.
 - `orq handoff`: when a conductor's Claude account reaches `conductor.handoff_at` (default 85% of the 5h window, or the weekly limit), opens a new
   herdr space on an account with room, moves its issues and children's notices there and tells the new
   conductor to resume. Targets spread across accounts instead of always filling the lowest-usage one: it counts alive
   conductors per account first and picks the one with the fewest (then the lowest usage), skipping any at
-  `conductor.max_per_account` (default 2). It saves a trimmed recent transcript from the old pane as untrusted context
+  `conductor.max_per_account` (default 2). A move is skipped when every window over `conductor.handoff_at` (5h and/or
+  weekly) resets within `conductor.reset_grace_min` (default 15) minutes, unless the quota reading is unreadable. It saves a
+  trimmed recent transcript from the old pane as untrusted context
   for the new conductor; a failed read does not stop the move. It registers idle conductors
   doing PR/merge work. `setup/orq-handoff.timer` runs it every 5 minutes.
 - `orq agent -R` enforces `policy.max_rounds`: it counts follow-ups per session (whatever the prefix is called) and

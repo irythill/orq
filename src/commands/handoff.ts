@@ -58,6 +58,22 @@ export const tighter = (five: string, week: string, slack = 0) => {
   return ns.length ? Math.max(...ns) : undefined;
 };
 
+/** When the account is still over `at` on every window that triggered the move, and every one of those windows has a
+ *  future reset time, the latest of them (epoch seconds) — i.e. when the account is truly usable again. Skipping the
+ *  move only makes sense until then; a window over `at` with no reset time, or one already in the past, means the
+ *  move must go ahead rather than wait on a time that can't be promised. */
+export function allOverReset(five: string, week: string, reset5h: number | undefined, resetWeek: number | undefined,
+  at: number, slack = 0, now = Date.now()) {
+  const num = (p: string) => (/^\d+%$/.test(p) ? Number(p.slice(0, -1)) : undefined);
+  const a = num(five), b = num(week), bAdj = b === undefined ? undefined : b - slack;
+  const fiveOver = a !== undefined && a >= at, weekOver = bAdj !== undefined && bAdj >= at;
+  if (!fiveOver && !weekOver) return undefined;
+  if ((fiveOver && reset5h === undefined) || (weekOver && resetWeek === undefined)) return undefined;
+  const latest = Math.max(...[fiveOver ? reset5h : undefined, weekOver ? resetWeek : undefined]
+    .filter((t): t is number => t !== undefined));
+  return latest * 1000 > now ? latest : undefined;
+}
+
 /**
  * The account to move `from` to, or undefined when `from` is fine or there is nowhere to go ({to: undefined}).
  * Among accounts with room, prefers the one with the fewest alive conductors (`counts`), then the lowest usage;
@@ -185,6 +201,7 @@ export async function handoff(argv: string[]): Promise<number> {
     const wsAt = Number(getPath(wsCfg, "conductor.handoff_at") ?? 85);
     const wsModel = String(getPath(wsCfg, "conductor.model") ?? "opus");
     const maxPerAccount = Number(getPath(wsCfg, "conductor.max_per_account") ?? 2);
+    const graceMin = Number(getPath(wsCfg, "conductor.reset_grace_min") ?? 15);
     const slack = limitsFor((wsCfg.policy ?? {}) as Obj, "medium")[1] - wsAt;
     const lines = parseQuota((await collect((getPath(wsCfg, "quota") ?? {}) as Record<string, Source>, accs.map((a) => a.name))).join("\n"));
     const usage: Usage[] = accs.map((a) => { const q = lines.find((l) => l.name === a.name); return { name: a.name, top: q && tighter(q.five, q.week, slack) }; });
@@ -192,6 +209,13 @@ export async function handoff(argv: string[]): Promise<number> {
     const from = accs.find((a) => basename(a.dir) === c.dirBase)?.name;
     const p = from && plan(from, usage, wsAt, blocked, counts, maxPerAccount);
     if (!p) continue;
+    // Readable and resetting soon: the window that triggered the move clears itself; skip rather than move for nothing.
+    const q = lines.find((l) => l.name === from);
+    const resetAt = q && allOverReset(q.five, q.week, q.reset5h, q.resetWeek, wsAt, slack);
+    if (resetAt !== undefined && resetAt * 1000 - Date.now() <= graceMin * 60_000) {
+      if (dry) console.log(`${c.issues.join(" ")}: ${from} ${m("resets soon, no move", "renova em breve, sem mudança")}`);
+      continue;
+    }
     const dir = join(ws, ".orquestra"); mkdirSync(dir, { recursive: true });
     const mark = join(dir, `.handoff-${c.pane.replace(/\W/g, "_")}`);
     if (dry) { console.log(`${c.issues.join(" ")}: ${from} → ${p.to ?? m("no account with room", "nenhuma conta com folga")}`); continue; }
