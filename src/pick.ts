@@ -64,7 +64,8 @@ export function parseWindows(text: string): WindowMap {
   return out;
 }
 
-const EXPIRED = /login expired|login expirado|not logged in|sem login/i;
+// Both languages orq writes these notes in (the collectors' not-logged-in and expired-login texts).
+const EXPIRED = /login expired|login expirado|not logged in|no agy login|sem login/i;
 /** Window lengths in seconds, unless the quota line publishes another (span5h/spanweek, minutes). */
 const WINDOW_S = { five: 5 * 3600, week: 7 * 86400 };
 

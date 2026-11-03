@@ -104,7 +104,7 @@ max_per_account = 2        # an account already holding this many alive conducto
 [policy]
 quota_week = 95           # ≥ this of the week → candidate out
 quota_5h = { simple = 90, medium = 85, heavy = 80 }   # same for the 5h window, by task level
-pacing_penalty = 0.3       # score penalty if usage at the current pace would pass quota_limit (90) by the window's reset; 0 = off
+pacing_penalty = 0.3       # score penalty if usage at the current pace would pass the pick limit (5h: by task level, week: quota_week) by the reset; 0 = off
 # Per agent: `headroom = 25` in [agents.claude] keeps 25 points of its accounts for conductors (children stop at limit − 25).
 max_rounds  = 2
 review      = "other-vendor"   # other-vendor | any
