@@ -245,6 +245,15 @@ export async function antigravityQuota(): Promise<QuotaLine> {
 }
 
 // --- copilot --------------------------------------------------------------------------------------------------------
+/** The same moment one calendar month earlier; a day the month lacks (31 Mar → Feb) clamps to its last day. */
+export function monthBefore(d: Date): Date {
+  const out = new Date(d);
+  out.setDate(1);
+  out.setMonth(out.getMonth() - 1);
+  out.setDate(Math.min(d.getDate(), new Date(out.getFullYear(), out.getMonth() + 1, 0).getDate()));
+  return out;
+}
+
 /** Premium requests used this month, from the snapshot `gh api /copilot_internal/user` returns. No 5h window. */
 export function copilotFromUser(j: unknown): QuotaLine {
   const u = j as { quota_snapshots?: { premium_interactions?: { percent_remaining?: number; unlimited?: boolean } };
@@ -256,7 +265,7 @@ export function copilotFromUser(j: unknown): QuotaLine {
   const at = u.quota_reset_date
     ? Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(u.quota_reset_date) ? `${u.quota_reset_date}T00:00` : u.quota_reset_date)
     : NaN;
-  const prev = new Date(at); prev.setMonth(prev.getMonth() - 1);
+  const prev = Number.isNaN(at) ? new Date(NaN) : monthBefore(new Date(at));
   const resetWeek = Number.isNaN(at) ? {} : { resetWeek: Math.floor(at / 1000), spanWeek: Math.round((at - prev.getTime()) / 60_000) };
   if (p.unlimited) return { name: "copilot", five: "-", week: "-", note: m("unlimited", "ilimitado") };
   if (typeof p.percent_remaining !== "number") return noData("copilot", m("no premium request data", "sem dados de requisições premium"));

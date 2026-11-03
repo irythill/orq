@@ -163,7 +163,7 @@ reset_grace_min = 15                     # every window over the trigger resetti
 [policy]
 quota_week = 95                          # ≥ 95% of the week → agent out
 quota_5h = { simple = 90, medium = 85, heavy = 80 }  # same for the 5h window, by task level
-pacing_penalty = 0.3                     # score penalty when usage at the current pace would pass quota_limit by the reset (0 = off)
+pacing_penalty = 0.3                     # score penalty when usage at the current pace would pass the pick limit (5h by level, week: quota_week) by the reset (0 = off)
 # [agents.claude] headroom = 25          # points kept for conductors: children leave the account at limit − 25
 [policy.weights]
 quality  = 0.40                          # did it deliver? (impl: approved on the first review)

@@ -706,6 +706,18 @@ test("pick: pacing penalizes a projected overrun (soft); headroom and expired lo
   assert.equal(e.notes[0], "a: login expired: run `agy models`");
 });
 
+test("monthBefore: month-end dates clamp instead of overflowing", async () => {
+  const { monthBefore } = await import("./quota.js");
+  assert.equal(monthBefore(new Date(2026, 2, 31)).getTime(), new Date(2026, 1, 28).getTime());
+  assert.equal(monthBefore(new Date(2026, 0, 31)).getTime(), new Date(2025, 11, 31).getTime());
+  assert.equal(monthBefore(new Date(2026, 10, 1)).getTime(), new Date(2026, 9, 1).getTime());
+});
+
+test("pick: a missing agy login is reported as a login problem in English too", async () => {
+  const { parseWindows } = await import("./pick.js");
+  assert.ok(parseWindows("antigravity 5h=? week=? [no agy login in the keyring]").antigravity.expired);
+});
+
 test("suggestRoles: the maintainer's setup comes out of plain answers", async () => {
   const { suggestRoles } = await import("./suggest.js");
   const p = suggestRoles({ conductor: "claude", parallel: 4, ramGB: 14, agents: {
