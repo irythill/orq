@@ -5,6 +5,11 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Não lançado]
+### Corrigido
+- O `orq quota` não diz mais que o login do antigravity expirou após uma hora parado: o access token dura 1h e o agy
+  o renova só quando roda, então com refresh token no chaveiro a nota é "token ocioso (o agy renova no próximo uso)"
+  e o `orq pick` mantém a conta. "login expirado" fica para refresh token ausente ou 401 da API.
+
 ### Alterado
 - `install.sh --uninstall` agora também executa `systemctl --user disable --now` nos timers do orq.
 - Limites do `orq pick`: 95% da semana (`policy.quota_week`) e, na janela de 5h, 90/85/80% para tarefas

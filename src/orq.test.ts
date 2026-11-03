@@ -720,6 +720,12 @@ test("pick: pacing penalizes a projected overrun (soft); headroom and expired lo
   const e = pick({ ...base, cfg, role: "impl", quota: { a: 10, b: 10 }, windows: parseWindows(ex) });
   assert.deepEqual(e.cands.map((c) => c.agent), ["b"]);
   assert.equal(e.notes[0], "a: login expired: run `agy models`");
+  // idle token (expiry passed, refresh token kept): just a note, the account stays usable
+  for (const idle of ["token idle (agy refreshes on next run)", "token ocioso (o agy renova no próximo uso)"]) {
+    const id = `a 5h=10% week=10% [${idle}; last reading, 5 min ago]\nb 5h=10% week=10%`;
+    assert.equal(parseWindows(id).a.expired, undefined);
+    assert.deepEqual(pick({ ...base, cfg, role: "impl", quota: { a: 10, b: 10 }, windows: parseWindows(id) }).cands.map((c) => c.agent).sort(), ["a", "b"]);
+  }
 });
 
 test("monthBefore: month-end dates clamp instead of overflowing", async () => {
