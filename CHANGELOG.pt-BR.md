@@ -21,6 +21,10 @@ English: [CHANGELOG.md](CHANGELOG.md).
   linha, assim `<nome> 5h=NN% week=NN%` continua intacto e fácil de grepar.
 
 ### Adicionado
+- `orq rounds <ID> [-w <workspace>] [--json]`: métricas de watchdog por issue, sem LLM, a partir dos arquivos em
+  `.orquestra/<ID>/` (`fix-<n>.md`, `review-*.out.md`): rodadas de fix vs `policy.max_rounds`, tempo total e por
+  rodada, achados do revisor que voltam entre rodadas (mesmo arquivo + sobreposição de palavras) e um nível de alerta
+  (ok / warn / stop). O `orq board` mostra um marcador como `r2/2 ⚠` ao lado das issues de cada conductor.
 - Diretriz de escopo na skill `/issue` e no template do `CLAUDE.md` do workspace: dividir issues grandes em sub-issues ou
   lotes sequenciais (um PR cada) antes de despachar, e parar e dividir quando as revisões chegarem a `policy.max_rounds`.
 - Ritmo no `orq pick`: conta cujo uso, no ritmo até agora numa janela (usado ÷ fração decorrida; precisa do horário de

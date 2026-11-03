@@ -20,6 +20,7 @@ import { lang, USAGE as LANG } from "./commands/lang.js";
 import { lock, USAGE as LOCK } from "./commands/lock.js";
 import { pick, USAGE as PICK } from "./commands/pick.js";
 import { quota, USAGE as QUOTA } from "./commands/quota.js";
+import { rounds, USAGE as ROUNDS } from "./commands/rounds.js";
 import { run, USAGE as RUN } from "./commands/run.js";
 import { set, USAGE as SET } from "./commands/set.js";
 import { setup, USAGE as SETUP } from "./commands/setup.js";
@@ -27,7 +28,7 @@ import { stats, USAGE as STATS } from "./commands/stats.js";
 import { verify, USAGE as VERIFY } from "./commands/verify.js";
 import { wait, USAGE as WAIT } from "./commands/wait.js";
 
-const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = { config, set, board, lang, block, quota, pick, stats, setup, lock, claim, deps, gc, ci, handoff, run, agent, wait, instructions, verify, baseline,
+const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = { config, set, board, lang, block, quota, pick, stats, rounds, setup, lock, claim, deps, gc, ci, handoff, run, agent, wait, instructions, verify, baseline,
   completion: (a) => completion(a, Object.keys(COMMANDS)) };
 
 const usage = () => `orq <command> [args]
@@ -39,6 +40,7 @@ ${LANG}
 ${QUOTA}
 ${PICK}
 ${STATS}
+${ROUNDS}
 ${BOARD}
 ${LOCK}
 ${RUN}
