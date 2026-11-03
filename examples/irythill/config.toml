@@ -64,7 +64,7 @@ roles  = ["review"]
 run    = "corvus --markdown [-b {base}]"   # a review tool, not a chat: no prompt, no session; {base} = orq agent -b
 write  = false
 ok_exit = [0, 1]                 # exit 1 = findings, still a verdict
-no_review = "Nada para revisar"  # its "nothing to review" line is not a verdict: status=fail
+no_review = "Nada para revisar"  # matched on the answer's first line (or a short answer): not a verdict, status=fail
 
 [agents.copilot]
 vendor = "github"

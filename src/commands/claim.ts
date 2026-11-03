@@ -48,18 +48,25 @@ const herdrListAsync = (args: string[]) => new Promise<any>((res) =>
     try { res(JSON.parse(stdout).result); } catch { res(undefined); }
   }));
 
-/** Same as herdrNames(), but off the event loop (execFile, not spawnSync) — for a live, repeatedly-redrawn caller
- *  like the board, where blocking would freeze the whole UI while herdr answers. */
-export async function herdrNamesAsync(): Promise<Map<string, string>> {
-  const [panes, workspaces] = await Promise.all([
-    herdrListAsync(["pane", "list"]).then((r) => r?.panes as { pane_id: string; workspace_id?: string }[] | undefined),
-    herdrListAsync(["workspace", "list"]).then((r) => r?.workspaces as { workspace_id: string; label?: string }[] | undefined),
-  ]);
+/** Same as herdrNames() for the given pane ids, but off the event loop (execFile, not spawnSync) — for a live,
+ *  repeatedly-redrawn caller like the board, where blocking would freeze the whole UI while herdr answers. One
+ *  `workspace list` is enough when the ids carry their workspace ("w8K:p1" -> "w8K"); `pane list` is only the
+ *  fallback for ids that don't. */
+export async function herdrNamesAsync(ids: string[]): Promise<Map<string, string>> {
+  const workspaces = (await herdrListAsync(["workspace", "list"]))?.workspaces as { workspace_id: string; label?: string }[] | undefined;
   const labelOf = new Map((workspaces ?? []).map((w) => [w.workspace_id, w.label ?? ""]));
   const out = new Map<string, string>();
-  for (const p of panes ?? []) {
-    const label = p.workspace_id ? labelOf.get(p.workspace_id) : undefined;
-    if (label) out.set(p.pane_id, label);
+  const rest: string[] = [];
+  for (const id of ids) {
+    const label = labelOf.get(id.split(":")[0]);
+    if (label) out.set(id, label); else rest.push(id);
+  }
+  if (rest.length) {
+    const panes = (await herdrListAsync(["pane", "list"]))?.panes as { pane_id: string; workspace_id?: string }[] | undefined;
+    for (const p of panes ?? []) {
+      const label = p.workspace_id ? labelOf.get(p.workspace_id) : undefined;
+      if (label && rest.includes(p.pane_id)) out.set(p.pane_id, label);
+    }
   }
   return out;
 }
