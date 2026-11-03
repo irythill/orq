@@ -154,7 +154,7 @@ const qfile = () => join(qdir(), "quota.txt");
 
 export function parseQuota(text: string): Quota[] {
   return text.split(/\r?\n/).flatMap((l) => {
-    const r = /^(\S+) 5h=(\S+) week=(\S+)(?: reset5h=(\d+))?(?: resetweek=(\d+))?(?: \[(.*)\])?/.exec(l.trim());
+    const r = /^(\S+) 5h=(\S+) week=(\S+)(?: reset5h=(\d+))?(?: resetweek=(\d+))?(?: span5h=\d+)?(?: spanweek=\d+)?(?: \[(.*)\])?/.exec(l.trim());
     return r ? [{ name: r[1], five: r[2], week: r[3], ...(r[4] ? { reset5h: Number(r[4]) } : {}),
       ...(r[5] ? { resetWeek: Number(r[5]) } : {}), ...(r[6] ? { note: r[6] } : {}) }] : [];
   });
