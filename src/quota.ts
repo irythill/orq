@@ -220,6 +220,13 @@ export function agyToken(): { access?: string; expiry?: string; refresh: boolean
   } catch { return undefined; }
 }
 
+/** Why the stored agy token can't be used as is: idle (expired, agy renews it on its next run) or login expired (no refresh token). */
+export function agyNote(t: { expiry?: string; refresh: boolean }, now = Date.now()): string | undefined {
+  if (!t.expiry || Date.parse(t.expiry) >= now) return undefined;
+  return t.refresh ? m("token idle (agy refreshes on next run)", "token ocioso (o agy renova no próximo uso)")
+    : m("login expired: run `agy models`", "login expirado: rode `agy models`");
+}
+
 export async function antigravityQuota(): Promise<QuotaLine> {
   const name = "antigravity";
   const t = agyToken();
@@ -227,10 +234,8 @@ export async function antigravityQuota(): Promise<QuotaLine> {
   // Never refresh it here (that is agy's login). The access token lives 1h and agy renews it only when it runs, so a
   // passed expiry with a refresh token is just idle (a note, not an expired login); without one, "run agy once".
   const expired = m("login expired: run `agy models`", "login expirado: rode `agy models`");
-  if (t.expiry && Date.parse(t.expiry) < Date.now()) {
-    const idle = m("token idle (agy refreshes on next run)", "token ocioso (o agy renova no próximo uso)");
-    return fromCache(name, t.refresh ? idle : expired, undefined, t.acct);
-  }
+  const note = agyNote(t);
+  if (note) return fromCache(name, note, undefined, t.acct);
   try {
     const r = await fetch("https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", {
       method: "POST", body: "{}",
