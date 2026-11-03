@@ -1666,7 +1666,10 @@ test("rounds: repeats, slow rounds and the alert level", () => {
   assert.equal(repeats([f(0, "missing null check input"), f(1, "other thing entirely")]).length, 0);
   const rep = repeats([f(0, "missing null check input"), f(1, "missing null check input again")]);
   assert.deepEqual(rep[0].rounds, [0, 1]);
-  assert.deepEqual(slowRounds([{ round: 0, secs: 900 }, { round: 1, secs: 1000 }, { round: 2, secs: 4000 }]), [2]);
+  const t = (...s: number[]) => s.map((secs, round) => ({ round, secs }));
+  assert.deepEqual(slowRounds(t(900, 1000, 1100, 4000)), [3]);
+  assert.deepEqual(slowRounds(t(9000, 1000, 1100, 1200)), []); // a slow implementation is not a slow round
+  assert.deepEqual(slowRounds(t(900, 1000, 4000)), []); // only 2 fix rounds: nothing to compare
   assert.deepEqual(slowRounds([{ round: 0, secs: 10 }, { round: 1, secs: 100 }]), []);
   const base = { max: 2, perRound: [], secs: 0, findings: [] };
   assert.equal(metrics("X-1", { ...base, rounds: 1 }).level, "ok");
