@@ -16,6 +16,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
   linha, assim `<nome> 5h=NN% week=NN%` continua intacto e fácil de grepar.
 
 ### Adicionado
+- Diretriz de escopo na skill `/issue` e no template do `CLAUDE.md` do workspace: dividir issues grandes em sub-issues ou
+  lotes sequenciais (um PR cada) antes de despachar, e parar e dividir quando as revisões chegarem a `policy.max_rounds`.
 - Ritmo no `orq pick`: conta cujo uso, no ritmo até agora numa janela (usado ÷ fração decorrida; precisa do horário de
   renovação e de 10% da janela decorrida), projeta passar do limite de pick daquela janela na renovação perde
   `policy.pacing_penalty` (padrão 0.3, 0 = desligado) de score. Suave: os limites duros não mudam; papéis fixos não pontuam.
