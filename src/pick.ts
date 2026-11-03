@@ -136,19 +136,19 @@ export function pick(inp: PickInput): PickResult {
     const qn = (a.quota as string[] | undefined) ?? [];
     const headroom = Math.max(0, Number(a.headroom ?? 0));
     const limit5 = base5 - headroom, limitWeek = baseWeek - headroom;
-    const live = qn.filter((n) => !inp.blocks.has(n));
-    const fix = live.map((n) => inp.windows?.[n]?.expired).filter((x): x is string => Boolean(x));
-    if (live.length && fix.length === live.length) { out(name, fix[0]); continue; }
-    const accs = live.filter((n) => !inp.windows?.[n]?.expired).map((n) => [n, n in inp.quota ? inp.quota[n] : -1] as const);
+    const accs = qn.filter((n) => !inp.blocks.has(n)).map((n) => [n, n in inp.quota ? inp.quota[n] : -1] as const);
     if (qn.length && !accs.length) { out(name, m("all accounts blocked", "todas as contas bloqueadas")); continue; }
+    const fix = accs.map(([n]) => inp.windows?.[n]?.expired).filter((x): x is string => Boolean(x));
+    if (accs.length && fix.length === accs.length) { out(name, fix[0]); continue; }
     const under = ([n, v]: readonly [string, number | null]) => {
       const q = inp.windows?.[n];
-      return v !== null && (q?.five ?? (q ? -1 : v)) < limit5 && (q?.week ?? (q ? -1 : v)) < limitWeek;
+      return !q?.expired && v !== null && (q?.five ?? (q ? -1 : v)) < limit5 && (q?.week ?? (q ? -1 : v)) < limitWeek;
     };
     const usable = accs.filter(under);
     if (accs.length && !usable.length) {
       const detail = accs.map(([n, v]) => {
         const q = inp.windows?.[n], vn = v ?? -1;
+        if (q?.expired) return `${n}: ${q.expired}`;
         const five = q?.five ?? (q ? -1 : vn), week = q?.week ?? (q ? -1 : vn);
         const fiveOver = five >= limit5, weekOver = week >= limitWeek;
         // The account is usable again only once every over-limit window has reset: the latest of their reset times.
@@ -162,16 +162,22 @@ export function pick(inp: PickInput): PickResult {
         + (headroom ? ` (headroom ${headroom})` : "") + ` (${detail})`);
       continue;
     }
-    const acct = qn.length > 1 ? [...usable].sort((x, y) => x[1]! - y[1]!)[0][0] : undefined;
+    const paceOf = (n: string) => {
+      const q = inp.windows?.[n];
+      const p5 = projected(q?.five, q?.resetFive, (q?.spanFive ? q.spanFive * 60 : WINDOW_S.five), now);
+      const pw = projected(q?.week, q?.resetWeek, (q?.spanWeek ? q.spanWeek * 60 : WINDOW_S.week), now);
+      const paces = [p5, pw].filter((x): x is number => x !== undefined);
+      // Hot: past the same per-window limit the filter uses (5h by level, week), headroom included.
+      return { pace: paces.length ? Math.max(...paces) : undefined,
+        hot: (p5 !== undefined && p5 > limit5) || (pw !== undefined && pw > limitWeek) };
+    };
+    const ranked = usable.map(([n, v]) => ({ n, v: v!, ...paceOf(n) }))
+      .sort((x, y) => Number(x.hot) - Number(y.hot) || x.v - y.v);
+    const chosen = ranked[0];
+    const acct = qn.length > 1 ? chosen?.n : undefined;
     const statRole = role === "fix" || role === "worker" ? "impl" : role;
     const st = inp.stats.find((r) => r.role === statRole && r.agent === name && r.model === (mf[0].split("/").pop() || "default"));
-    const q = usable.length ? inp.windows?.[acct ?? usable[0][0]] : undefined;
-    const p5 = projected(q?.five, q?.resetFive, (q?.spanFive ? q.spanFive * 60 : WINDOW_S.five), now);
-    const pw = projected(q?.week, q?.resetWeek, (q?.spanWeek ? q.spanWeek * 60 : WINDOW_S.week), now);
-    const paces = [p5, pw].filter((x): x is number => x !== undefined);
-    // Hot: past the same per-window limit the filter uses (5h by level, week), headroom included.
-    const hot = (p5 !== undefined && p5 > limit5) || (pw !== undefined && pw > limitWeek);
-    pass.push({ agent: name, model: mf[0], effort: mf[1], acct, a, st, pace: paces.length ? Math.max(...paces) : undefined, hot });
+    pass.push({ agent: name, model: mf[0], effort: mf[1], acct, a, st, pace: chosen?.pace, hot: Boolean(chosen?.hot) });
     if (res.mode === "fixed") break; // the first that passes wins
   }
 
