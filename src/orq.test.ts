@@ -10,7 +10,7 @@ import { limitsFor, parseWindows, pick as pickAgent } from "./pick.js";
 import { parseLocal } from "./commands/block.js";
 import { handoffPrompt, owners, plan, tighter, trimHandoffContext } from "./commands/handoff.js";
 import { setTomlString } from "./toml-set.js";
-import { antigravityFromModels, copilotFromUser, fromCache, humanReset, minimaxFromRemains } from "./quota.js";
+import { agyNote, antigravityFromModels, copilotFromUser, fromCache, humanReset, minimaxFromRemains } from "./quota.js";
 
 process.env.ORQ_LANG = "en"; // messages checked below are the English ones
 const CLI = fileURLToPath(new URL("./cli.js", import.meta.url));
@@ -450,12 +450,12 @@ test("quota reset times: format adds them where parseQuota/parseWindows/board's 
   const withResets = format({ name: "work", five: 92, week: 40, reset5h: 1000, resetWeek: 2000, note: "x" });
   assert.equal(withResets, "work 5h=92% week=40% reset5h=1000 resetweek=2000 [x]");
   assert.deepEqual(parseQuota(withResets), { work: 92 });
-  assert.deepEqual(parseWindows(withResets).work, { five: 92, week: 40, resetFive: 1000, resetWeek: 2000 });
+  assert.deepEqual(parseWindows(withResets).work, { five: 92, week: 40, resetFive: 1000, resetWeek: 2000, note: "x" });
   assert.deepEqual(parseQuotaBoard(withResets), [{ name: "work", five: "92%", week: "40%", reset5h: 1000, resetWeek: 2000, note: "x" }]);
   // an old cached line, no reset fields at all: still parses the same way everywhere.
   const old = "work 5h=92% week=40% [x]";
   assert.deepEqual(parseQuota(old), { work: 92 });
-  assert.deepEqual(parseWindows(old).work, { five: 92, week: 40 });
+  assert.deepEqual(parseWindows(old).work, { five: 92, week: 40, note: "x" });
   assert.deepEqual(parseQuotaBoard(old), [{ name: "work", five: "92%", week: "40%", note: "x" }]);
   // only one window carries a reset time.
   const halfReset = format({ name: "codex", five: 50, week: 10, resetWeek: 3000 });
@@ -720,6 +720,29 @@ test("pick: pacing penalizes a projected overrun (soft); headroom and expired lo
   const e = pick({ ...base, cfg, role: "impl", quota: { a: 10, b: 10 }, windows: parseWindows(ex) });
   assert.deepEqual(e.cands.map((c) => c.agent), ["b"]);
   assert.equal(e.notes[0], "a: login expired: run `agy models`");
+  // idle token (expiry passed, refresh token kept): just a note, the account stays usable
+  for (const idle of ["token idle (agy refreshes on next run)", "token ocioso (o agy renova no próximo uso)"]) {
+    const id = `a 5h=10% week=10% [${idle}; last reading, 5 min ago]\nb 5h=10% week=10%`;
+    assert.equal(parseWindows(id).a.expired, undefined);
+    assert.deepEqual(pick({ ...base, cfg, role: "impl", quota: { a: 10, b: 10 }, windows: parseWindows(id) }).cands.map((c) => c.agent).sort(), ["a", "b"]);
+  }
+  // idle with no cached reading: rejected for lack of data, and the reason shows the idle note
+  const nd = pick({ ...base, cfg, role: "impl", quota: { a: null, b: 10 },
+    windows: parseWindows("a 5h=?% week=?% [token idle (agy refreshes on next run)]\nb 5h=10% week=10%") });
+  assert.deepEqual(nd.cands.map((c) => c.agent), ["b"]);
+  assert.equal(nd.notes[0], "a: no reading yet: run `agy models` once");
+});
+
+test("agyNote: idle vs expired vs fresh; the idle note reaches pick's rejection detail", () => {
+  const past = new Date(Date.now() - 3600_000).toISOString(), future = new Date(Date.now() + 3600_000).toISOString();
+  assert.match(agyNote({ expiry: past, refresh: true })!, /token idle|token ocioso/);
+  assert.match(agyNote({ expiry: past, refresh: false })!, /login expired|login expirado/);
+  assert.equal(agyNote({ expiry: future, refresh: true }), undefined);
+  assert.equal(agyNote({ refresh: false }), undefined);
+  assert.equal(agyNote({ expiry: "not a date", refresh: true }), undefined);
+  const w = parseWindows("a 5h=?% week=?% [token idle (agy refreshes on next run)]");
+  assert.equal(w.a.note, "token idle (agy refreshes on next run)");
+  assert.equal(w.a.expired, undefined);
 });
 
 test("monthBefore: month-end dates clamp instead of overflowing", async () => {
