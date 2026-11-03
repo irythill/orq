@@ -109,7 +109,7 @@ your config.
 | Flag | What it does |
 |---|---|
 | `--dry-run` | print what it would do, change nothing |
-| `--uninstall` | remove only the links it creates, and only those pointing into this repo (config and history stay) |
+| `--uninstall` | remove only the links it creates, and only those pointing into this repo, and disable the orq systemd user timers (`systemctl --user disable --now`); config and history stay |
 
 ## Configuration
 

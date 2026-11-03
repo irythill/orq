@@ -6,6 +6,7 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Changed
+- `install.sh --uninstall` now also runs `systemctl --user disable --now` on the orq timers.
 - `orq pick` limits: 95% of the week (`policy.quota_week`) and, on the 5h window, 90/85/80% for simple/medium/heavy
   tasks (`policy.quota_5h`), for every agent. An agent is never picked to review or give an opinion on its own code,
   whenever another declared agent exists for the role. `policy.quota_limit` caps the 5h pick limit and sets the `!` in `orq quota --line`.
