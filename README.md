@@ -109,7 +109,7 @@ your config.
 | Flag | What it does |
 |---|---|
 | `--dry-run` | print what it would do, change nothing |
-| `--uninstall` | remove only the links it creates, and only those pointing into this repo (config and history stay) |
+| `--uninstall` | remove only the links it creates, and only those pointing into this repo, and disable the orq systemd user timers (`systemctl --user disable --now`); config and history stay |
 
 ## Configuration
 
@@ -152,7 +152,7 @@ roles   = ["review"]
 run     = "revtool --markdown -b {base}"  # {base} = orq agent -b; it reads the diff itself
 write   = false
 ok_exit = [0, 1]                         # exit 1 = findings, still a verdict
-no_review = "Nothing to review"          # its "nothing to review" line is not a verdict: status=fail
+no_review = "Nothing to review"          # matched on the answer's first line (or a short answer): not a verdict, status=fail
 # filter = "jq -r '...'"                 # optional: its output → [blocker]/[suggestion] lines
 
 [conductor]

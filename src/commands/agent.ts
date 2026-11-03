@@ -263,8 +263,12 @@ function lastClaudeText(transcript: string): string {
 /** agents.<name>.no_review tested against the start of the answer (first line) or, for a short answer, the whole
  *  thing — not anywhere in a long one, so a review that quotes the phrase while discussing real code doesn't match.
  *  An invalid pattern is logged and ignored rather than killing the runner. */
-function noReviewMatch(pattern: string | undefined, answer: string): boolean {
+function noReviewMatch(pattern: unknown, answer: string): boolean {
   if (pattern === undefined) return false;
+  if (typeof pattern !== "string" || !pattern.trim()) {
+    console.error(`orq agent: ignoring invalid agents.<name>.no_review ${JSON.stringify(pattern)}: expected a non-empty regex string`);
+    return false;
+  }
   let re: RegExp;
   try { re = new RegExp(pattern, "m"); } catch (e) {
     console.error(`orq agent: ignoring invalid agents.<name>.no_review pattern ${JSON.stringify(pattern)}: ${(e as Error).message}`);

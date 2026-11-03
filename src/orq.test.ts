@@ -751,16 +751,16 @@ test("claim -l / --from: the herdr workspace's current label wins over the store
   writeFileSync(join(bin, "herdr"), `#!/bin/sh
 case "$1 $2" in
   "agent get") exit 0 ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"p1","workspace_id":"w1"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1","workspace_id":"w1"}]}}' ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"emp: orq-cms"}]}}' ;;
   *) exit 0 ;;
 esac
 `, { mode: 0o755 });
   const testEnv = { ...env, PATH: `${bin}:${(env as Record<string, string | undefined>).PATH}` };
   mkdirSync(join(root, ".orquestra", "X-1"), { recursive: true });
-  writeFileSync(join(root, ".orquestra", "X-1", "owner"), `pane=p1 kind=herdr account=work at=${new Date().toISOString()} name=stored-name\n`);
+  writeFileSync(join(root, ".orquestra", "X-1", "owner"), `pane=w1:p1 kind=herdr account=work at=${new Date().toISOString()} name=stored-name\n`);
   const list = spawnSync(process.execPath, [CLI, "claim", "-w", root, "-l"], { env: testEnv, encoding: "utf8" });
-  assert.match(list.stdout, /X-1 "emp: orq-cms" pane=p1/);
+  assert.match(list.stdout, /X-1 "emp: orq-cms" pane=w1:p1/);
   const from = spawnSync(process.execPath, [CLI, "claim", "-w", root, "--from", "orq-cms"], { env: testEnv, encoding: "utf8" });
   assert.equal(from.status, 0, from.stdout + from.stderr);
   assert.match(from.stdout, /X-1 "emp: orq-cms" \(alive\)/);
@@ -933,6 +933,15 @@ test("agent: no_review match on the answer ends status=fail, even with an ok exi
   const findings = go();
   assert.equal(findings.status, 0, findings.stdout + findings.stderr);
   assert.match(findings.stdout, /status=ok rc=0/);
+  // An empty or non-string no_review is ignored (with a warning), not a match on everything.
+  say("1. [blocker] main true"); // old code turned `true` into /true/ and would fail this
+  for (const bad of ["", true]) {
+    writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { revtool: {
+      run: `'${process.execPath}' '${tool}' {base}`, write: false, no_review: bad, mem_max: "off" } } }));
+    const ignored = go();
+    assert.equal(ignored.status, 0, ignored.stdout + ignored.stderr);
+    assert.match(ignored.stdout, /status=ok rc=0/);
+  }
 });
 
 test("agent --turn: each agent's end-of-turn payload becomes .out.md, .id and .done (mode=tui)", () => {
@@ -1087,19 +1096,29 @@ test("board: a conductor shows the herdr workspace's live label, falling back to
   const { root, env } = sandbox(), ws = join(root, "ws"), bin = join(root, "bin");
   mkdirSync(bin, { recursive: true }); mkdirSync(join(ws, ".orquestra", "X-1"), { recursive: true });
   writeFileSync(join(bin, "herdr"), `#!/bin/sh
+echo "$1 $2" >> "$(dirname "$0")/calls"
 case "$1 $2" in
   "agent get") exit 0 ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"p1","workspace_id":"w1"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1","workspace_id":"w1"}]}}' ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"emp: orq-cms"}]}}' ;;
   *) exit 0 ;;
 esac
 `, { mode: 0o755 });
-  writeFileSync(join(ws, ".orquestra", "X-1", "owner"), `pane=p1 kind=herdr account=work at=${new Date().toISOString()} name=stored-name\n`);
+  writeFileSync(join(ws, ".orquestra", "X-1", "owner"), `pane=w1:p1 kind=herdr account=work at=${new Date().toISOString()} name=stored-name\n`);
   const testEnv = { ...env, PATH: `${bin}:${(env as Record<string, string | undefined>).PATH}` };
   const r = spawnSync(process.execPath, [CLI, "board", "--json", "-w", ws], { env: testEnv, encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   const j = JSON.parse(r.stdout);
   assert.equal(j.conductors[0].name, "emp: orq-cms");
+  // Real pane ids are "<workspace_id>:<n>": one `workspace list` resolves the label, no `pane list` needed.
+  const calls = readFileSync(join(bin, "calls"), "utf8").split("\n");
+  assert.equal(calls.filter((c) => c === "workspace list").length, 1, calls.join("|"));
+  assert.equal(calls.filter((c) => c === "pane list").length, 0, calls.join("|"));
+  // Unprefixed pane ids fall back to `pane list` for the workspace.
+  writeFileSync(join(ws, ".orquestra", "X-1", "owner"), `pane=p1 kind=herdr account=work at=${new Date().toISOString()} name=stored-name\n`);
+  writeFileSync(join(bin, "herdr"), readFileSync(join(bin, "herdr"), "utf8").replace('"pane_id":"w1:p1"', '"pane_id":"p1"'), { mode: 0o755 });
+  const fb = spawnSync(process.execPath, [CLI, "board", "--json", "-w", ws], { env: testEnv, encoding: "utf8" });
+  assert.equal(JSON.parse(fb.stdout).conductors[0].name, "emp: orq-cms", fb.stderr);
   // A dead herdr pane: the stored name, never a live lookup.
   writeFileSync(join(bin, "herdr"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
   const d = spawnSync(process.execPath, [CLI, "board", "--json", "-w", ws], { env: testEnv, encoding: "utf8" });
@@ -1513,7 +1532,7 @@ test("orq pick review|opinion: more than one declared agent and no --impl-agent/
   for (const role of ["review", "opinion"]) {
     const bare = go(role);
     assert.equal(bare.status, 2, bare.stdout + bare.stderr);
-    assert.match(bare.stderr, /more than one agent declared for/);
+    assert.match(bare.stderr, /more than one agent eligible for .*before quota checks/);
     // --no-record/--explain do not change this.
     assert.equal(go(role, "--no-record").status, 2);
     assert.equal(go(role, "--explain").status, 2);
@@ -1525,4 +1544,11 @@ test("orq pick review|opinion: more than one declared agent and no --impl-agent/
     x: { vendor: "a", roles: ["review"], models: { review: { default: "mx" } } },
   } }));
   assert.equal(go("review").status, 0);
+  // Two declared but only one eligible (the other has no model for review): no guard either.
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: {
+    x: { vendor: "a", roles: ["review"], models: { review: { default: "mx" } } },
+    y: { vendor: "b", roles: ["review"], models: { impl: { default: "my" } } },
+  } }));
+  assert.equal(go("review").status, 0);
+  assert.equal(go("review", "--exclude-agent", "y").status, 0);
 });

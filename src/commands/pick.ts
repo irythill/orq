@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, type Obj } from "../config.js";
 import { m } from "../i18n.js";
-import { asArgs, escalate, parseQuota, parseWindows, pick as choose } from "../pick.js";
+import { asArgs, escalate, parseQuota, modelFor, parseWindows, pick as choose } from "../pick.js";
 import { expand, stateDir } from "../paths.js";
 import { collect, type Source } from "../quota.js";
 import { PICK_ROLES, type PickRole, resolveRole, vendorOf } from "../roles.js";
@@ -60,10 +60,13 @@ export async function pick(argv: string[]): Promise<number> {
   // Fixed roles ([roles.x] agent = ... fallback = [...]) are already deterministic — no guard needed there.
   if ((role === "review" || role === "opinion") && !implAgent && !implVendor) {
     const r = resolveRole(cfg, role);
-    const declared = r.mode === "auto" ? r.pool.filter((n) => agents[n]) : [];
+    // Eligible, not just declared: an agent that is excluded, blocked or has no model for this role/level can't be picked.
+    const blocked = loadBlocks();
+    const declared = r.mode === "auto"
+      ? r.pool.filter((n) => agents[n] && !exclude.has(n) && !(n in blocked) && modelFor(agents[n], role, level)) : [];
     if (declared.length > 1) {
-      console.error(`orq pick: ${m(`more than one agent declared for ${role} (${declared.join(", ")}): pass --impl-agent or --impl-vendor`,
-        `mais de um agente declarado para ${role} (${declared.join(", ")}): informe --impl-agent ou --impl-vendor`)}`);
+      console.error(`orq pick: ${m(`more than one agent eligible for ${role} (${declared.join(", ")}) before quota checks: pass --impl-agent or --impl-vendor`,
+        `mais de um agente elegível para ${role} (${declared.join(", ")}) antes da checagem de quota: informe --impl-agent ou --impl-vendor`)}`);
       return 2;
     }
   }

@@ -61,7 +61,7 @@ orq pick impl --level simple|medium|heavy                          # → e.g. -a
 orq pick review --level <level> --impl-agent <agent that implemented>   # → another vendor, e.g. -a opencode -m ...
 orq pick opinion --impl-agent <agent that implemented>             # second opinion (e.g. Copilot), see step 5
 ```
-More than one agent declared for `review`/`opinion` and neither `--impl-agent` nor `--impl-vendor` given → exit 2:
+More than one agent eligible for `review`/`opinion` (declared, not excluded or blocked, with a model for the role; quota is not considered) and neither `--impl-agent` nor `--impl-vendor` given → exit 2:
 always pass one of them (`--no-record`/`--explain` do not change this).
 The output goes straight into `herdr-agent` (`herdr-agent $(orq pick ...) -g ... -t ... -d ... -o ... -- prompt.md`).
 - Exit 3 = no candidate (quota exhausted, no agent with that role): **stop and ask the user**.
@@ -175,7 +175,7 @@ round reuses whoever gave the verdict. An agent that failed twice in a row with 
 `ok_exit`/`filter` in the config): same command; it ignores the prompt and the attachments and reviews the branch
 against `{base}` itself. Read its answer like any other: `status=ok` with `rc≠0` is a verdict with findings, not a
 failure. Its high-severity items are the blockers, still under the step 6 rule (`file:line` + concrete failure).
-If the tool's answer says nothing was reviewed (e.g. Revtool's "Nothing to review"), `agents.<name>.no_review` (a
+If the tool's answer opens with (or, when short, consists of) a statement that nothing was reviewed (e.g. Revtool's "Nothing to review"), `agents.<name>.no_review` (a
 regex) makes `orq agent` end that run `status=fail`: `orq pick`'s fallback and the conductor treat it as not run,
 same as an empty answer.
 **Second opinion** (`orq pick opinion`, read only, same attachments): only on **heavy** issues or when reviewer and

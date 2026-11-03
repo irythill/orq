@@ -6,6 +6,7 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Changed
+- `install.sh --uninstall` now also runs `systemctl --user disable --now` on the orq timers.
 - `orq pick` limits: 95% of the week (`policy.quota_week`) and, on the 5h window, 90/85/80% for simple/medium/heavy
   tasks (`policy.quota_5h`), for every agent. An agent is never picked to review or give an opinion on its own code,
   whenever another declared agent exists for the role. `policy.quota_limit` caps the 5h pick limit and sets the `!` in `orq quota --line`.
@@ -42,10 +43,10 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   uses it when the user names another conductor, and resumes from `.orquestra/<ID>/` instead of starting over.
   `orq claim -l`/`--from` and `orq board` now show the herdr workspace's **current** label while the pane is alive
   (it may have been renamed since the claim), falling back to the name stored at claim time.
-- `orq pick review|opinion` exits 2 with a clear message when more than one agent is declared for the role and
+- `orq pick review|opinion` exits 2 with a clear message when more than one agent is eligible for the role (declared, not excluded or blocked, with a model for it; before quota checks) and
   neither `--impl-agent` nor `--impl-vendor` is given (`--no-record`/`--explain` do not change this): nothing to
   filter the reviewer down by otherwise.
-- `agents.<name>.no_review`: a regex that, when it matches a review tool's answer (e.g. Revtool's "Nada para
+- `agents.<name>.no_review`: a regex that, when it matches the first line of a review tool's answer (or all of a short one) (e.g. Revtool's "Nada para
   revisar"), ends that `orq agent` run `status=fail` instead of `ok` — "nothing was reviewed" is not a verdict, so
   `orq pick`'s fallback and the conductor treat it as not run.
 - `install.sh`: `orq-gc.service`/`orq-handoff.service` now find `node` under mise and nvm. Their `PATH` always
