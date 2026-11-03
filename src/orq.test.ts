@@ -933,6 +933,14 @@ test("agent: no_review match on the answer ends status=fail, even with an ok exi
   const findings = go();
   assert.equal(findings.status, 0, findings.stdout + findings.stderr);
   assert.match(findings.stdout, /status=ok rc=0/);
+  // An empty or non-string no_review is ignored (with a warning), not a match on everything.
+  for (const bad of ["", true]) {
+    writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { corvus: {
+      run: `'${process.execPath}' '${tool}' {base}`, write: false, no_review: bad, mem_max: "off" } } }));
+    const ignored = go();
+    assert.equal(ignored.status, 0, ignored.stdout + ignored.stderr);
+    assert.match(ignored.stdout, /status=ok rc=0/);
+  }
 });
 
 test("agent --turn: each agent's end-of-turn payload becomes .out.md, .id and .done (mode=tui)", () => {
@@ -1513,7 +1521,7 @@ test("orq pick review|opinion: more than one declared agent and no --impl-agent/
   for (const role of ["review", "opinion"]) {
     const bare = go(role);
     assert.equal(bare.status, 2, bare.stdout + bare.stderr);
-    assert.match(bare.stderr, /more than one agent declared for/);
+    assert.match(bare.stderr, /more than one agent eligible for/);
     // --no-record/--explain do not change this.
     assert.equal(go(role, "--no-record").status, 2);
     assert.equal(go(role, "--explain").status, 2);
@@ -1525,4 +1533,11 @@ test("orq pick review|opinion: more than one declared agent and no --impl-agent/
     x: { vendor: "a", roles: ["review"], models: { review: { default: "mx" } } },
   } }));
   assert.equal(go("review").status, 0);
+  // Two declared but only one eligible (the other has no model for review): no guard either.
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: {
+    x: { vendor: "a", roles: ["review"], models: { review: { default: "mx" } } },
+    y: { vendor: "b", roles: ["review"], models: { impl: { default: "my" } } },
+  } }));
+  assert.equal(go("review").status, 0);
+  assert.equal(go("review", "--exclude-agent", "y").status, 0);
 });

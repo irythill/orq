@@ -152,7 +152,7 @@ roles   = ["review"]
 run     = "corvus --markdown -b {base}"  # {base} = orq agent -b; it reads the diff itself
 write   = false
 ok_exit = [0, 1]                         # exit 1 = findings, still a verdict
-no_review = "Nada para revisar"          # its "nothing to review" line is not a verdict: status=fail
+no_review = "Nada para revisar"          # matched on the answer's first line (or a short answer): not a verdict, status=fail
 # filter = "jq -r '...'"                 # optional: its output → [blocker]/[suggestion] lines
 
 [conductor]
