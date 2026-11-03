@@ -45,7 +45,7 @@ English: [CHANGELOG.md](CHANGELOG.md).
   O `orq claim -l`/`--from` e o `orq board` agora mostram o label **atual** do workspace no herdr enquanto o pane
   está vivo (ele pode ter sido renomeado depois do claim), caindo para o nome salvo na hora do claim.
 - O `orq pick review|opinion` sai com exit 2 e uma mensagem clara quando mais de um agente está elegível para o
-  papel (declarado, não excluído nem bloqueado, com modelo para ele) e nem `--impl-agent` nem `--impl-vendor` foram passados (`--no-record`/`--explain` não mudam isso): não há
+  papel (declarado, não excluído nem bloqueado, com modelo para ele; antes da checagem de quota) e nem `--impl-agent` nem `--impl-vendor` foram passados (`--no-record`/`--explain` não mudam isso): não há
   como filtrar o revisor sem essa informação.
 - `agents.<nome>.no_review`: uma regex que, ao bater com a resposta de uma ferramenta de revisão (ex.: "Nada para
   revisar" do Revtool), faz aquela execução do `orq agent` terminar `status=fail` em vez de `ok` — "nada foi

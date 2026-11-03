@@ -43,7 +43,7 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   uses it when the user names another conductor, and resumes from `.orquestra/<ID>/` instead of starting over.
   `orq claim -l`/`--from` and `orq board` now show the herdr workspace's **current** label while the pane is alive
   (it may have been renamed since the claim), falling back to the name stored at claim time.
-- `orq pick review|opinion` exits 2 with a clear message when more than one agent is eligible for the role (declared, not excluded or blocked, with a model for it) and
+- `orq pick review|opinion` exits 2 with a clear message when more than one agent is eligible for the role (declared, not excluded or blocked, with a model for it; before quota checks) and
   neither `--impl-agent` nor `--impl-vendor` is given (`--no-record`/`--explain` do not change this): nothing to
   filter the reviewer down by otherwise.
 - `agents.<name>.no_review`: a regex that, when it matches the first line of a review tool's answer (or all of a short one) (e.g. Revtool's "Nada para
