@@ -41,6 +41,19 @@ English: [CHANGELOG.md](CHANGELOG.md).
 - O `orq claim` grava o nome de cada conductor (o label do workspace no herdr, senão `ORQ_CONDUCTOR_ID`), mostra no
   `-l`, e `orq claim --from <nome> [-f]` encontra (e assume) as issues de um conductor por qualquer parte desse nome. O
   `/issue` usa isso quando o usuário cita outro conductor e retoma a partir de `.orquestra/<ID>/` em vez de recomeçar.
+  O `orq claim -l`/`--from` e o `orq board` agora mostram o label **atual** do workspace no herdr enquanto o pane
+  está vivo (ele pode ter sido renomeado depois do claim), caindo para o nome salvo na hora do claim.
+- O `orq pick review|opinion` sai com exit 2 e uma mensagem clara quando mais de um agente está declarado para o
+  papel e nem `--impl-agent` nem `--impl-vendor` foram passados (`--no-record`/`--explain` não mudam isso): não há
+  como filtrar o revisor sem essa informação.
+- `agents.<nome>.no_review`: uma regex que, ao bater com a resposta de uma ferramenta de revisão (ex.: "Nada para
+  revisar" do Corvus), faz aquela execução do `orq agent` terminar `status=fail` em vez de `ok` — "nada foi
+  revisado" não é um veredito, então o fallback do `orq pick` e o conductor tratam como se não tivesse rodado.
+- `install.sh`: `orq-gc.service`/`orq-handoff.service` agora encontram o `node` do mise e do nvm. O `PATH` das
+  units já inclui o diretório de shims do mise (estável entre versões); quando o `node` resolve para um diretório
+  específico de versão (o PATH do `mise activate`, ou o nvm, que não tem um diretório de shims fixo) o instalador
+  escreve um drop-in com esse diretório real. Uma instalação simples, por pacote do sistema, não é afetada em
+  nenhum dos dois casos.
 
 ### Corrigido
 - Trocar a conta de um agente não mostra mais a cota ou o bloqueio da antiga. O cache de "última leitura" da cota

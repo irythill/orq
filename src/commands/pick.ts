@@ -10,7 +10,7 @@ import { m } from "../i18n.js";
 import { asArgs, escalate, parseQuota, parseWindows, pick as choose } from "../pick.js";
 import { expand, stateDir } from "../paths.js";
 import { collect, type Source } from "../quota.js";
-import { PICK_ROLES, type PickRole, vendorOf } from "../roles.js";
+import { PICK_ROLES, type PickRole, resolveRole, vendorOf } from "../roles.js";
 import { collectRuns, rows } from "../stats.js";
 import { load as loadBlocks } from "./block.js";
 
@@ -55,6 +55,18 @@ export async function pick(argv: string[]): Promise<number> {
   const { cfg } = loadConfig(ws);
   const agents = (cfg.agents ?? {}) as Record<string, Obj>;
   if (implAgent && !implVendor) implVendor = vendorOf(implAgent, agents[implAgent]);
+  // review/opinion with an auto pool of more than one declared agent: --impl-agent/--impl-vendor is required so the
+  // reviewer can be filtered down (same implementer, same vendor) instead of silently picking whichever is first.
+  // Fixed roles ([roles.x] agent = ... fallback = [...]) are already deterministic — no guard needed there.
+  if ((role === "review" || role === "opinion") && !implAgent && !implVendor) {
+    const r = resolveRole(cfg, role);
+    const declared = r.mode === "auto" ? r.pool.filter((n) => agents[n]) : [];
+    if (declared.length > 1) {
+      console.error(`orq pick: ${m(`more than one agent declared for ${role} (${declared.join(", ")}): pass --impl-agent or --impl-vendor`,
+        `mais de um agente declarado para ${role} (${declared.join(", ")}): informe --impl-agent ou --impl-vendor`)}`);
+      return 2;
+    }
+  }
   const w = ((cfg.policy ?? {}) as Obj);
   const stats = rows(collectRuns((ws ?? cfg._workspace ?? process.cwd()) as string, Number(w.history_days ?? 30)));
   const picksF = join(stateDir(), "picks.jsonl");

@@ -7,5 +7,5 @@ Description=orq handoff: move conductors low on quota to another account
 [Service]
 Type=oneshot
 TimeoutStartSec=10min
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin:%h/.local/share/mise/shims
 ExecStart=/usr/bin/env orq handoff -w ${ORQ_HANDOFF_WORKSPACE}

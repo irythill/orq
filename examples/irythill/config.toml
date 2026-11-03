@@ -58,6 +58,14 @@ prior  = 0.6
 [agents.antigravity.models.review]
 heavy   = "gemini-3.1-pro-high"
 
+[agents.corvus]
+vendor = "minimax"               # the vendor of the model it runs, for the cross-vendor rule
+roles  = ["review"]
+run    = "corvus --markdown [-b {base}]"   # a review tool, not a chat: no prompt, no session; {base} = orq agent -b
+write  = false
+ok_exit = [0, 1]                 # exit 1 = findings, still a verdict
+no_review = "Nada para revisar"  # its "nothing to review" line is not a verdict: status=fail
+
 [agents.copilot]
 vendor = "github"
 roles  = ["opinion"]      # small Pro allowance: second opinion on heavy issues or when impl and review disagree

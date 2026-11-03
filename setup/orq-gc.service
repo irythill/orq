@@ -6,5 +6,5 @@ Description=orq gc: remove merged issue worktrees
 
 [Service]
 Type=oneshot
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin:%h/.local/share/mise/shims
 ExecStart=/usr/bin/env orq gc --yes -w ${ORQ_GC_WORKSPACE}
