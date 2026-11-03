@@ -26,7 +26,8 @@ import { stateDir } from "./paths.js";
 import { m } from "./i18n.js";
 
 export type Pct = number | "-" | "?";
-export interface QuotaLine { name: string; five: Pct; week: Pct; reset5h?: number; resetWeek?: number; note?: string }
+/** span5h/spanWeek: the window's length in minutes when it is not the usual 5 h / 7 days (Codex free's 30 days, Copilot's month). */
+export interface QuotaLine { name: string; five: Pct; week: Pct; reset5h?: number; resetWeek?: number; span5h?: number; spanWeek?: number; note?: string }
 export type Source = "builtin" | "none" | false | { command: string };
 
 const show = (p: Pct) => (typeof p === "number" ? `${Math.floor(p)}%` : p);
@@ -34,6 +35,7 @@ const show = (p: Pct) => (typeof p === "number" ? `${Math.floor(p)}%` : p);
 // first three words, so old cached lines (no reset fields) and lines with them both parse the same way.
 export const format = (q: QuotaLine) => `${q.name} 5h=${show(q.five)} week=${show(q.week)}`
   + (q.reset5h !== undefined ? ` reset5h=${q.reset5h}` : "") + (q.resetWeek !== undefined ? ` resetweek=${q.resetWeek}` : "")
+  + (q.span5h !== undefined ? ` span5h=${q.span5h}` : "") + (q.spanWeek !== undefined ? ` spanweek=${q.spanWeek}` : "")
   + (q.note ? ` [${q.note}]` : "");
 const noData = (name: string, note: string): QuotaLine => ({ name, five: "?", week: "?", note });
 
@@ -148,7 +150,7 @@ interface Window { used_percent?: number; window_minutes?: number; resets_at?: n
 /** The last rate_limits in a Codex session (.jsonl): a window up to 6 h = 5h; the longest one over that (10080 = week,
  *  43200 on the free plan = 30 days) fills the week slot, with `span` (minutes) when it isn't a week; reset → 0. */
 export function codexFromSession(text: string, nowSec: number):
-  { five: Pct; week: Pct; span?: number; reset5h?: number; resetWeek?: number } | undefined {
+  { five: Pct; week: Pct; span?: number; span5?: number; reset5h?: number; resetWeek?: number } | undefined {
   let last: { primary?: Window; secondary?: Window } | undefined;
   for (const line of text.split("\n")) {
     if (!line.includes('"rate_limits"')) continue;
@@ -171,7 +173,8 @@ export function codexFromSession(text: string, nowSec: number):
   const long = ws.filter((x) => (x.window_minutes ?? 0) > 360).sort((a, b) => b.window_minutes! - a.window_minutes!)[0];
   const span = long && long.window_minutes !== 10080 ? long.window_minutes : undefined;
   const r5 = reset(short), rw = reset(long);
-  return { five: pct(short), week: pct(long), ...(span ? { span } : {}), ...(r5 !== undefined ? { reset5h: r5 } : {}),
+  const span5 = short && short.window_minutes && short.window_minutes !== 300 ? short.window_minutes : undefined;
+  return { five: pct(short), week: pct(long), ...(span ? { span } : {}), ...(span5 ? { span5 } : {}), ...(r5 !== undefined ? { reset5h: r5 } : {}),
     ...(rw !== undefined ? { resetWeek: rw } : {}) };
 }
 
@@ -181,9 +184,9 @@ export function codexQuota(): QuotaLine {
   const q = codexFromSession(readFileSync(f, "utf8"), Date.now() / 1000);
   if (!q) return noData("codex", m("no limit data", "sem dados de limite"));
   const age = Math.round((Date.now() - statSync(f).mtimeMs) / 60_000);
-  const { span, ...pcts } = q;
+  const { span, span5, ...pcts } = q;
   const d = span && Math.round(span / 1440);
-  return { name: "codex", ...pcts, note: (d ? m(`${d}-day window in the week slot; `, `janela de ${d} dias no lugar da semana; `) : "")
+  return { name: "codex", ...pcts, ...(span5 ? { span5h: span5 } : {}), ...(span ? { spanWeek: span } : {}), note: (d ? m(`${d}-day window in the week slot; `, `janela de ${d} dias no lugar da semana; `) : "")
     + m(`from the last session, ${age} min ago`, `da última sessão, há ${age} min`) };
 }
 
@@ -253,7 +256,8 @@ export function copilotFromUser(j: unknown): QuotaLine {
   const at = u.quota_reset_date
     ? Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(u.quota_reset_date) ? `${u.quota_reset_date}T00:00` : u.quota_reset_date)
     : NaN;
-  const resetWeek = Number.isNaN(at) ? {} : { resetWeek: Math.floor(at / 1000) };
+  const prev = new Date(at); prev.setMonth(prev.getMonth() - 1);
+  const resetWeek = Number.isNaN(at) ? {} : { resetWeek: Math.floor(at / 1000), spanWeek: Math.round((at - prev.getTime()) / 60_000) };
   if (p.unlimited) return { name: "copilot", five: "-", week: "-", note: m("unlimited", "ilimitado") };
   if (typeof p.percent_remaining !== "number") return noData("copilot", m("no premium request data", "sem dados de requisições premium"));
   const reset = u.quota_reset_date ? m(`, resets ${u.quota_reset_date}`, `, renova em ${u.quota_reset_date}`) : "";

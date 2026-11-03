@@ -17,7 +17,7 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ### Adicionado
 - Ritmo no `orq pick`: conta cujo uso, no ritmo até agora numa janela (usado ÷ fração decorrida; precisa do horário de
-  renovação e de 10% da janela decorrida), projeta passar de `policy.quota_limit` na renovação perde
+  renovação e de 10% da janela decorrida), projeta passar do limite de pick daquela janela na renovação perde
   `policy.pacing_penalty` (padrão 0.3, 0 = desligado) de score. Suave: os limites duros não mudam; papéis fixos não pontuam.
 - `headroom = N` numa seção `[agents.<nome>]`: filhos saem das contas do agente quando o uso chega aos limites menos N
   pontos (5h e semana), deixando essa fatia para os conductors; a escolha da conta respeita isso.

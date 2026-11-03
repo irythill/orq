@@ -682,6 +682,17 @@ test("pick: pacing penalizes a projected overrun (soft); headroom and expired lo
   assert.equal(r.cands.length, 2);
   const off = pick({ ...base, cfg: { ...cfg, policy: { pacing_penalty: 0 } }, role: "impl", quota, windows: w });
   assert.equal(off.cands[0].score, off.cands[1].score);
+  assert.doesNotMatch(off.cands.map((c) => c.why).join(), /pace=/);
+  // a window published with its own length (Copilot's month: 30 days) is projected over that, not over 7 days:
+  // 60% with 3 days left is 105% over 7 days but 67% over 30.
+  const mo = `a 5h=- week=60% resetweek=${now + 3 * 86400} spanweek=43200\nb 5h=- week=60% resetweek=${now + 3 * 86400}`;
+  const m2 = pick({ ...base, cfg, role: "impl", quota: { a: 60, b: 60 }, windows: parseWindows(mo) });
+  assert.equal(m2.cands.find((c) => c.agent === "a")!.score > m2.cands.find((c) => c.agent === "b")!.score, true);
+  // several accounts, one expired: the survivor is still named (-c)
+  const two = pick({ ...base, role: "impl", quota: { w: 30, h: 10 },
+    cfg: { agents: { c: { quota: ["w", "h"], models: { impl: { default: "m" } } } }, roles: { primary: { pick: "auto", pool: ["c"] } } },
+    windows: parseWindows("w 5h=10% week=10%\nh 5h=? week=? [login expired: open claude once]") });
+  assert.equal(two.best?.acct, "w");
   // headroom: 25 lowers the 5h limit (85) to 60 for that agent only
   const hr = pick({ ...base, cfg: { agents: { a: { ...agents.a, headroom: 25 }, b: agents.b }, roles: cfg.roles },
     role: "impl", quota: { a: 62, b: 62 }, windows: parseWindows("a 5h=62% week=10%\nb 5h=62% week=10%") });
