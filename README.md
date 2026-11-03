@@ -174,7 +174,8 @@ rotation = 0.20                          # penalty for having been picked recent
 
 ### How `orq-pick` chooses
 1. **Filters:** only agents with that role, under the quota limit, not blocked (`orq-block`) and, for reviews, from a
-   vendor other than the implementer's. With several accounts, it takes the least used one.
+   vendor other than the implementer's. With several accounts, it prefers one whose pace stays within the limit, then
+   the least used.
 2. **Scores:** `quality × delivery + tokens × economy + speed × quickness − rotation × recent picks`. The numbers come
    from the history (`orq-stats`); an agent with few runs uses the config's `prior` and gets an exploration bonus.
 3. **`reserve = true` agents** (e.g. Claude, which shares quota with the conductor) only come in when nothing else fits.

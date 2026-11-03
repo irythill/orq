@@ -64,6 +64,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
   nenhum dos dois casos.
 
 ### Corrigido
+- `orq pick` com várias contas: prefere uma conta cujo ritmo não projete estouro do limite antes de desempatar pelo
+  menor uso (quando `policy.pacing_penalty > 0`), e mantém as contas com login expirado e seu comando de correção na
+  nota de recusa de cota quando as demais passam do limite.
 - Trocar a conta de um agente não mostra mais a cota ou o bloqueio da antiga. O cache de "última leitura" da cota
   passou a ser ligado ao login (Antigravity), e o `orq block` grava para qual login foi feito: quando o agente ou a
   conta do Claude entra em outra, o bloqueio some sozinho (claude, codex, antigravity, copilot, opencode).
