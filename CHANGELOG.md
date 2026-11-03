@@ -16,6 +16,8 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   `<name> 5h=NN% week=NN%` always stays intact and easy to grep.
 
 ### Added
+- Scope guideline in the `/issue` skill and the workspace `CLAUDE.md` template: split big issues into sub-issues or
+  sequential batches (one PR each) before dispatching, and stop and split when reviews hit `policy.max_rounds`.
 - Pacing in `orq pick`: an account whose usage, at the pace so far in a window (used ÷ elapsed share, needs the reset
   time and 10% of the window elapsed), projects past that window's pick limit at the reset loses `policy.pacing_penalty`
   (default 0.3, 0 = off) of score. Soft: the hard limits are unchanged; fixed roles are not scored.
