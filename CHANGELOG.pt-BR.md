@@ -6,6 +6,7 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Não lançado]
 ### Alterado
+- `install.sh --uninstall` agora também executa `systemctl --user disable --now` nos timers do orq.
 - Limites do `orq pick`: 95% da semana (`policy.quota_week`) e, na janela de 5h, 90/85/80% para tarefas
   simple/medium/heavy (`policy.quota_5h`), em todos os agentes. Um agente nunca revisa nem opina sobre o próprio código,
   sempre que houver outro agente declarado para o papel. `policy.quota_limit` limita a cota de 5h do pick e define o `!` do `orq quota --line`.
@@ -43,8 +44,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
   `/issue` usa isso quando o usuário cita outro conductor e retoma a partir de `.orquestra/<ID>/` em vez de recomeçar.
   O `orq claim -l`/`--from` e o `orq board` agora mostram o label **atual** do workspace no herdr enquanto o pane
   está vivo (ele pode ter sido renomeado depois do claim), caindo para o nome salvo na hora do claim.
-- O `orq pick review|opinion` sai com exit 2 e uma mensagem clara quando mais de um agente está declarado para o
-  papel e nem `--impl-agent` nem `--impl-vendor` foram passados (`--no-record`/`--explain` não mudam isso): não há
+- O `orq pick review|opinion` sai com exit 2 e uma mensagem clara quando mais de um agente está elegível para o
+  papel (declarado, não excluído nem bloqueado, com modelo para ele) e nem `--impl-agent` nem `--impl-vendor` foram passados (`--no-record`/`--explain` não mudam isso): não há
   como filtrar o revisor sem essa informação.
 - `agents.<nome>.no_review`: uma regex que, ao bater com a resposta de uma ferramenta de revisão (ex.: "Nada para
   revisar" do Corvus), faz aquela execução do `orq agent` terminar `status=fail` em vez de `ok` — "nada foi

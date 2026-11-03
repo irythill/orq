@@ -934,6 +934,7 @@ test("agent: no_review match on the answer ends status=fail, even with an ok exi
   assert.equal(findings.status, 0, findings.stdout + findings.stderr);
   assert.match(findings.stdout, /status=ok rc=0/);
   // An empty or non-string no_review is ignored (with a warning), not a match on everything.
+  say("1. [blocker] main true"); // old code turned `true` into /true/ and would fail this
   for (const bad of ["", true]) {
     writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { corvus: {
       run: `'${process.execPath}' '${tool}' {base}`, write: false, no_review: bad, mem_max: "off" } } }));
