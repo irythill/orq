@@ -156,6 +156,8 @@ reset_grace_min = 15                     # toda janela acima do gatilho renova d
 
 [policy]
 quota_limit = 90                         # caps the 5h pick limit; also sets ! in `orq quota --line`
+pacing_penalty = 0.3                     # score penalty when usage at the current pace would pass the pick limit (5h by level, week: quota_week) by the reset (0 = off)
+# [agents.claude] headroom = 25          # points kept for conductors: children leave the account at limit − 25
 [policy.weights]
 quality  = 0.40                          # did it deliver? (impl: approved on the first review)
 tokens   = 0.45                          # did it spend little?

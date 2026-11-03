@@ -7,6 +7,10 @@
 // Filters: --exclude-agent, orq block, nobody reviews their own code (unless no other agent can), cross-vendor rule, a model for the role/level,
 // quota under the limits: policy.quota_week (95) on the weekly window, and on the 5h one policy.quota_5h per level
 // (simple 90, medium 85, heavy 80): a heavy task needs more room left to finish.
+// An agent's `headroom` (points) lowers both limits for it: that share of its accounts stays for the conductors.
+// An account whose quota reading says the login expired is skipped, with the fix command in the note.
+// Pacing: an account whose usage, at the pace so far in a window (used ÷ elapsed share), projects past
+// that window's pick limit (the filter's) at its reset loses policy.pacing_penalty (default 0.3, 0 = off) of score — soft, never a drop.
 import type { Obj } from "./config.js";
 import { m } from "./i18n.js";
 import { humanReset } from "./quota.js";
@@ -18,11 +22,12 @@ export type QuotaMap = Record<string, number | null>;
 
 /** name → each window's %; absent = the QuotaMap figure counts for both windows. resetFive/resetWeek (epoch seconds)
  *  come along when the quota line carries them. */
-export type WindowMap = Record<string, { five?: number; week?: number; resetFive?: number; resetWeek?: number }>;
+export type WindowMap = Record<string, { five?: number; week?: number; resetFive?: number; resetWeek?: number;
+  spanFive?: number; spanWeek?: number; expired?: string }>;
 
 export interface PickInput {
   cfg: Obj; role: PickRole; level: string; implVendor?: string; implAgent?: string; exclude: Set<string>;
-  stats: Row[]; quota: QuotaMap; windows?: WindowMap; blocks: Set<string>; recent: { agent: string }[];
+  stats: Row[]; quota: QuotaMap; windows?: WindowMap; blocks: Set<string>; recent: { agent: string }[]; now?: number /* epoch s */;
 }
 export interface Candidate {
   agent: string; model: string; effort?: string; acct?: string; score: number; why: string;
@@ -48,11 +53,30 @@ export function parseWindows(text: string): WindowMap {
   const out: WindowMap = {};
   const num = (v?: string) => (v && /^\d+%$/.test(v) ? Number(v.slice(0, -1)) : undefined);
   for (const l of text.split(/\r?\n/)) {
-    const r = /^(\S+) 5h=(\S+) week=(\S+)(?: reset5h=(\d+))?(?: resetweek=(\d+))?/.exec(l.trim());
-    if (r) out[r[1]] = { five: num(r[2]), week: num(r[3]), ...(r[4] ? { resetFive: Number(r[4]) } : {}),
-      ...(r[5] ? { resetWeek: Number(r[5]) } : {}) };
+    const r = /^(\S+) 5h=(\S+) week=(\S+)(?: reset5h=(\d+))?(?: resetweek=(\d+))?(?: span5h=(\d+))?(?: spanweek=(\d+))?/.exec(l.trim());
+    if (!r) continue;
+    // "[login expired: run `agy models`; last reading, 5 min ago]" → the part before the first ";" (the fix to show)
+    const note = /\[([^\]]*)\]\s*$/.exec(l)?.[1].split(";")[0].trim();
+    out[r[1]] = { five: num(r[2]), week: num(r[3]), ...(r[4] ? { resetFive: Number(r[4]) } : {}),
+      ...(r[5] ? { resetWeek: Number(r[5]) } : {}), ...(r[6] ? { spanFive: Number(r[6]) } : {}),
+      ...(r[7] ? { spanWeek: Number(r[7]) } : {}), ...(note && EXPIRED.test(note) ? { expired: note } : {}) };
   }
   return out;
+}
+
+// Both languages orq writes these notes in (the collectors' not-logged-in and expired-login texts).
+const EXPIRED = /login expired|login expirado|not logged in|no agy login|sem login/i;
+/** Window lengths in seconds, unless the quota line publishes another (span5h/spanweek, minutes). */
+const WINDOW_S = { five: 5 * 3600, week: 7 * 86400 };
+
+/** Usage at the window's reset if the pace so far continues (used ÷ elapsed share); undefined when it can't be told:
+ *  no figure or reset time, or under 10% of the window elapsed (too early to project). */
+export function projected(pct: number | undefined, reset: number | undefined, size: number, now: number): number | undefined {
+  if (pct === undefined || pct < 0 || reset === undefined) return undefined;
+  const left = reset - now;
+  if (left <= 0 || left > size) return undefined;
+  const elapsed = (size - left) / size;
+  return elapsed < 0.1 ? undefined : pct / elapsed;
 }
 
 const FIVE = { simple: 90, medium: 85, heavy: 80 } as Record<string, number>;
@@ -81,13 +105,15 @@ export function pick(inp: PickInput): PickResult {
   const { cfg, role, level } = inp;
   const agents = (cfg.agents ?? {}) as Record<string, Obj>;
   const pol = (cfg.policy ?? {}) as Obj;
-  const [limit5, limitWeek] = limitsFor(pol, level);
+  const [base5, baseWeek] = limitsFor(pol, level);
   const w = weights(cfg);
+  const now = inp.now ?? Date.now() / 1000;
+  const penalty = Number(pol.pacing_penalty ?? 0.3);
   const res = resolveRole(cfg, role);
   const names = res.mode === "fixed" ? res.order : res.pool;
   const notes: string[] = [];
   const out = (n: string, why: string) => { notes.push(`${n}: ${why}`); };
-  const pass: (Omit<Candidate, "score" | "why"> & { a: Obj; st?: Row })[] = [];
+  const pass: (Omit<Candidate, "score" | "why"> & { a: Obj; st?: Row; pace?: number; hot?: boolean })[] = [];
 
   // Only with someone else to ask: a single agent must still be able to review.
   const someoneElse = names.some((n) => n !== inp.implAgent && agents[n]);
@@ -108,7 +134,12 @@ export function pick(inp: PickInput): PickResult {
     if (!mf) { out(name, m(`no model for ${role}/${level}`, `sem modelo para ${role}/${level}`)); continue; }
     // Quota: an agent with several accounts (claude) uses the least used one under the limit.
     const qn = (a.quota as string[] | undefined) ?? [];
-    const accs = qn.filter((n) => !inp.blocks.has(n)).map((n) => [n, n in inp.quota ? inp.quota[n] : -1] as const);
+    const headroom = Math.max(0, Number(a.headroom ?? 0));
+    const limit5 = base5 - headroom, limitWeek = baseWeek - headroom;
+    const live = qn.filter((n) => !inp.blocks.has(n));
+    const fix = live.map((n) => inp.windows?.[n]?.expired).filter((x): x is string => Boolean(x));
+    if (live.length && fix.length === live.length) { out(name, fix[0]); continue; }
+    const accs = live.filter((n) => !inp.windows?.[n]?.expired).map((n) => [n, n in inp.quota ? inp.quota[n] : -1] as const);
     if (qn.length && !accs.length) { out(name, m("all accounts blocked", "todas as contas bloqueadas")); continue; }
     const under = ([n, v]: readonly [string, number | null]) => {
       const q = inp.windows?.[n];
@@ -127,13 +158,20 @@ export function pick(inp: PickInput): PickResult {
         const allKnown = (fiveOver || weekOver) && (!fiveOver || q?.resetFive !== undefined) && (!weekOver || q?.resetWeek !== undefined);
         return `${n}=${v}` + (allKnown ? ` (${m("back", "volta")} ${humanReset(Math.max(...known))})` : "");
       }).join(", ");
-      out(name, `${m("quota", "cota")} >= 5h ${limit5}% / ${m("week", "semana")} ${limitWeek}% ${m("or no data", "ou sem dados")} (${detail})`);
+      out(name, `${m("quota", "cota")} >= 5h ${limit5}% / ${m("week", "semana")} ${limitWeek}% ${m("or no data", "ou sem dados")}`
+        + (headroom ? ` (headroom ${headroom})` : "") + ` (${detail})`);
       continue;
     }
-    const acct = accs.length > 1 ? [...usable].sort((x, y) => x[1]! - y[1]!)[0][0] : undefined;
+    const acct = qn.length > 1 ? [...usable].sort((x, y) => x[1]! - y[1]!)[0][0] : undefined;
     const statRole = role === "fix" || role === "worker" ? "impl" : role;
     const st = inp.stats.find((r) => r.role === statRole && r.agent === name && r.model === (mf[0].split("/").pop() || "default"));
-    pass.push({ agent: name, model: mf[0], effort: mf[1], acct, a, st });
+    const q = usable.length ? inp.windows?.[acct ?? usable[0][0]] : undefined;
+    const p5 = projected(q?.five, q?.resetFive, (q?.spanFive ? q.spanFive * 60 : WINDOW_S.five), now);
+    const pw = projected(q?.week, q?.resetWeek, (q?.spanWeek ? q.spanWeek * 60 : WINDOW_S.week), now);
+    const paces = [p5, pw].filter((x): x is number => x !== undefined);
+    // Hot: past the same per-window limit the filter uses (5h by level, week), headroom included.
+    const hot = (p5 !== undefined && p5 > limit5) || (pw !== undefined && pw > limitWeek);
+    pass.push({ agent: name, model: mf[0], effort: mf[1], acct, a, st, pace: paces.length ? Math.max(...paces) : undefined, hot });
     if (res.mode === "fixed") break; // the first that passes wins
   }
 
@@ -155,11 +193,13 @@ export function pick(inp: PickInput): PickResult {
     const t = few(c.st) || !c.st?.new || !toks.length ? prior : Math.min(...toks) / c.st.new;
     const s = few(c.st) || !c.st?.min || !mins.length ? prior : Math.min(...mins) / Math.max(c.st.min, 0.1);
     const used = inp.recent.filter((p) => p.agent === c.agent).length;
+    const hot = Boolean(c.hot) && penalty > 0;
     const score = w.quality * d + w.tokens * t + w.speed * s - w.rotation * used
-      - (reserve ? w.reserve : 0) + (few(c.st) ? w.explore : 0);
+      - (reserve ? w.reserve : 0) + (few(c.st) ? w.explore : 0) - (hot ? penalty : 0);
     const why = `${m("delivery", "entrega")}=${d.toFixed(2)} ${m("economy", "economia")}=${t.toFixed(2)} `
       + `${m("speed", "rapidez")}=${s.toFixed(2)} ${m("rotation", "rodízio")}=-${used} `
-      + (reserve ? m("reserve ", "reserva ") : "") + (few(c.st) ? `${m("few samples", "poucos dados")}(n=${n})` : `n=${n}`);
+      + (reserve ? m("reserve ", "reserva ") : "")
+      + (hot ? `${m("pace", "ritmo")}=${Math.round(c.pace!)}%→-${penalty} ` : "") + (few(c.st) ? `${m("few samples", "poucos dados")}(n=${n})` : `n=${n}`);
     return { agent: c.agent, model: c.model, effort: c.effort, acct: c.acct, score, why };
   }).sort((x, y) => y.score - x.score);
   return { mode: "auto", best: cands[0], cands, notes };

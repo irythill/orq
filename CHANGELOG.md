@@ -16,6 +16,13 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   `<name> 5h=NN% week=NN%` always stays intact and easy to grep.
 
 ### Added
+- Pacing in `orq pick`: an account whose usage, at the pace so far in a window (used ÷ elapsed share, needs the reset
+  time and 10% of the window elapsed), projects past that window's pick limit at the reset loses `policy.pacing_penalty`
+  (default 0.3, 0 = off) of score. Soft: the hard limits are unchanged; fixed roles are not scored.
+- `headroom = N` in an `[agents.<name>]` section: children are dropped from that agent's accounts once usage reaches
+  the limits minus N points (5h and week), leaving that share for conductors; account choice respects it.
+- `orq pick` skips an agent whose quota reading says the login expired, with the fix command as the reason
+  (e.g. ``antigravity: login expired: run `agy models` ``); `orq quota` keeps showing it.
 - `orq ci [-w <workspace>]... [--json]`: CI/CD signal per claimed issue with a PR — queued, running, passed, failed
   or none, from `gh pr view`'s checks on the branch the issue's worktree carries, collected live (it's the user
   asking right now). Cached in the state dir like quota; `orq board` reads that same cache for a new CI column

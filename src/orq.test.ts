@@ -660,6 +660,64 @@ test("pick: a '-' window (no such limit, e.g. copilot's monthly plan) is never o
   assert.match(r.notes[0], new RegExp(`copilot=97 \\(back ${humanReset(1900100000).replace(/[:.]/g, "\\$&")}\\)`));
 });
 
+test("pick: pacing penalizes a projected overrun (soft); headroom and expired logins drop", async () => {
+  const { pick, parseWindows, projected } = await import("./pick.js");
+  const now = 1_900_000_000;
+  // 40% used with 2h of the 5h window left (60% elapsed) → 66% projected; 50% with 4h left (20% elapsed) → 250%.
+  assert.equal(Math.round(projected(40, now + 7200, 5 * 3600, now)!), 67);
+  assert.equal(projected(50, now + 4 * 3600 + 3000, 5 * 3600, now), undefined); // <10% elapsed: too early
+  assert.equal(projected(50, undefined, 5 * 3600, now), undefined);
+  const mk = (n: string) => ({ quota: [n], models: { impl: { default: "m" } } });
+  const agents = { a: mk("a"), b: mk("b") };
+  const cfg = { agents, roles: { primary: { pick: "auto", pool: ["a", "b"] } } };
+  const base = { level: "medium" as const, exclude: new Set<string>(), stats: [], blocks: new Set<string>(), recent: [], now };
+  const line = `a 5h=50% week=10% reset5h=${now + 4 * 3600}\nb 5h=50% week=10% reset5h=${now + 2 * 3600}`;
+  const w = parseWindows(line);
+  const quota = { a: 50, b: 50 };
+  // a: 50% at 20% elapsed → 250% projected (penalized); b: 50% at 60% elapsed → 83% (fine). Equal otherwise.
+  const r = pick({ ...base, cfg, role: "impl", quota, windows: w });
+  assert.equal(r.best?.agent, "b");
+  assert.match(r.cands[1].why, /pace=250%/);
+  // still a candidate (soft), and off when pacing_penalty = 0
+  assert.equal(r.cands.length, 2);
+  const off = pick({ ...base, cfg: { ...cfg, policy: { pacing_penalty: 0 } }, role: "impl", quota, windows: w });
+  assert.equal(off.cands[0].score, off.cands[1].score);
+  assert.doesNotMatch(off.cands.map((c) => c.why).join(), /pace=/);
+  // a window published with its own length (Copilot's month: 30 days) is projected over that, not over 7 days:
+  // 60% with 3 days left is 105% over 7 days but 67% over 30.
+  const mo = `a 5h=- week=60% resetweek=${now + 3 * 86400} spanweek=43200\nb 5h=- week=60% resetweek=${now + 3 * 86400}`;
+  const m2 = pick({ ...base, cfg, role: "impl", quota: { a: 60, b: 60 }, windows: parseWindows(mo) });
+  assert.equal(m2.cands.find((c) => c.agent === "a")!.score > m2.cands.find((c) => c.agent === "b")!.score, true);
+  // several accounts, one expired: the survivor is still named (-c)
+  const two = pick({ ...base, role: "impl", quota: { w: 30, h: 10 },
+    cfg: { agents: { c: { quota: ["w", "h"], models: { impl: { default: "m" } } } }, roles: { primary: { pick: "auto", pool: ["c"] } } },
+    windows: parseWindows("w 5h=10% week=10%\nh 5h=? week=? [login expired: open claude once]") });
+  assert.equal(two.best?.acct, "w");
+  // headroom: 25 lowers the 5h limit (85) to 60 for that agent only
+  const hr = pick({ ...base, cfg: { agents: { a: { ...agents.a, headroom: 25 }, b: agents.b }, roles: cfg.roles },
+    role: "impl", quota: { a: 62, b: 62 }, windows: parseWindows("a 5h=62% week=10%\nb 5h=62% week=10%") });
+  assert.deepEqual(hr.cands.map((c) => c.agent), ["b"]);
+  assert.match(hr.notes[0], /^a: .*5h 60%.*headroom 25/);
+  // expired login: skipped with the fix, whatever the cached numbers say
+  const ex = "a 5h=10% week=10% [login expired: run `agy models`; last reading, 5 min ago]\nb 5h=10% week=10%";
+  assert.equal(parseWindows(ex).a.expired, "login expired: run `agy models`");
+  const e = pick({ ...base, cfg, role: "impl", quota: { a: 10, b: 10 }, windows: parseWindows(ex) });
+  assert.deepEqual(e.cands.map((c) => c.agent), ["b"]);
+  assert.equal(e.notes[0], "a: login expired: run `agy models`");
+});
+
+test("monthBefore: month-end dates clamp instead of overflowing", async () => {
+  const { monthBefore } = await import("./quota.js");
+  assert.equal(monthBefore(new Date(2026, 2, 31)).getTime(), new Date(2026, 1, 28).getTime());
+  assert.equal(monthBefore(new Date(2026, 0, 31)).getTime(), new Date(2025, 11, 31).getTime());
+  assert.equal(monthBefore(new Date(2026, 10, 1)).getTime(), new Date(2026, 9, 1).getTime());
+});
+
+test("pick: a missing agy login is reported as a login problem in English too", async () => {
+  const { parseWindows } = await import("./pick.js");
+  assert.ok(parseWindows("antigravity 5h=? week=? [no agy login in the keyring]").antigravity.expired);
+});
+
 test("suggestRoles: the maintainer's setup comes out of plain answers", async () => {
   const { suggestRoles } = await import("./suggest.js");
   const p = suggestRoles({ conductor: "claude", parallel: 4, ramGB: 14, agents: {
