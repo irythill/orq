@@ -699,13 +699,16 @@ test("pick: pacing penalizes a projected overrun (soft); headroom and expired lo
     windows: parseWindows("w 5h=90% week=10%\nh 5h=10% week=10% [login expired: run `agy models`; last reading, 5 min ago]") });
   assert.equal(bothOut.best, undefined);
   assert.match(bothOut.notes[0], /w=90, h: login expired: run `agy models`/);
-  // several usable accounts: a non-hot account wins over a lower-usage hot one, then lower usage breaks ties
+  // several usable accounts: a non-hot account wins over a lower-usage hot one, then lower usage breaks ties (unless pacing_penalty = 0)
   const multi = { agents: { c: { quota: ["w", "h", "p"], models: { impl: { default: "m" } } } },
     roles: { primary: { pick: "auto", pool: ["c"] } } };
-  const paced = pick({ ...base, role: "impl", quota: { w: 40, h: 48, p: 42 }, cfg: multi,
-    windows: parseWindows(`w 5h=40% week=10% reset5h=${now + 4 * 3600}\nh 5h=48% week=10% reset5h=${now + 2 * 3600}\np 5h=42% week=10% reset5h=${now + 2 * 3600}`) });
+  const multiWin = parseWindows(`w 5h=40% week=10% reset5h=${now + 4 * 3600}\nh 5h=48% week=10% reset5h=${now + 2 * 3600}\np 5h=42% week=10% reset5h=${now + 2 * 3600}`);
+  const paced = pick({ ...base, role: "impl", quota: { w: 40, h: 48, p: 42 }, cfg: multi, windows: multiWin });
   assert.equal(paced.best?.acct, "p");
   assert.doesNotMatch(paced.best?.why ?? "", /pace=/);
+  const pacedOff = pick({ ...base, role: "impl", quota: { w: 40, h: 48, p: 42 },
+    cfg: { ...multi, policy: { pacing_penalty: 0 } }, windows: multiWin });
+  assert.equal(pacedOff.best?.acct, "w");
   // headroom: 25 lowers the 5h limit (85) to 60 for that agent only
   const hr = pick({ ...base, cfg: { agents: { a: { ...agents.a, headroom: 25 }, b: agents.b }, roles: cfg.roles },
     role: "impl", quota: { a: 62, b: 62 }, windows: parseWindows("a 5h=62% week=10%\nb 5h=62% week=10%") });

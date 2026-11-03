@@ -8,7 +8,8 @@ personal ~/.claude-personal
 ```
 A new account = one more line + an alias in `~/.bashrc` (`alias claude-x='CLAUDE_CONFIG_DIR="$HOME/.claude-x" claude'`)
 + logging in once with `claude-x`. Check with `claude-accounts` and `agent-quota`. In `~/.config/orq/config.toml`, list
-the names under `[agents.claude] quota = [...]`: `orq-pick` then hands children the least used account.
+the names under `[agents.claude] quota = [...]`: `orq-pick` then hands children an account whose pace stays within the
+limit (or, to break ties, the least used one).
 
 **`CLAUDE_CONFIG_DIR` gotcha:** with `CLAUDE_CONFIG_DIR=X`, Claude reads **`X/.claude.json`** (MCPs, projects,
 account data). Plain `claude` reads **`~/.claude.json`**. So `CLAUDE_CONFIG_DIR=~/.claude` is **not** the same

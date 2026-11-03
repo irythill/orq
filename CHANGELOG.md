@@ -62,6 +62,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   that real directory. A plain, system-package install is untouched either way.
 
 ### Fixed
+- Multi-account `orq pick`: prefers an account whose pace does not project past the limit before falling back to lowest
+  usage (when `policy.pacing_penalty > 0`), and keeps expired accounts with their fix command in the quota rejection note
+  when the remaining accounts are over the limit.
 - Switching an agent's account no longer shows the old one's quota or block. The "last reading" quota cache is now
   tied to the login (Antigravity), and `orq block` records which login it was made for: when the agent or Claude
   account is logged into another one, the block is dropped on its own (claude, codex, antigravity, copilot, opencode).
