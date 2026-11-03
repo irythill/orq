@@ -19,8 +19,9 @@ const pct = (p: string) => (/^\d+%$/.test(p) ? Number(p.slice(0, -1)) : undefine
  *  any [note]. */
 export function humanizeQuotaLine(line: string, now = Date.now()): string {
   const r5 = /reset5h=(\d+)/.exec(line), rw = /resetweek=(\d+)/.exec(line);
-  if (!r5 && !rw) return line;
-  let out = line.replace(/ reset5h=\d+/, "").replace(/ resetweek=\d+/, "");
+  if (!r5 && !rw) return line.replace(/ span5h=\d+/, "").replace(/ spanweek=\d+/, "");
+  let out = line.replace(/ reset5h=\d+/, "").replace(/ resetweek=\d+/, "")
+    .replace(/ span5h=\d+/, "").replace(/ spanweek=\d+/, "");
   const parts: string[] = [];
   if (r5) parts.push(`${m("5h", "5h")} ${m("resets", "renova")} ${humanReset(Number(r5[1]), now)}`);
   if (rw) parts.push(`${m("week", "semana")} ${m("resets", "renova")} ${humanReset(Number(rw[1]), now)}`);

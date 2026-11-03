@@ -17,7 +17,7 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ### Added
 - Pacing in `orq pick`: an account whose usage, at the pace so far in a window (used ÷ elapsed share, needs the reset
-  time and 10% of the window elapsed), projects past `policy.quota_limit` at the reset loses `policy.pacing_penalty`
+  time and 10% of the window elapsed), projects past that window's pick limit at the reset loses `policy.pacing_penalty`
   (default 0.3, 0 = off) of score. Soft: the hard limits are unchanged; fixed roles are not scored.
 - `headroom = N` in an `[agents.<name>]` section: children are dropped from that agent's accounts once usage reaches
   the limits minus N points (5h and week), leaving that share for conductors; account choice respects it.
