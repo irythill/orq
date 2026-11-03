@@ -11,6 +11,13 @@ rules — read the repo's own before touching it. This file only holds the map a
   outside herdr; one at a time on the machine); the child does lint + `tsc` (`NODE_OPTIONS=--max-old-space-size=2048`).
 - **Agents:** chosen by `orq-pick` from each developer's `~/.config/orq/config.toml` — nothing about models here.
 
+## Scope
+- Before dispatching, split big issues into sub-issues or sequential batches (one PR, one implementer each) when they touch
+  several unrelated areas, change roughly >400 lines, mix refactor with behavior change, or have independent acceptance
+  criteria. Each batch must be testable and reviewable on its own; record the split in Plane before starting.
+- Reviews hitting `policy.max_rounds`, repeated findings or the implementer asking to change scope mean it was too big:
+  stop and split the remainder instead of forcing more rounds.
+
 ## Repositories
 
 | Folder | What it is | Stack / PM | Group | Base | Verification | Checklist |

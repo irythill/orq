@@ -52,6 +52,14 @@ One task per repo. Level:
 - **medium** — business rule, API↔front integration, several files.
 - **heavy** — architecture, data migration, hard/concurrency bug, security.
 
+**Scope check, before dispatching.** Estimate the size. Split into sub-issues or sequential batches (each its own PR)
+when it touches several unrelated areas, changes roughly >400 lines, mixes refactor with behavior change, or has
+independent acceptance criteria.
+- Each batch is independently testable and reviewable; dispatch in order, one implementer per batch. Record the split in
+  Plane (sub-issues or a checklist comment) before starting.
+- Scope too big mid-run (reviews hitting `policy.max_rounds`, repeated findings, the implementer asking to change
+  scope): stop, split the remainder, don't force more rounds.
+
 ## 3. Pick agent and model: always `orq pick`, never by hand
 `orq pick` decides agent, model, effort and account (user config + delivery and token history + current quota +
 rotation). **Do not choose by preference, by a rule you read elsewhere, or by what worked last time**: run it before
