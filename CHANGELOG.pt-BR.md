@@ -16,6 +16,13 @@ English: [CHANGELOG.md](CHANGELOG.md).
   linha, assim `<nome> 5h=NN% week=NN%` continua intacto e fácil de grepar.
 
 ### Adicionado
+- Ritmo no `orq pick`: conta cujo uso, no ritmo até agora numa janela (usado ÷ fração decorrida; precisa do horário de
+  renovação e de 10% da janela decorrida), projeta passar de `policy.quota_limit` na renovação perde
+  `policy.pacing_penalty` (padrão 0.3, 0 = desligado) de score. Suave: os limites duros não mudam; papéis fixos não pontuam.
+- `headroom = N` numa seção `[agents.<nome>]`: filhos saem das contas do agente quando o uso chega aos limites menos N
+  pontos (5h e semana), deixando essa fatia para os conductors; a escolha da conta respeita isso.
+- `orq pick` pula o agente cuja leitura de cota diz login expirado, com o comando de correção como motivo
+  (ex.: ``antigravity: login expirado: rode `agy models` ``); o `orq quota` continua mostrando.
 - `orq ci [-w <workspace>]... [--json]`: sinal de CI/CD por issue reivindicada com PR — na fila, rodando, passou,
   falhou ou nenhum, a partir dos checks que o `gh pr view` lê na branch que o worktree da issue carrega, coletado
   na hora (é o usuário pedindo agora). Em cache no diretório de estado como a cota; o `orq board` lê esse mesmo
