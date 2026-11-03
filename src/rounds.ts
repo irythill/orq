@@ -1,0 +1,121 @@
+// Watchdog layer 1: per-issue round metrics from the files already in .orquestra/<ID>/, no LLM and no extra recording.
+//   fix-<n>.md                    the blockers sent to the implementer in fix round n (its mtime = the round started)
+//   review-<repo>.out.md          the first review (round 0);  review-<repo>-<n>.out.md  the review after fix round n
+// Rounds = highest fix-<n> (or the .rounds-<session> counter `orq agent -R` keeps). Findings are the tagged list items
+// of each review ("- [blocker] src/a.ts:10 title"); a finding "repeats" when a later review has one on the same file
+// with similar words (token overlap, see similar()).
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+
+export type Level = "ok" | "warn" | "stop";
+export interface Finding { round: number; severity: string; file: string; title: string }
+export interface Repeat { file: string; title: string; rounds: number[] }
+export interface RoundTime { round: number; secs: number }
+export interface Metrics {
+  issue: string; rounds: number; max: number; secs: number; perRound: RoundTime[];
+  findings: number; repeats: Repeat[]; level: Level; reasons: string[];
+}
+export interface Facts { rounds: number; max: number; perRound: RoundTime[]; findings: Finding[]; secs: number }
+
+export const SIMILAR_FILE = 0.4; // token overlap needed when both findings name the same file
+export const SIMILAR_LOOSE = 0.6; // ... when a file is missing on either side
+export const SLOW_FACTOR = 2; // a round this many times slower than the median of the others is flagged
+export const SLOW_MIN_SECS = 600; // ... but only if it also took at least this long
+export const REPEAT_WARN = 2; // a finding seen in this many reviews: warn
+export const REPEAT_STOP = 3; // ... in this many: stop (it came back after two fix rounds)
+
+const read = (f: string) => { try { return readFileSync(f, "utf8"); } catch { return ""; } };
+const STOP = new Set(["the", "a", "an", "of", "in", "on", "to", "is", "are", "and", "or", "for", "with", "not", "no", "this", "that", "it",
+  "de", "do", "da", "o", "os", "as", "um", "uma", "em", "no", "na", "para", "com", "que", "se", "não"]);
+
+const words = (s: string) => new Set(s.toLowerCase().replace(/[^\p{L}\p{N}_]+/gu, " ").split(" ").filter((w) => w.length > 2 && !STOP.has(w)));
+
+/** One review-list item → finding. Only items carrying a severity tag count (prose around the list is ignored). */
+export function parseFindings(text: string, round: number): Finding[] {
+  const out: Finding[] = [];
+  for (const line of text.split("\n")) {
+    const it = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line);
+    const tag = it && /\[(blocker|major|minor|nit|suggestion|important|critical)\]/i.exec(it[1]);
+    if (!it || !tag) continue;
+    const rest = it[1].replace(tag[0], " ");
+    const file = /([\w@./-]+\.\w+)(?::\d+(?:-\d+)?)?/.exec(rest)?.[1] ?? "";
+    out.push({ round, severity: tag[1].toLowerCase(), file, title: rest.replace(/[`*_]/g, "").replace(/\s+/g, " ").trim() });
+  }
+  return out;
+}
+
+/** Same finding? Same file (when both name one) and enough shared words; without a file, a stricter overlap. */
+export function similar(a: Pick<Finding, "file" | "title">, b: Pick<Finding, "file" | "title">): boolean {
+  const wa = words(a.title), wb = words(b.title);
+  if (!wa.size || !wb.size) return false;
+  let inter = 0;
+  for (const w of wa) if (wb.has(w)) inter++;
+  const j = inter / (wa.size + wb.size - inter), both = a.file && b.file;
+  if (both && a.file !== b.file) return false;
+  return j >= (both ? SIMILAR_FILE : SIMILAR_LOOSE);
+}
+
+/** Findings that reappear in more than one round. Each group is matched against its first member. */
+export function repeats(fs: Finding[]): Repeat[] {
+  const groups: Finding[][] = [];
+  for (const f of [...fs].sort((a, b) => a.round - b.round)) {
+    const g = groups.find((x) => similar(x[0], f));
+    if (g) g.push(f); else groups.push([f]);
+  }
+  return groups.map((g) => ({ file: g[0].file, title: g[0].title, rounds: [...new Set(g.map((x) => x.round))] }))
+    .filter((r) => r.rounds.length >= REPEAT_WARN);
+}
+
+const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b), h = s.length >> 1; return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2; };
+
+/** Rounds whose time is far above the median of the other rounds (needs two others to compare). */
+export function slowRounds(per: RoundTime[]): number[] {
+  if (per.length < 3) return [];
+  return per.filter((r) => r.secs >= SLOW_MIN_SECS && r.secs > SLOW_FACTOR * median(per.filter((x) => x !== r).map((x) => x.secs))).map((r) => r.round);
+}
+
+/** The pure part: facts from the files → numbers, alert level and why. */
+export function metrics(issue: string, f: Facts): Metrics {
+  const reps = repeats(f.findings), reasons: string[] = [];
+  let level: Level = "ok";
+  const raise = (l: Level, why: string) => { reasons.push(why); if (l === "stop" || level === "ok") level = l; };
+  if (f.rounds > f.max) raise("stop", `rounds ${f.rounds} > max_rounds ${f.max}`);
+  else if (f.rounds >= f.max && f.max > 0) raise("warn", `rounds ${f.rounds} = max_rounds ${f.max}`);
+  const worst = Math.max(0, ...reps.map((r) => r.rounds.length));
+  if (worst >= REPEAT_STOP) raise("stop", `same finding in ${worst} reviews`);
+  else if (reps.length) raise("warn", `${reps.length} repeated finding(s)`);
+  const slow = slowRounds(f.perRound);
+  if (slow.length) raise("warn", `round ${slow.join(", ")} much slower than the others`);
+  return { issue, rounds: f.rounds, max: f.max, secs: f.secs, perRound: f.perRound, findings: f.findings.length, repeats: reps, level, reasons };
+}
+
+/** The impure part: read .orquestra/<issue>/. undefined when the issue has no fix or review files at all. */
+export function collectRounds(ws: string, issue: string, max: number): Metrics | undefined {
+  const dir = join(ws, ".orquestra", issue);
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return undefined; }
+  const mt = (n: string) => statSync(join(dir, n)).mtimeMs;
+  const fixes = new Map<number, number>(), reviews = new Map<number, string[]>();
+  let counter = 0;
+  for (const n of names) {
+    const fx = /^fix-(\d+)\.md$/.exec(n), rv = /^review-(.+?)(?:-(\d+))?\.out\.md$/.exec(n);
+    if (fx) fixes.set(Number(fx[1]), mt(n));
+    else if (rv) reviews.set(Number(rv[2] ?? 0), [...(reviews.get(Number(rv[2] ?? 0)) ?? []), n]);
+    else if (n.startsWith(".rounds-")) counter = Math.max(counter, Number(read(join(dir, n))) || 0);
+  }
+  if (!reviews.size && !fixes.size) return undefined;
+  const rounds = Math.max(counter, 0, ...fixes.keys());
+  const all = names.filter((n) => !n.startsWith(".")).map(mt), t0 = Math.min(...all), t1 = Math.max(...all);
+  // Round k runs from fix-k.md (round 0: the oldest file) to the next fix, the last one to the newest file.
+  const starts = [t0, ...Array.from({ length: rounds }, (_, i) => fixes.get(i + 1) ?? NaN)];
+  const perRound: RoundTime[] = starts.map((s, k) => {
+    const next = k < rounds ? starts[k + 1] : t1;
+    return { round: k, secs: Number.isNaN(s) || Number.isNaN(next) ? 0 : Math.max(0, Math.round((next - s) / 1000)) };
+  });
+  const findings = [...reviews].flatMap(([k, fs]) => fs.flatMap((n) => parseFindings(read(join(dir, n)), k)));
+  return metrics(issue, { rounds, max, perRound, findings, secs: Math.round((t1 - t0) / 1000) });
+}
+
+/** Board marker: "r2/2 ⚠", "r3/2 ✗"; just "r1/2" when ok. */
+export const mark = (x: Pick<Metrics, "rounds" | "max" | "level">) =>
+  `r${x.rounds}/${x.max}${x.level === "warn" ? " ⚠" : x.level === "stop" ? " ✗" : ""}`;

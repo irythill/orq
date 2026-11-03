@@ -20,6 +20,7 @@ import { alive, status as lockStatus } from "../lock.js";
 import { expand, stateDir } from "../paths.js";
 import { processTableAsync, treeMem } from "../process.js";
 import { collect, type Source } from "../quota.js";
+import { collectRounds, mark, type Metrics } from "../rounds.js";
 import { collectRuns, type Row, rows } from "../stats.js";
 import { load as loadBlocks } from "./block.js";
 import { herdrNamesAsync, nameOf } from "./claim.js";
@@ -37,7 +38,7 @@ export interface Agent {
   state: "running" | "died" | "ok" | "fail"; rc?: number; secs: number; mem?: number; cap?: number; activity?: string;
 }
 export interface QItem { label: string; pid: number; secs: number; mem?: number }
-export interface Conductor { id: string; kind: string; account: string; alive: boolean; issues: string[]; name: string }
+export interface Conductor { id: string; kind: string; account: string; alive: boolean; issues: string[]; name: string; rounds?: Record<string, Pick<Metrics, "rounds" | "max" | "level">> }
 export interface Quota { name: string; five: string; week: string; reset5h?: number; resetWeek?: number; note?: string }
 export interface Snapshot {
   at: string; mem: { used: number; total: number }; workspaces: string[];
@@ -123,6 +124,7 @@ const herdrAlive = (id: string) => new Promise<boolean>((res) =>
 
 async function conductors(wss: string[]): Promise<Conductor[]> {
   const by = new Map<string, Conductor & { at: number }>();
+  const max = Number((() => { try { return getPath(loadConfig().cfg, "policy.max_rounds"); } catch { return undefined; } })() ?? 2);
   for (const ws of wss) {
     const O = join(ws, ".orquestra");
     for (const id of existsSync(O) ? readdirSync(O).filter((x) => !x.startsWith(".")) : []) {
@@ -131,6 +133,10 @@ async function conductors(wss: string[]): Promise<Conductor[]> {
       const who = field(t, "pane"), at = Date.parse(field(t, "at")) || 0;
       const c = by.get(who) ?? { id: who, kind: field(t, "kind") || "herdr", account: field(t, "account"), alive: false, issues: [], at, name: nameOf(t) };
       if (!c.name) c.name = nameOf(t);
+      try {
+        const x = collectRounds(ws, id, max);
+        if (x) (c.rounds ??= {})[id] = { rounds: x.rounds, max: x.max, level: x.level };
+      } catch { /* unreadable issue folder: no marker */ }
       c.issues.push(id); c.at = Math.max(c.at, at);
       by.set(who, c);
     }
@@ -311,7 +317,7 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
 
   section("MASTER", m("conductors", "conductors"));
   for (const k of s.conductors)
-    out.push(` ${c.ok}●${c.r} ${c.mut}${fit(k.name || k.id, 22)}${c.r} ${c.ink2}${fit(k.account || "-", 14)}${c.r} ${c.ink}${k.issues.join(" ")}${c.r}`);
+    out.push(` ${c.ok}●${c.r} ${c.mut}${fit(k.name || k.id, 22)}${c.r} ${c.ink2}${fit(k.account || "-", 14)}${c.r} ${c.ink}${k.issues.map((i) => (k.rounds?.[i] ? `${i} ${mark(k.rounds[i])}` : i)).join("  ")}${c.r}`);
   if (!s.conductors.length) out.push(` ${c.mut}${m("no claimed issues", "nenhuma issue reivindicada")}${c.r}`);
 
   section("MONITOR", m("CI/CD", "CI/CD"));

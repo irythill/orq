@@ -21,6 +21,10 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   `<name> 5h=NN% week=NN%` always stays intact and easy to grep.
 
 ### Added
+- `orq rounds <ID> [-w <workspace>] [--json]`: watchdog metrics per issue with no LLM, from the files in
+  `.orquestra/<ID>/` (`fix-<n>.md`, `review-*.out.md`): fix rounds vs `policy.max_rounds`, time total and per round,
+  reviewer findings that come back across rounds (same file + word overlap) and an alert level (ok / warn / stop).
+  `orq board` shows a marker such as `r2/2 ⚠` next to each conductor's issues.
 - Scope guideline in the `/issue` skill and the workspace `CLAUDE.md` template: split big issues into sub-issues or
   sequential batches (one PR each) before dispatching, and stop and split when reviews hit `policy.max_rounds`.
 - Pacing in `orq pick`: an account whose usage, at the pace so far in a window (used ÷ elapsed share, needs the reset

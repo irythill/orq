@@ -10,6 +10,7 @@ import { limitsFor, parseWindows, pick as pickAgent } from "./pick.js";
 import { parseLocal } from "./commands/block.js";
 import { handoffPrompt, owners, plan, tighter, trimHandoffContext } from "./commands/handoff.js";
 import { setTomlString } from "./toml-set.js";
+import { metrics, parseFindings, repeats, similar, slowRounds, mark } from "./rounds.js";
 import { agyNote, antigravityFromModels, copilotFromUser, fromCache, humanReset, minimaxFromRemains } from "./quota.js";
 
 process.env.ORQ_LANG = "en"; // messages checked below are the English ones
@@ -1648,4 +1649,46 @@ test("orq pick review|opinion: more than one declared agent and no --impl-agent/
   } }));
   assert.equal(go("review").status, 0);
   assert.equal(go("review", "--exclude-agent", "y").status, 0);
+});
+
+test("rounds: findings parse from tagged list items and match by file + word overlap", () => {
+  const fs = parseFindings("Summary\n- [blocker] src/a.ts:10 missing null check on user input\n- plain note\n2. [minor] rename helper", 1);
+  assert.equal(fs.length, 2);
+  assert.equal(fs[0].file, "src/a.ts");
+  assert.equal(similar({ file: "src/a.ts", title: "missing null check on user input" }, { file: "src/a.ts", title: "null check missing for the user input" }), true);
+  assert.equal(similar({ file: "src/a.ts", title: "missing null check" }, { file: "src/b.ts", title: "missing null check" }), false);
+  assert.equal(similar({ file: "", title: "race in the queue" }, { file: "", title: "unrelated typo" }), false);
+});
+
+test("rounds: repeats, slow rounds and the alert level", () => {
+  const f = (round: number, title: string) => ({ round, severity: "blocker", file: "src/a.ts", title });
+  assert.equal(repeats([f(0, "missing null check input"), f(1, "other thing entirely")]).length, 0);
+  const rep = repeats([f(0, "missing null check input"), f(1, "missing null check input again")]);
+  assert.deepEqual(rep[0].rounds, [0, 1]);
+  assert.deepEqual(slowRounds([{ round: 0, secs: 900 }, { round: 1, secs: 1000 }, { round: 2, secs: 4000 }]), [2]);
+  assert.deepEqual(slowRounds([{ round: 0, secs: 10 }, { round: 1, secs: 100 }]), []);
+  const base = { max: 2, perRound: [], secs: 0, findings: [] };
+  assert.equal(metrics("X-1", { ...base, rounds: 1 }).level, "ok");
+  assert.equal(metrics("X-1", { ...base, rounds: 2 }).level, "warn");
+  assert.equal(metrics("X-1", { ...base, rounds: 3 }).level, "stop");
+  assert.equal(metrics("X-1", { ...base, rounds: 1, findings: [f(0, "missing null check input"), f(1, "missing null check input")] }).level, "warn");
+  const three = [0, 1, 2].map((r) => f(r, "missing null check input"));
+  assert.equal(metrics("X-1", { ...base, rounds: 1, findings: three }).level, "stop");
+  assert.equal(mark({ rounds: 2, max: 2, level: "warn" }), "r2/2 ⚠");
+});
+
+test("orq rounds reads fix/review files of an issue", () => {
+  const { root, env } = sandbox();
+  const d = join(root, ".orquestra", "X-1");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, "review-app.out.md"), "- [blocker] src/a.ts:1 missing null check on input\n");
+  writeFileSync(join(d, "fix-1.md"), "1. missing null check on input\n");
+  writeFileSync(join(d, "review-app-1.out.md"), "- [blocker] src/a.ts:1 missing null check on input\n");
+  const r = spawnSync("node", [CLI, "rounds", "X-1", "-w", root, "--json"], { env, encoding: "utf8" });
+  assert.equal(r.status, 0);
+  const j = JSON.parse(r.stdout);
+  assert.equal(j.rounds, 1);
+  assert.equal(j.repeats.length, 1);
+  assert.equal(j.level, "warn");
+  assert.equal(spawnSync("node", [CLI, "rounds", "NOPE-9", "-w", root], { env, encoding: "utf8" }).status, 1);
 });
