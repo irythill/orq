@@ -1155,6 +1155,7 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
   agent("u-done", { pid: dead, status: "fail", rc: 3, end: iso(now - 60_000) });
   agent("u-old", { pid: dead, status: "ok", rc: 0, at: iso(now - 7200_000), end: iso(now - 7000_000) });
   writeFileSync(join(st, "locks", "verify", `${now - 5000}-${process.pid}.json`), JSON.stringify({ pid: process.pid, label: "verify ABC-1 api", at: now - 5000, held: true }));
+  writeFileSync(join(ws, ".orquestra", "ABC-1", "review-api.out.md"), "- [blocker] src/a.ts:1 missing null check\n");
   writeFileSync(join(ws, ".orquestra", "ABC-1", "owner"), `pane=me@box kind=id account=work at=${iso(now)}\n`);
   writeFileSync(join(st, "blocks.json"), JSON.stringify({ copilot: { until: now / 1000 + 86400, reason: "out" } }));
   writeFileSync(join(st, "board", "quota.txt"), "work 5h=42% week=7%\nopencode 5h=- week=- [no quota collector]\n");
@@ -1176,7 +1177,7 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
   assert.deepEqual([a.issue, a.label, a.model, a.activity, a.cap], ["ABC-1", "impl-api", "claude-opus-5", "· Edit", 2 ** 32]);
   assert.ok(a.secs >= 89 && a.mem > 0, `secs=${a.secs} mem=${a.mem}`);
   assert.equal(j.queue.holders[0].label, "verify ABC-1 api");
-  assert.deepEqual(j.conductors, [{ id: "me@box", kind: "id", account: "work", alive: true, issues: ["ABC-1"], name: "" }]);
+  assert.deepEqual(j.conductors, [{ id: "me@box", kind: "id", account: "work", alive: true, issues: ["ABC-1"], name: "", rounds: { "ABC-1": { rounds: 0, max: 2, level: "ok" } } }]);
   assert.deepEqual(j.quota.lines[0], { name: "work", five: "42%", week: "7%" });
   assert.deepEqual(j.ci.entries[0], { ws, issue: "ABC-1", repo: "api", branch: "work/plane-abc-1", pr: 9, sha: "abc1234", state: "failed", at: now });
   assert.equal(j.blocks.copilot.reason, "out");
@@ -1185,7 +1186,7 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
   assert.equal(o.status, 0, o.stderr);
   assert.ok(!o.stdout.includes("\x1b"), "no escape codes when piped");
   for (const s of ["TRANSPORT", "verify ABC-1 api", "impl-api", "claude-opus-5", "· Edit", "runner gone", "rc=3", "me@box", "42%",
-    "no quota collector: opencode", "copilot", "CHARTS", "MONITOR", "ABC-1", "failed"]) assert.ok(o.stdout.includes(s), `missing ${s}\n${o.stdout}`);
+    "no quota collector: opencode", "copilot", "CHARTS", "MONITOR", "ABC-1 r0/2", "failed"]) assert.ok(o.stdout.includes(s), `missing ${s}\n${o.stdout}`);
   const pt = spawnSync(process.execPath, [CLI, "board", "--once", "-w", ws], { env: { ...env, ORQ_LANG: "pt" }, encoding: "utf8" });
   assert.ok(pt.stdout.includes("fila de testes"), pt.stdout);
 });
@@ -1691,4 +1692,19 @@ test("orq rounds reads fix/review files of an issue", () => {
   assert.equal(j.repeats.length, 1);
   assert.equal(j.level, "warn");
   assert.equal(spawnSync("node", [CLI, "rounds", "NOPE-9", "-w", root], { env, encoding: "utf8" }).status, 1);
+});
+
+test("rounds: a -<digits> repo suffix is a round only when fix-<n>.md exists; minor findings never escalate; -w needs a value", () => {
+  const { root, env } = sandbox(), d = join(root, ".orquestra", "X-2");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, "review-app-2.out.md"), "- [minor] src/a.ts:1 rename helper function\n");
+  const go = (...a: string[]) => spawnSync(process.execPath, [CLI, "rounds", ...a], { env, encoding: "utf8" });
+  const j = JSON.parse(go("X-2", "-w", root, "--json").stdout);
+  assert.deepEqual([j.rounds, j.perRound.length], [0, 1]); // "app-2" is the repo, round 0
+  writeFileSync(join(d, "review-app-2-1.out.md"), "- [minor] src/a.ts:1 rename helper function\n");
+  writeFileSync(join(d, "fix-1.md"), "x\n");
+  const k = JSON.parse(go("X-2", "-w", root, "--json").stdout);
+  assert.deepEqual([k.rounds, k.repeats.length, k.level], [1, 0, "ok"]);
+  assert.deepEqual(metrics("X", { rounds: 3, max: 2, perRound: [], findings: [], secs: 0 }).reasons, [{ code: "over_max", n: 3, max: 2 }]);
+  assert.equal(go("X-2", "-w").status, 2);
 });

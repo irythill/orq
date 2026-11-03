@@ -13,8 +13,10 @@ export interface Repeat { file: string; title: string; rounds: number[] }
 export interface RoundTime { round: number; secs: number }
 export interface Metrics {
   issue: string; rounds: number; max: number; secs: number; perRound: RoundTime[];
-  findings: number; repeats: Repeat[]; level: Level; reasons: string[];
+  findings: number; repeats: Repeat[]; level: Level; reasons: Reason[];
 }
+/** Why the level is not ok: a code plus numbers, translated where it is shown (orq rounds), kept as is in --json. */
+export interface Reason { code: "over_max" | "at_max" | "same_finding" | "repeated" | "slow"; n: number; max?: number; rounds?: number[] }
 export interface Facts { rounds: number; max: number; perRound: RoundTime[]; findings: Finding[]; secs: number }
 
 export const SIMILAR_FILE = 0.4; // token overlap needed when both findings name the same file
@@ -23,6 +25,7 @@ export const SLOW_FACTOR = 2; // a round this many times slower than the median 
 export const SLOW_MIN_SECS = 600; // ... but only if it also took at least this long
 export const REPEAT_WARN = 2; // a finding seen in this many reviews: warn
 export const REPEAT_STOP = 3; // ... in this many: stop (it came back after two fix rounds)
+export const HEAVY = new Set(["blocker", "major", "critical"]); // only these count towards repeats and the alert
 
 const read = (f: string) => { try { return readFileSync(f, "utf8"); } catch { return ""; } };
 const STOP = new Set(["the", "a", "an", "of", "in", "on", "to", "is", "are", "and", "or", "for", "with", "not", "no", "this", "that", "it",
@@ -76,16 +79,16 @@ export function slowRounds(per: RoundTime[]): number[] {
 
 /** The pure part: facts from the files → numbers, alert level and why. */
 export function metrics(issue: string, f: Facts): Metrics {
-  const reps = repeats(f.findings), reasons: string[] = [];
+  const reps = repeats(f.findings.filter((x) => HEAVY.has(x.severity))), reasons: Reason[] = [];
   let level: Level = "ok";
-  const raise = (l: Level, why: string) => { reasons.push(why); if (l === "stop" || level === "ok") level = l; };
-  if (f.rounds > f.max) raise("stop", `rounds ${f.rounds} > max_rounds ${f.max}`);
-  else if (f.rounds >= f.max && f.max > 0) raise("warn", `rounds ${f.rounds} = max_rounds ${f.max}`);
+  const raise = (l: Level, why: Reason) => { reasons.push(why); if (l === "stop" || level === "ok") level = l; };
+  if (f.rounds > f.max) raise("stop", { code: "over_max", n: f.rounds, max: f.max });
+  else if (f.rounds >= f.max && f.max > 0) raise("warn", { code: "at_max", n: f.rounds, max: f.max });
   const worst = Math.max(0, ...reps.map((r) => r.rounds.length));
-  if (worst >= REPEAT_STOP) raise("stop", `same finding in ${worst} reviews`);
-  else if (reps.length) raise("warn", `${reps.length} repeated finding(s)`);
+  if (worst >= REPEAT_STOP) raise("stop", { code: "same_finding", n: worst });
+  else if (reps.length) raise("warn", { code: "repeated", n: reps.length });
   const slow = slowRounds(f.perRound);
-  if (slow.length) raise("warn", `round ${slow.join(", ")} much slower than the others`);
+  if (slow.length) raise("warn", { code: "slow", n: slow.length, rounds: slow });
   return { issue, rounds: f.rounds, max: f.max, secs: f.secs, perRound: f.perRound, findings: f.findings.length, repeats: reps, level, reasons };
 }
 
@@ -98,9 +101,13 @@ export function collectRounds(ws: string, issue: string, max: number): Metrics |
   const fixes = new Map<number, number>(), reviews = new Map<number, string[]>();
   let counter = 0;
   for (const n of names) {
-    const fx = /^fix-(\d+)\.md$/.exec(n), rv = /^review-(.+?)(?:-(\d+))?\.out\.md$/.exec(n);
+    const fx = /^fix-(\d+)\.md$/.exec(n);
     if (fx) fixes.set(Number(fx[1]), mt(n));
-    else if (rv) reviews.set(Number(rv[2] ?? 0), [...(reviews.get(Number(rv[2] ?? 0)) ?? []), n]);
+  }
+  for (const n of names) {
+    // A trailing -<n> is a round only when fix-<n>.md exists; otherwise it is part of the repo name (round 0).
+    const rv = /^review-(.+?)(?:-(\d+))?\.out\.md$/.exec(n), k = rv && rv[2] !== undefined && fixes.has(Number(rv[2])) ? Number(rv[2]) : 0;
+    if (rv) reviews.set(k, [...(reviews.get(k) ?? []), n]);
     else if (n.startsWith(".rounds-")) counter = Math.max(counter, Number(read(join(dir, n))) || 0);
   }
   if (!reviews.size && !fixes.size) return undefined;
@@ -114,6 +121,12 @@ export function collectRounds(ws: string, issue: string, max: number): Metrics |
   });
   const findings = [...reviews].flatMap(([k, fs]) => fs.flatMap((n) => parseFindings(read(join(dir, n)), k)));
   return metrics(issue, { rounds, max, perRound, findings, secs: Math.round((t1 - t0) / 1000) });
+}
+
+/** Cheap change signature of an issue folder (names + mtimes, no reads) for caching collectRounds between redraws. */
+export function roundsSig(ws: string, issue: string): string {
+  const dir = join(ws, ".orquestra", issue);
+  try { return readdirSync(dir).map((n) => `${n}:${statSync(join(dir, n)).mtimeMs}`).join("|"); } catch { return ""; }
 }
 
 /** Board marker: "r2/2 ⚠", "r3/2 ✗"; just "r1/2" when ok. */
