@@ -118,7 +118,7 @@ tell me".
 orq pick impl --level <level> > $O/impl-<repo>.pick    # the fix rounds reuse it (step 6)
 herdr-agent $(cat $O/impl-<repo>.pick) -g <group> -t "<ID> impl <repo>" -d $WT -o $O/impl-<repo> -- $O/impl-<repo>.md
 ```
-- The Claude account (`-c`) already comes from `orq pick` (the least used one under the limit).
+- The Claude account (`-c`) already comes from `orq pick` (one under the limit whose pace stays within it, then the least used).
 - Full final answer in `$O/impl-<repo>.out.md`; log in `.log`; the agent's session id in `.id`.
 - Codex's sandbox has no network: `git fetch` is yours, beforehand (above). Push/PR: yours (step 7).
 - `herdr-agent` returns immediately (no need to background it); the child's pane is in `<prefix>.pane`

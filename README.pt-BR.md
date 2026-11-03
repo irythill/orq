@@ -167,7 +167,8 @@ rotation = 0.20                          # penalty for having been picked recent
 
 ### Como o `orq-pick` escolhe
 1. **Filtros:** só agentes com aquele papel, abaixo do limite de quota, não bloqueados (`orq-block`) e, para reviews,
-   de um vendor diferente do implementador. Com várias contas, pega a menos usada.
+   de um vendor diferente do implementador. Com várias contas, prefere uma cujo ritmo fique dentro do limite e, como
+   desempate, a menos usada.
 2. **Pontuação:** `quality × delivery + tokens × economy + speed × quickness − rotation × recent picks`. Os números vêm
    do histórico (`orq-stats`); um agente com poucas execuções usa o `prior` da config e ganha um bônus de exploração.
 3. **Agentes com `reserve = true`** (ex.: Claude, que divide quota com o conductor) só entram quando nada mais serve.
