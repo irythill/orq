@@ -61,7 +61,7 @@ orq pick impl --level simple|medium|heavy                          # → e.g. -a
 orq pick review --level <level> --impl-agent <agent that implemented>   # → another vendor, e.g. -a opencode -m ...
 orq pick opinion --impl-agent <agent that implemented>             # second opinion (e.g. Copilot), see step 5
 ```
-More than one agent eligible for `review`/`opinion` (declared, not excluded or blocked, with a model for the role) and neither `--impl-agent` nor `--impl-vendor` given → exit 2:
+More than one agent eligible for `review`/`opinion` (declared, not excluded or blocked, with a model for the role; quota is not considered) and neither `--impl-agent` nor `--impl-vendor` given → exit 2:
 always pass one of them (`--no-record`/`--explain` do not change this).
 The output goes straight into `herdr-agent` (`herdr-agent $(orq pick ...) -g ... -t ... -d ... -o ... -- prompt.md`).
 - Exit 3 = no candidate (quota exhausted, no agent with that role): **stop and ask the user**.

@@ -65,8 +65,8 @@ export async function pick(argv: string[]): Promise<number> {
     const declared = r.mode === "auto"
       ? r.pool.filter((n) => agents[n] && !exclude.has(n) && !(n in blocked) && modelFor(agents[n], role, level)) : [];
     if (declared.length > 1) {
-      console.error(`orq pick: ${m(`more than one agent eligible for ${role} (${declared.join(", ")}): pass --impl-agent or --impl-vendor`,
-        `mais de um agente elegível para ${role} (${declared.join(", ")}): informe --impl-agent ou --impl-vendor`)}`);
+      console.error(`orq pick: ${m(`more than one agent eligible for ${role} (${declared.join(", ")}) before quota checks: pass --impl-agent or --impl-vendor`,
+        `mais de um agente elegível para ${role} (${declared.join(", ")}) antes da checagem de quota: informe --impl-agent ou --impl-vendor`)}`);
       return 2;
     }
   }
