@@ -92,10 +92,18 @@ if [ "$UNINSTALL" = 1 ]; then
   else
     unlink_ours "$unit"
   fi
-  for u in orq-gc.service orq-handoff.service; do
-    conf="$UNIT_DIR/$u.d/orq-node.conf"
-    [ -e "$conf" ] && { run rm -f "$conf"; echo "  remove  $conf"; }
+  say "${B}$(m "orq timers" "timers do orq")${N}"
+  for u in orq-gc orq-handoff; do
+    # Stop and disable the timer (the user may have enabled it), then remove our links and drop-ins.
+    if systemd_ok && [ -L "$UNIT_DIR/$u.timer" ] && [[ "$(readlink "$UNIT_DIR/$u.timer")" == "$ROOT"/* ]]; then
+      echo "  disable $u.timer"; run systemctl --user disable --now "$u.timer" 2>/dev/null || true
+    fi
+    unlink_ours "$UNIT_DIR/$u.timer"
+    unlink_ours "$UNIT_DIR/$u.service"
+    conf="$UNIT_DIR/$u.service.d/orq-node.conf"
+    if [ -e "$conf" ]; then run rm -f "$conf"; run rmdir "$UNIT_DIR/$u.service.d" 2>/dev/null; echo "  remove  $conf"; fi
   done
+  systemd_ok && run systemctl --user daemon-reload
   say "${B}herdr plugin${N}"
   if command -v herdr >/dev/null && herdr plugin list 2>/dev/null | grep -q "$ROOT/herdr-plugin"; then
     say "  remove  plugin orq"; run herdr plugin unlink orq >/dev/null

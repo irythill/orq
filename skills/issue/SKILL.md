@@ -175,7 +175,7 @@ round reuses whoever gave the verdict. An agent that failed twice in a row with 
 `ok_exit`/`filter` in the config): same command; it ignores the prompt and the attachments and reviews the branch
 against `{base}` itself. Read its answer like any other: `status=ok` with `rc≠0` is a verdict with findings, not a
 failure. Its high-severity items are the blockers, still under the step 6 rule (`file:line` + concrete failure).
-If the tool's answer says nothing was reviewed (e.g. Revtool's "Nothing to review"), `agents.<name>.no_review` (a
+If the tool's answer opens with (or, when short, consists of) a statement that nothing was reviewed (e.g. Revtool's "Nothing to review"), `agents.<name>.no_review` (a
 regex) makes `orq agent` end that run `status=fail`: `orq pick`'s fallback and the conductor treat it as not run,
 same as an empty answer.
 **Second opinion** (`orq pick opinion`, read only, same attachments): only on **heavy** issues or when reviewer and
