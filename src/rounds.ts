@@ -71,8 +71,9 @@ export function repeats(fs: Finding[]): Repeat[] {
 
 const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b), h = s.length >> 1; return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2; };
 
-/** Rounds whose time is far above the median of the other rounds (needs two others to compare). */
-export function slowRounds(per: RoundTime[]): number[] {
+/** Fix rounds far above the median of the other fix rounds (round 0 is the implementation: never compared; needs 3 fix rounds). */
+export function slowRounds(all: RoundTime[]): number[] {
+  const per = all.filter((r) => r.round > 0);
   if (per.length < 3) return [];
   return per.filter((r) => r.secs >= SLOW_MIN_SECS && r.secs > SLOW_FACTOR * median(per.filter((x) => x !== r).map((x) => x.secs))).map((r) => r.round);
 }
@@ -126,7 +127,7 @@ export function collectRounds(ws: string, issue: string, max: number): Metrics |
 /** Cheap change signature of an issue folder (names + mtimes, no reads) for caching collectRounds between redraws. */
 export function roundsSig(ws: string, issue: string): string {
   const dir = join(ws, ".orquestra", issue);
-  try { return readdirSync(dir).map((n) => `${n}:${statSync(join(dir, n)).mtimeMs}`).join("|"); } catch { return ""; }
+  try { return readdirSync(dir).filter((n) => /^(fix-\d+\.md|review-.+\.out\.md|\.rounds-.+)$/.test(n)).map((n) => `${n}:${statSync(join(dir, n)).mtimeMs}`).join("|"); } catch { return ""; }
 }
 
 /** Board marker: "r2/2 ⚠", "r3/2 ✗"; just "r1/2" when ok. */
