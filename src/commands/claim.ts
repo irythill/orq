@@ -5,7 +5,7 @@
 //   last field and may hold spaces. `--from <name>` finds a conductor's issues by any part of that name (or its pane).
 //   conductor id: HERDR_PANE_ID (alive = `herdr agent get` answers) or ORQ_CONDUCTOR_ID (alive = claimed or refreshed
 //   in the last ORQ_CLAIM_TTL_H hours, default 24 — any conductor, any terminal); neither → <user>@<host>.
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -19,17 +19,49 @@ orq claim [-w <workspace>] --from <name> [-f]   a conductor's issues by its name
 const field = (text: string, k: string) => new RegExp(`${k}=(\\S+)`).exec(text)?.[1] ?? "";
 export const nameOf = (text: string) => / name=(.*)$/m.exec(text)?.[1].trim() ?? "";
 
+const herdrList = (args: string[]) => {
+  const r = spawnSync("herdr", args, { encoding: "utf8", timeout: 5_000 });
+  try { return JSON.parse(r.stdout).result; } catch { return undefined; }
+};
+
+/** pane_id -> the label of the herdr workspace holding it (the name the user sees), for every live pane. One
+ *  `pane list` + one `workspace list` call, however many panes are being looked up. */
+export function herdrNames(): Map<string, string> {
+  const panes = herdrList(["pane", "list"])?.panes as { pane_id: string; workspace_id?: string }[] | undefined;
+  const workspaces = herdrList(["workspace", "list"])?.workspaces as { workspace_id: string; label?: string }[] | undefined;
+  const labelOf = new Map((workspaces ?? []).map((w) => [w.workspace_id, w.label ?? ""]));
+  const out = new Map<string, string>();
+  for (const p of panes ?? []) {
+    const label = p.workspace_id ? labelOf.get(p.workspace_id) : undefined;
+    if (label) out.set(p.pane_id, label);
+  }
+  return out;
+}
+
 /** The label of the herdr workspace holding `pane` (the name the user sees), or "". */
-function herdrName(pane: string): string {
-  const res = (args: string[]) => {
-    const r = spawnSync("herdr", args, { encoding: "utf8", timeout: 5_000 });
-    try { return JSON.parse(r.stdout).result; } catch { return undefined; }
-  };
-  const ws = (res(["pane", "list"])?.panes as { pane_id: string; workspace_id?: string }[] | undefined)
-    ?.find((p) => p.pane_id === pane)?.workspace_id;
-  if (!ws) return "";
-  return (res(["workspace", "list"])?.workspaces as { workspace_id: string; label?: string }[] | undefined)
-    ?.find((w) => w.workspace_id === ws)?.label ?? "";
+export function herdrName(pane: string): string {
+  return herdrNames().get(pane) ?? "";
+}
+
+const herdrListAsync = (args: string[]) => new Promise<any>((res) =>
+  execFile("herdr", args, { timeout: 5_000, windowsHide: true }, (_e, stdout) => {
+    try { res(JSON.parse(stdout).result); } catch { res(undefined); }
+  }));
+
+/** Same as herdrNames(), but off the event loop (execFile, not spawnSync) — for a live, repeatedly-redrawn caller
+ *  like the board, where blocking would freeze the whole UI while herdr answers. */
+export async function herdrNamesAsync(): Promise<Map<string, string>> {
+  const [panes, workspaces] = await Promise.all([
+    herdrListAsync(["pane", "list"]).then((r) => r?.panes as { pane_id: string; workspace_id?: string }[] | undefined),
+    herdrListAsync(["workspace", "list"]).then((r) => r?.workspaces as { workspace_id: string; label?: string }[] | undefined),
+  ]);
+  const labelOf = new Map((workspaces ?? []).map((w) => [w.workspace_id, w.label ?? ""]));
+  const out = new Map<string, string>();
+  for (const p of panes ?? []) {
+    const label = p.workspace_id ? labelOf.get(p.workspace_id) : undefined;
+    if (label) out.set(p.pane_id, label);
+  }
+  return out;
 }
 
 /** A `herdr agent get` result → owner alive. A timeout (busy daemon, slow herdr) must not read as a dead owner:
@@ -58,12 +90,16 @@ export async function claim(argv: string[]): Promise<number> {
   }
   const O = join(ws, ".orquestra");
   if (mode === "list") {
+    const names = herdrNames(); // one herdr lookup for every issue in this listing, not one per issue
     for (const d of existsSync(O) ? readdirSync(O).filter((x) => !x.startsWith(".")) : []) {
       const f = join(O, d, "owner");
       if (!existsSync(f)) continue;
       const t = readFileSync(f, "utf8").trim();
-      const n = nameOf(t);
-      console.log(`${d} ${n ? `"${n}" ` : ""}${t.replace(/ name=.*$/, "")} (${aliveOwner(t) ? "alive" : "dead"})`);
+      const alive = aliveOwner(t);
+      // The herdr workspace's current label while the pane is alive; the name stored at claim time otherwise
+      // (the user may have renamed the workspace since, or it may not be a herdr conductor at all).
+      const n = (alive && (field(t, "kind") || "herdr") === "herdr" ? names.get(field(t, "pane")) ?? "" : "") || nameOf(t);
+      console.log(`${d} ${n ? `"${n}" ` : ""}${t.replace(/ name=.*$/, "")} (${alive ? "alive" : "dead"})`);
     }
     return 0;
   }
@@ -83,12 +119,16 @@ export async function claim(argv: string[]): Promise<number> {
   if (from !== undefined) {
     if (!from) { console.error(USAGE); return 2; }
     const q = from.toLowerCase();
+    const liveNames = herdrNames(); // one herdr lookup for every issue being searched, not one per issue
     const hits = (existsSync(O) ? readdirSync(O).filter((x) => !x.startsWith(".")) : []).flatMap((d) => {
       const f = join(O, d, "owner");
       if (!existsSync(f)) return [];
-      const t = readFileSync(f, "utf8").trim(), pane = field(t, "pane");
-      return pane !== me && (nameOf(t).toLowerCase().includes(q) || pane.toLowerCase().includes(q))
-        ? [{ id: d, f, pane, name: nameOf(t), alive: aliveOwner(t) }] : [];
+      const t = readFileSync(f, "utf8").trim(), pane = field(t, "pane"), alive = aliveOwner(t);
+      const live = alive && (field(t, "kind") || "herdr") === "herdr" ? liveNames.get(pane) ?? "" : "";
+      const stored = nameOf(t), name = live || stored;
+      const names = [live, stored].filter(Boolean);
+      return pane !== me && (names.some((n) => n.toLowerCase().includes(q)) || pane.toLowerCase().includes(q))
+        ? [{ id: d, f, pane, name, alive }] : [];
     });
     if (!hits.length) { console.log(m(`no issue owned by a conductor matching "${from}"`, `nenhuma issue de um conductor que bata com "${from}"`)); return 1; }
     const owners = [...new Set(hits.map((h) => h.pane))];
