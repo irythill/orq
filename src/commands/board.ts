@@ -20,7 +20,7 @@ import { alive, status as lockStatus } from "../lock.js";
 import { expand, stateDir } from "../paths.js";
 import { processTableAsync, treeMem } from "../process.js";
 import { collect, type Source } from "../quota.js";
-import { collectRounds, mark, type Metrics } from "../rounds.js";
+import { collectRounds, mark, roundsSig, type Metrics } from "../rounds.js";
 import { collectRuns, type Row, rows } from "../stats.js";
 import { load as loadBlocks } from "./block.js";
 import { herdrNamesAsync, nameOf } from "./claim.js";
@@ -122,11 +122,21 @@ const field = (t: string, k: string) => new RegExp(`${k}=(\\S+)`).exec(t)?.[1] ?
 const herdrAlive = (id: string) => new Promise<boolean>((res) =>
   execFile("herdr", ["agent", "get", id], { timeout: 5000, windowsHide: true }, (e) => res(!e)));
 
+// The board redraws every few seconds: reread an issue's reviews only when its folder changed.
+const roundsCache = new Map<string, { sig: string; x: Metrics | undefined }>();
+function cachedRounds(ws: string, id: string, max: number): Metrics | undefined {
+  const key = `${ws}\0${id}\0${max}`, sig = roundsSig(ws, id), hit = roundsCache.get(key);
+  if (hit && hit.sig === sig) return hit.x;
+  const x = collectRounds(ws, id, max);
+  roundsCache.set(key, { sig, x });
+  return x;
+}
+
 async function conductors(wss: string[]): Promise<Conductor[]> {
   const by = new Map<string, Conductor & { at: number }>();
-  const max = Number((() => { try { return getPath(loadConfig().cfg, "policy.max_rounds"); } catch { return undefined; } })() ?? 2);
   for (const ws of wss) {
     const O = join(ws, ".orquestra");
+    const max = Number((() => { try { return getPath(loadConfig(ws).cfg, "policy.max_rounds"); } catch { return undefined; } })() ?? 2);
     for (const id of existsSync(O) ? readdirSync(O).filter((x) => !x.startsWith(".")) : []) {
       const t = read(join(O, id, "owner")).trim();
       if (!t) continue;
@@ -134,7 +144,7 @@ async function conductors(wss: string[]): Promise<Conductor[]> {
       const c = by.get(who) ?? { id: who, kind: field(t, "kind") || "herdr", account: field(t, "account"), alive: false, issues: [], at, name: nameOf(t) };
       if (!c.name) c.name = nameOf(t);
       try {
-        const x = collectRounds(ws, id, max);
+        const x = cachedRounds(ws, id, max);
         if (x) (c.rounds ??= {})[id] = { rounds: x.rounds, max: x.max, level: x.level };
       } catch { /* unreadable issue folder: no marker */ }
       c.issues.push(id); c.at = Math.max(c.at, at);
