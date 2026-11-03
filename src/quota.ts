@@ -222,7 +222,8 @@ export function agyToken(): { access?: string; expiry?: string; refresh: boolean
 
 /** Why the stored agy token can't be used as is: idle (expired, agy renews it on its next run) or login expired (no refresh token). */
 export function agyNote(t: { expiry?: string; refresh: boolean }, now = Date.now()): string | undefined {
-  if (!t.expiry || Date.parse(t.expiry) >= now) return undefined;
+  const at = t.expiry ? Date.parse(t.expiry) : NaN;
+  if (Number.isNaN(at) || at >= now) return undefined;
   return t.refresh ? m("token idle (agy refreshes on next run)", "token ocioso (o agy renova no próximo uso)")
     : m("login expired: run `agy models`", "login expirado: rode `agy models`");
 }

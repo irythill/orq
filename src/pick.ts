@@ -66,6 +66,8 @@ export function parseWindows(text: string): WindowMap {
 }
 
 // Both languages orq writes these notes in (the collectors' not-logged-in and expired-login texts).
+/** agy's idle-token note (collector text, both languages). */
+const IDLE = /token idle|token ocioso/i;
 const EXPIRED = /login expired|login expirado|not logged in|no agy login|sem login/i;
 /** Window lengths in seconds, unless the quota line publishes another (span5h/spanweek, minutes). */
 const WINDOW_S = { five: 5 * 3600, week: 7 * 86400 };
@@ -141,6 +143,10 @@ export function pick(inp: PickInput): PickResult {
     if (qn.length && !accs.length) { out(name, m("all accounts blocked", "todas as contas bloqueadas")); continue; }
     const fix = accs.map(([n]) => inp.windows?.[n]?.expired).filter((x): x is string => Boolean(x));
     if (accs.length && fix.length === accs.length) { out(name, fix[0]); continue; }
+    // An idle agy token with nothing cached: the fix is one agy run, not a quota number.
+    const noRead = m("no reading yet: run `agy models` once", "sem leitura ainda: rode `agy models` uma vez");
+    const idleNoData = ([n, v]: readonly [string, number | null]) => v === null && IDLE.test(inp.windows?.[n]?.note ?? "");
+    if (accs.length && accs.every(idleNoData)) { out(name, noRead); continue; }
     const under = ([n, v]: readonly [string, number | null]) => {
       const q = inp.windows?.[n];
       return !q?.expired && v !== null && (q?.five ?? (q ? -1 : v)) < limit5 && (q?.week ?? (q ? -1 : v)) < limitWeek;
@@ -150,6 +156,7 @@ export function pick(inp: PickInput): PickResult {
       const detail = accs.map(([n, v]) => {
         const q = inp.windows?.[n], vn = v ?? -1;
         if (q?.expired) return `${n}: ${q.expired}`;
+        if (idleNoData([n, v])) return `${n}: ${noRead}`;
         const five = q?.five ?? (q ? -1 : vn), week = q?.week ?? (q ? -1 : vn);
         const fiveOver = five >= limit5, weekOver = week >= limitWeek;
         // The account is usable again only once every over-limit window has reset: the latest of their reset times.

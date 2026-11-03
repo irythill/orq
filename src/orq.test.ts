@@ -730,7 +730,7 @@ test("pick: pacing penalizes a projected overrun (soft); headroom and expired lo
   const nd = pick({ ...base, cfg, role: "impl", quota: { a: null, b: 10 },
     windows: parseWindows("a 5h=?% week=?% [token idle (agy refreshes on next run)]\nb 5h=10% week=10%") });
   assert.deepEqual(nd.cands.map((c) => c.agent), ["b"]);
-  assert.match(nd.notes[0], /a=null \(token idle \(agy refreshes on next run\)\)/);
+  assert.equal(nd.notes[0], "a: no reading yet: run `agy models` once");
 });
 
 test("agyNote: idle vs expired vs fresh; the idle note reaches pick's rejection detail", () => {
@@ -739,6 +739,7 @@ test("agyNote: idle vs expired vs fresh; the idle note reaches pick's rejection 
   assert.match(agyNote({ expiry: past, refresh: false })!, /login expired|login expirado/);
   assert.equal(agyNote({ expiry: future, refresh: true }), undefined);
   assert.equal(agyNote({ refresh: false }), undefined);
+  assert.equal(agyNote({ expiry: "not a date", refresh: true }), undefined);
   const w = parseWindows("a 5h=?% week=?% [token idle (agy refreshes on next run)]");
   assert.equal(w.a.note, "token idle (agy refreshes on next run)");
   assert.equal(w.a.expired, undefined);
