@@ -184,7 +184,7 @@ function notifyDesktop(issue: string, repo: string, state: CiState): void {
  */
 export function collectCi(ws: string, hooks: { desktop?: typeof notifyDesktop; owner?: typeof notify; notice?: (line: string) => void } = {}): CiEntry[] {
   // Detached: collectCi() must never block on a conductor stuck in a dialog (herdr-notify waits up to 30 min).
-  const desktop = hooks.desktop ?? notifyDesktop, toOwner = hooks.owner ?? ((pane: string, line: string) => notify(pane, line, true)),
+  const desktop = hooks.desktop ?? notifyDesktop, toOwner = hooks.owner ?? ((pane: string, line: string) => notify(pane, line)),
     notice = hooks.notice ?? ((l: string) => console.log(l));
   const now = Date.now(), worktrees = listWorktrees(ws);
   const found = claimedIssues(ws).flatMap(({ id, owner, kind }) =>
@@ -209,7 +209,8 @@ export function collectCi(ws: string, hooks: { desktop?: typeof notifyDesktop; o
   });
 
   for (const { owner, kind, id, repo, state, sha } of toNotify) {
-    desktop(id, repo, state);
+    // A failure the owner is told about already pops up (src/notice.ts signals it loudly): no second popup.
+    if (!(state === "failed" && owner && kind === "herdr")) desktop(id, repo, state);
     if (state === "failed" && owner) {
       const line = `[ORQ CI] ${id} ${repo} failed (${sha.slice(0, 7)})`;
       if (kind === "herdr") toOwner(owner, line); else notice(line);

@@ -89,6 +89,6 @@ Notificações) quando o `~/.config/herdr/config.toml` tem:
 [ui.toast]
 delivery = "system"     # off | herdr (inside herdr) | terminal | system
 ```
-Depois: `herdr server reload-config`. Os avisos do orq (`herdr-notify`) aparecem como "✓ <ID> <step> <repo>" ou
+Depois: `herdr server reload-config`. Os avisos do orq aparecem como "✓ <ID> <step> <repo>" ou
 "✗ ..." com o arquivo de resposta no corpo. No WSL, o pop-up depende de o herdr conseguir chegar ao Windows; se nada
 aparecer, use `delivery = "herdr"` (aviso dentro da janela do herdr).

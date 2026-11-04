@@ -2,7 +2,7 @@
 // under its memory cap (src/process.ts), in a herdr tab, a tmux window or the background (src/terminal.ts).
 // Writes <prefix>.out.md (final answer) / .log / .id (session, for -R) / .pane / .done ("status=ok|fail rc=N at=...").
 // Returns at once; `orq wait <prefix>` blocks until .done. A conductor in herdr (HERDR_PANE_ID) also gets ONE line
-// "[HERDR-AGENT DONE] <title> status=... answer: <prefix>.out.md" typed into its pane by herdr-notify.
+// "[HERDR-AGENT DONE] <title> status=... answer: <prefix>.out.md" typed into its pane by src/notice.ts.
 // The launcher writes <prefix>.job.json and starts `orq agent --run <job>` on the terminal host; that runner does the rest.
 // -T (or machine.tui / HERDR_AGENT_TUI=1): the agent's own screen (its `tui` template) in a herdr tab or tmux window,
 // same cap and files. The agent calls `orq agent --turn <job> <kind>` at every end of turn, which writes .out.md/.id/
@@ -23,6 +23,7 @@ import { alive } from "../lock.js";
 import { stateDir } from "../paths.js";
 import { killTree, type MemMode, parseSize, resolveMode, runCapped } from "../process.js";
 import { closeOwnTab, detectHost, type Host, launch, screenOpen, shq, typeInto } from "../terminal.js";
+import { ackPrefix } from "../notice.js";
 import { dropWorktree, notify } from "../testrun.js";
 
 export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base] [-r] [-R session [-F [-F]]] [-T] -- <prompt.md>   run a child agent";
@@ -192,6 +193,7 @@ export async function agent(argv: string[]): Promise<number> {
   // Readable copy of the command (also what orq stats and herdr-board read).
   writeFileSync(`${O}.run.sh`, `#!/usr/bin/env bash\n# orq agent (generated; the run itself is \`orq agent --run ${O}.job.json\`) --unit=${unit} \n` +
     `cd ${shq(dir)}\n${Object.entries(env).map(([k, val]) => `${k}=${shq(val)} `).join("")}${cmd.map(shq).join(" ")}${job.stdin ? ` < ${shq(P)}` : ""}\n`);
+  ackPrefix(O); // starting work on the issue again: its failure notices were seen
   const where = launch(host, { group: g || "agents", title: t, dir: repo, argv: [process.execPath, CLI, "agent", "--run", `${O}.job.json`], id: unit, keep: job.keep });
   writeFileSync(`${O}.pane`, `${where}\n`);
   console.log(`[orq agent] ${t} → ${where}${tui ? " (TUI)" : ""}`);
@@ -252,7 +254,7 @@ function turn(file: string, kind: string, rest: string[]): number {
     const noReview = noReviewMatch(j.noReview, answer);
     const st = /\S/.test(answer) && !noReview ? "ok" : "fail";
     writeAtomic(`${O}.done`, `status=${st} rc=0 at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
-    if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=0 answer: ${O}.out.md`, true);
+    if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=0 answer: ${O}.out.md`);
   } catch (e) { console.error(`orq agent --turn: ${(e as Error).message}`); }
   return 0;
 }
@@ -346,7 +348,7 @@ async function runJob(file: string): Promise<number> {
       const ok = /\bstatus=ok\b/.test(existsSync(`${O}.done`) ? readFileSync(`${O}.done`, "utf8") : "");
       if (!existsSync(`${O}.done`)) {
         writeAtomic(`${O}.done`, `status=fail rc=${code} at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
-        if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=fail rc=${code} answer: ${O}.out.md`, true);
+        if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=fail rc=${code} answer: ${O}.out.md`);
       }
       rmSync(`${O}.pid`, { force: true });
       return ok ? "ok" : "fail";

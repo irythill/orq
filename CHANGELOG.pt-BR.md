@@ -6,12 +6,23 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 ### Corrigido
+- Os avisos ao conductor (verify/agente terminou, CI vermelho) agora são entregues pelo próprio `orq`, destacados, e não
+  falham mais em silêncio: o antigo `herdr-notify` dependia do `jq`, desistia após 3 tentativas em um minuto e imprimia os
+  erros numa aba ou em `/dev/null`. Cada aviso fica registrado (`<state>/notices.jsonl`; `orq notice` mostra) com cada
+  tentativa e o resultado, com novas tentativas e espera crescente (5s, 15s, 45s, 2min, 5min), espera um diálogo passar e
+  envia a um conductor ocupado (a entrada dele enfileira a linha).
 - `orq agent` sem `-a` (ou `$AGENT`) agora recusa em vez de iniciar o Codex: um `orq pick` sem candidato deixava
   `$(orq pick ...)` vazio, o que iniciava o Codex passando por cima de bloqueios e cota.
 - `orq board` mostra o modelo de cada execução quando um prefixo é reutilizado (o arquivo de estado agora o registra), e `?`
   em vez de uma duração crescente para execução cujo runner sumiu.
 
 ### Adicionado
+- Falhas são barulhentas, sem depender do conductor ler o pane: notificação do herdr com som, título `✗` no pane do
+  conductor (só visual, some em 30 min ou quando reconhecido) e notificação de desktop (`notify-send`;
+  `[ui] desktop_notify = true|false`, padrão true, só Linux). Sucessos ficam quietos (notificação simples do herdr).
+- `orq board`: uma linha vermelha no topo lista falhas da última hora cujo aviso não foi entregue ou que o conductor
+  ainda não tratou. Reconhecido = o conductor rodou `orq wait` (que imprimiu o resultado), `orq verify` ou `orq agent`
+  para aquela issue depois do aviso.
 - `orq block <nome> --quota`: bloqueia até a janela de cota renovar, lida do coletor, em vez de um prazo fixo.
 - Watchdog camada 2: `orq rounds <ID> --diagnose` (só em warn/stop) pede a um agente barato, somente leitura e de outro
   fornecedor que o implementador, um diagnóstico de por que as rodadas não convergem, a partir das métricas, dos `fix-<n>.md`

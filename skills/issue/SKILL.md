@@ -143,6 +143,9 @@ herdr-agent $(cat $O/impl-<repo>.pick) -g <group> -t "<ID> impl <repo>" -d $WT -
   origin/<BASE>...HEAD`); (2) `NODE_OPTIONS=--max-old-space-size=2048 tsc --noEmit` for the project. Don't run tests".
   Full suite only in CI (or a manual `herdr-baseline` if the user asks).
 - An issue that changes an API contract: **API first**; consumers afterwards, with the new contract in the prompt.
+- **A red board line / `✗` pane title = a failure you may have missed.** If you see one (or the user says notices aren't
+  arriving), run `orq notice` (delivery log) and `<prefix>.done` for that issue, then handle the failure; running
+  `orq wait`, `orq verify` or `orq agent` for the issue acknowledges it.
 - **Never block waiting** (`herdr agent wait`, `pane wait-output`, `sleep`, `timeout`): completion arrives as a
   `[HERDR-AGENT DONE]` line in your pane. Dispatch, report in one line and end your turn. "Done yet?" = `<prefix>.done`
   exists (never `pgrep`).
