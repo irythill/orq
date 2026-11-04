@@ -2,7 +2,8 @@
 // orq rounds <ID> --diagnose [-w <workspace>]  warn/stop only: a cheap read only "watchdog" agent (another vendor than the
 //   implementer when known) diagnoses why the rounds don't converge → .orquestra/<ID>/diagnosis-<rounds>.md (advisory)
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getPath, loadConfig } from "../config.js";
@@ -10,6 +11,7 @@ import { buildPrompt, evidence, latestDiagnosis, recommendation } from "../diagn
 import { m } from "../i18n.js";
 import { expand } from "../paths.js";
 import { collectRounds, mark, type Metrics, type Reason } from "../rounds.js";
+import { alive } from "../lock.js";
 import { wait } from "./wait.js";
 
 export const USAGE = `orq rounds <ID> [-w <workspace>] [--json]   rounds vs max_rounds, time per round, repeated findings, alert level
@@ -60,18 +62,30 @@ const orq = (...a: string[]) => spawnSync(process.execPath, [CLI, ...a], { encod
 /** --diagnose: pick a watchdog, run it read only on the evidence, keep its answer as diagnosis-<rounds>.md. */
 async function diagnoseIssue(ws: string, id: string, x: Metrics): Promise<number> {
   if (x.level === "ok") { console.log(m(`${id}: level is ok, no diagnosis needed`, `${id}: nível ok, não precisa de diagnóstico`)); return 0; }
-  const dir = join(ws, ".orquestra", id), prefix = join(dir, `watchdog-${x.rounds}`), out = join(dir, `diagnosis-${x.rounds}.md`);
+  const dir = join(ws, ".orquestra", id), prefix = join(dir, `watchdog-${x.rounds}-${Date.now()}`), out = join(dir, `diagnosis-${x.rounds}.md`);
   // The implementer, when known (impl-<repo>.pick saved by the playbook): the watchdog must be another vendor.
   const implPick = readdirSync(dir).filter((n) => /^impl-.+\.pick$/.test(n)).map((n) => /(?:^|\s)-a (\S+)/.exec(readFileSync(join(dir, n), "utf8"))?.[1]).find(Boolean);
+  // A watchdog still running for this issue (a previous --diagnose that timed out or was interrupted): don't start another.
+  for (const n of readdirSync(dir).filter((f) => /^watchdog-.+\.pid$/.test(f))) {
+    const pid = Number(readFileSync(join(dir, n), "utf8"));
+    if (pid && alive(pid)) { console.error(m(`a watchdog for ${id} is still running (${n}, pid ${pid}); wait for it or stop it first`, `um watchdog de ${id} ainda está rodando (${n}, pid ${pid}); espere ou encerre antes`)); return 1; }
+  }
   const ev = evidence(dir);
   writeFileSync(`${prefix}.md`, buildPrompt(x, ev.fixes, ev.reviews));
   const p = orq("pick", "watchdog", "--level", "simple", "-w", ws, ...(implPick ? ["--impl-agent", implPick] : []));
   if (p.status !== 0) { console.error(p.stderr.trim() || `orq pick watchdog: exit ${p.status}`); return p.status ?? 1; }
   const picked = p.stdout.trim().split(/\s+/);
-  const a = orq("agent", ...picked, "-r", "-t", `${id} watchdog`, "-d", dir, "-g", "watchdog", "-o", prefix, "--", `${prefix}.md`);
-  process.stderr.write(a.stderr); process.stdout.write(a.stdout);
-  if (a.status !== 0) return a.status ?? 1;
-  const rc = await wait(["--timeout", String(WATCHDOG_TIMEOUT), prefix]);
+  // The agent runs in a scratch folder (everything it needs is in the prompt): it can't touch the issue files, even write sandboxed.
+  const scratch = mkdtempSync(join(tmpdir(), "orq-watchdog-"));
+  try {
+    const a = orq("agent", ...picked, "-r", "-t", `${id} watchdog`, "-d", scratch, "-g", "watchdog", "-o", prefix, "--", `${prefix}.md`);
+    process.stderr.write(a.stderr); process.stdout.write(a.stdout);
+    if (a.status !== 0) return a.status ?? 1;
+    return await finish(await wait(["--timeout", String(WATCHDOG_TIMEOUT), prefix]), prefix, out);
+  } finally { rmSync(scratch, { recursive: true, force: true }); }
+}
+
+async function finish(rc: number, prefix: string, out: string): Promise<number> {
   if (rc === 124) { console.error(m(`diagnosis not written: the watchdog agent did not finish in ${WATCHDOG_TIMEOUT}s`, `diagnóstico não gravado: o agente watchdog não terminou em ${WATCHDOG_TIMEOUT}s`)); return 124; }
   if (rc !== 0 || !existsSync(`${prefix}.out.md`)) { console.error(m("the watchdog agent failed; no diagnosis written", "o agente watchdog falhou; diagnóstico não gravado")); return 1; }
   copyFileSync(`${prefix}.out.md`, out);

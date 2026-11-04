@@ -7,7 +7,7 @@ import { collectRuns, rows } from "../stats.js";
 export const USAGE = "orq stats [-w <workspace>] [--days N] [--json]   scoreboard: delivery, time and tokens per agent";
 
 const k = (n: number | null) => (n === null ? "-" : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
-const ORDER = ["impl", "fix", "review", "other"];
+const ORDER = ["impl", "fix", "review", "watchdog", "other"];
 
 export function stats(argv: string[]): number {
   let ws: string | undefined, days = 30, json = false;
