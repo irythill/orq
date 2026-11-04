@@ -1681,9 +1681,18 @@ test("rounds: windows paths, URL links and [important] tags", () => {
   const w = parseFindings("- **Bloqueante — `C:\\work\\.worktrees\\api-plane-abc-1.review-1\\src\\orders\\orders.service.ts:7–8`:** texto", 0);
   assert.equal(w[0].file, "src/orders/orders.service.ts");
   const u = parseFindings("1. **Sugestão** — veja [orders.service.ts](https://github.com/acme/api/blob/main/src/orders/orders.service.ts#L4) agora", 0);
-  assert.equal(u[0].file, "orders.service.ts");
+  assert.equal(u[0].file, "src/orders/orders.service.ts");
   const i = parseFindings("- [important] src/a.ts:3 falta validar\n- **Importante** src/a.ts:3 falta validar", 0);
   assert.deepEqual(i.map((f) => f.severity), ["major", "major"]);
+});
+
+test("rounds: bold wins over tag, bare and blob URLs, prototype names", () => {
+  const b = parseFindings("- **Sugestão** — [blocker] mencionado no texto src/a.ts:3", 0);
+  assert.equal(b[0].severity, "suggestion");
+  const bare = parseFindings("- [major] veja https://github.com/acme/api/blob/main/src/orders/orders.service.ts#L9 e https://example.com/x.html", 0);
+  assert.equal(bare[0].file, "src/orders/orders.service.ts");
+  assert.equal(parseFindings("- [minor] see https://example.com/page.html only", 0)[0].file, "");
+  assert.equal(parseFindings("- **constructor** — src/a.ts\n- **toString** x", 0).length, 0);
 });
 
 test("rounds: repeats, slow rounds and the alert level", () => {
