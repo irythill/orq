@@ -16,7 +16,8 @@ rules — read the repo's own before touching it. This file only holds the map a
   several unrelated areas, change roughly >400 lines, mix refactor with behavior change, or have independent acceptance
   criteria. Each batch must be testable and reviewable on its own; record the split in Plane before starting.
 - Reviews hitting `policy.max_rounds`, repeated findings or the implementer asking to change scope mean it was too big:
-  stop and split the remainder instead of forcing more rounds.
+  stop and split the remainder instead of forcing more rounds. `orq rounds <ID> --diagnose` asks an independent agent why
+  (advisory); `orq agent -R -F` past `max_rounds` needs that diagnosis (`-F -F` skips it, only on the user's word).
 
 ## Repositories
 

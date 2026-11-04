@@ -4,6 +4,16 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 [Keep a Changelog](https://keepachangelog.com/pt-BR/); as versões seguem o `package.json`.
 English: [CHANGELOG.md](CHANGELOG.md).
 
+## [Unreleased]
+### Adicionado
+- Watchdog camada 2: `orq rounds <ID> --diagnose` (só em warn/stop) pede a um agente barato, somente leitura e de outro
+  fornecedor que o implementador, um diagnóstico de por que as rodadas não convergem, a partir das métricas, dos `fix-<n>.md`
+  e das saídas das revisões, recomendando continue / split / change-implementer / ask-user. Gravado em
+  `.orquestra/<ID>/diagnosis-<rodadas>.md`; o `orq rounds` mostra a linha `RECOMMENDATION`. Novo papel de pick `watchdog`
+  (pool próprio ou `[roles.watchdog]`, senão o pool de `opinion`, senão o de `review`).
+- `orq agent -R -F` além de `policy.max_rounds` agora recusa (saída 4) sem um diagnóstico para o número atual de rodadas, mais
+  novo que o último arquivo de fix/revisão. `-F -F` ignora a checagem (decisão do próprio usuário).
+
 ## [0.4.0] — 2026-11-04
 ### Corrigido
 - O `orq rounds` agora conta achados de review escritos com severidade em negrito no início (`**Bloqueante**`, `**Sugestão — `arquivo:7–8`:**`, PT/EN),

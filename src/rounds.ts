@@ -136,7 +136,7 @@ export function collectRounds(ws: string, issue: string, max: number): Metrics |
   }
   if (!reviews.size && !fixes.size) return undefined;
   const rounds = Math.max(counter, 0, ...fixes.keys());
-  const all = names.filter((n) => !n.startsWith(".")).map(mt), t0 = Math.min(...all), t1 = Math.max(...all);
+  const all = names.filter((n) => !n.startsWith(".") && !/^(diagnosis|watchdog)-/.test(n)).map(mt), t0 = Math.min(...all), t1 = Math.max(...all);
   // Round k runs from fix-k.md (round 0: the oldest file) to the next fix, the last one to the newest file.
   const starts = [t0, ...Array.from({ length: rounds }, (_, i) => fixes.get(i + 1) ?? NaN)];
   const perRound: RoundTime[] = starts.map((s, k) => {
