@@ -246,17 +246,18 @@ export const FORMATS: Record<string, Format> = {
       // Denied commands: ERROR steps with the command line, plus denied_actions on the result.
       const denied: string[] = [];
       let text = "", textId: unknown;
+      const hinted = res.some((r) => Array.isArray(r.denied_actions) && r.denied_actions.length) || errs.some((l) => /permission/.test(l));
       for (const e of evs) {
         const s = e.event === "step_update" ? e.step_update : undefined;
         if (!s) continue;
         if (s.step_type === "agent_response") {
           const id = s.step_id ?? s.step_index ?? s.id;
-          if (id !== textId) { textId = id; text = ""; }
+          if (id !== textId) { textId = id; if (s.text_delta) text = ""; }
           text += String(s.text_delta ?? "");
         }
         if (s.state === "ERROR") {
           const ti = s.tool_info ?? e.tool_info, cmd = ti?.parameters?.CommandLine, msg = String(s.error?.message ?? "");
-          if (cmd || /permission check failed/.test(msg)) {
+          if (/permission check failed|not allowed|denied/i.test(msg) || (cmd && !msg && hinted)) {
             const d = `${cmd ? `\`${cmd}\`` : "(command)"}${msg ? ` — ${msg}` : ""}`;
             if (!denied.includes(d)) denied.push(d);
           }
