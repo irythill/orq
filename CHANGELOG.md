@@ -4,7 +4,7 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 [Keep a Changelog](https://keepachangelog.com/); versions follow `package.json`.
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
-## [Unreleased]
+## [0.4.0] — 2026-11-04
 ### Fixed
 - `orq rounds` now counts review findings written with a leading bold severity (`**Bloqueante**`, `**Sugestão — `file:7–8`:**`, PT/EN),
   not only `[blocker]` tags, and reads markdown-link paths, en-dash line ranges and per-round `.worktrees/<dir>/` prefixes so
