@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -2083,4 +2083,67 @@ test("orq conductor: outside a workspace exits 2; unknown account exits 1 listin
   const r = spawnSync(process.execPath, [CLI, "conductor", "nope"], { env: { ...env, CLAUDE_ACCOUNTS_FILE: join(root, "accounts") }, cwd: ws, encoding: "utf8" });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /work /);
+});
+
+test("currentPane: follows a handoff only to a pane that still exists, and drops the stale redirect", async () => {
+  const { currentPane, paneExists } = await import("./notice.js");
+  const { handoffFile } = await import("./testrun.js");
+  const st = mkdtempSync(join(tmpdir(), "orq-n-"));
+  const old = process.env.XDG_STATE_HOME; process.env.XDG_STATE_HOME = st;
+  const res = (status: number | null, stderr = "") => ({ status, stdout: "", stderr });
+  const live = (...panes: string[]) => (_c: string, a: string[]) => panes.includes(a[2]) ? res(0) : res(1, '{"error":{"code":"agent_not_found"}}');
+  try {
+    mkdirSync(dirname(handoffFile("A:p1")), { recursive: true });
+    writeFileSync(handoffFile("A:p1"), "B:p1");
+    writeFileSync(handoffFile("B:p1"), "C:p1");
+    // whole chain alive: ends on C
+    assert.equal(currentPane("A:p1", live("B:p1", "C:p1")), "C:p1");
+    // C closed: stay on B and drop only B's redirect
+    assert.equal(currentPane("A:p1", live("B:p1")), "B:p1");
+    assert.ok(existsSync(handoffFile("A:p1")));
+    assert.ok(!existsSync(handoffFile("B:p1")));
+    // B closed too: back on A, its redirect deleted
+    assert.equal(currentPane("A:p1", live()), "A:p1");
+    assert.ok(!existsSync(handoffFile("A:p1")));
+    // herdr unreachable (or an unclear error): keep following blindly
+    writeFileSync(handoffFile("A:p1"), "Z:p1");
+    assert.equal(currentPane("A:p1", () => res(null, "spawn herdr ENOENT")), "Z:p1");
+    assert.equal(currentPane("A:p1", () => res(1, "connection refused")), "Z:p1");
+    assert.ok(existsSync(handoffFile("A:p1")));
+    assert.equal(paneExists("Z:p1", () => res(0)), true);
+    assert.equal(paneExists("Z:p1", () => res(1, "pane_not_found")), false);
+  } finally {
+    if (old === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = old;
+  }
+});
+
+test("claim --register clears a stale handoff redirect out of the registering pane", { skip: process.platform === "win32" }, async () => {
+  const { root, env, run } = sandbox(), ws = join(root, "ws");
+  mkdirSync(ws, { recursive: true });
+  const { handoffFile } = await import("./testrun.js");
+  const old = process.env.XDG_STATE_HOME; process.env.XDG_STATE_HOME = join(root, "state");
+  try {
+    mkdirSync(dirname(handoffFile("w7B:p1")), { recursive: true });
+    writeFileSync(handoffFile("w7B:p1"), "w8G:p1");
+    (env as Record<string, string | undefined>).HERDR_PANE_ID = "w7B:p1";
+    assert.equal(run("claim", "-w", ws, "--register").status, 0);
+    assert.ok(!existsSync(handoffFile("w7B:p1")));
+  } finally {
+    if (old === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = old;
+  }
+});
+
+test("idleExpired: a -T agent is idle only once .done has been untouched for the timeout", async () => {
+  const { idleExpired } = await import("./commands/agent.js");
+  const { utimesSync } = await import("node:fs");
+  const d = join(mkdtempSync(join(tmpdir(), "orq-idle-")), "x.done");
+  assert.equal(idleExpired(d, 60_000), false); // no .done: no turn ended yet
+  writeFileSync(d, "status=ok");
+  assert.equal(idleExpired(d, 60_000), false); // just finished
+  assert.equal(idleExpired(d, 60_000, Date.now() + 61_000), true);
+  assert.equal(idleExpired(d, 0, Date.now() + 1e9), false); // 0 = never
+  utimesSync(d, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
+  assert.equal(idleExpired(d, 30 * 60_000), true);
+  rmSync(d); // follow-up typed: .done removed resets the timer
+  assert.equal(idleExpired(d, 60_000, Date.now() + 1e9), false);
 });

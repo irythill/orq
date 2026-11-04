@@ -18,6 +18,15 @@ English: [CHANGELOG.md](CHANGELOG.md).
   `herdr-*` para instalações antigas.
 - README: o uso diário é `orq conductor` em qualquer terminal.
 
+### Corrigido
+- Os avisos não vão mais para um pane fechado depois de um handoff: os redirecionamentos do `orq handoff` só são seguidos
+  até um pane que o herdr ainda conhece; se o destino sumiu, o aviso fica no último pane vivo e o redirecionamento velho é
+  apagado (herdr inacessível: segue o redirecionamento como antes). `orq claim --register` e um novo handoff também
+  limpam redirecionamentos que sairiam de um conductor vivo ou voltariam a ele.
+- Agentes `-T` que terminaram não se acumulam mais: com a tela aberta e sem follow-up por `[machine] tui_idle_close_min`
+  minutos (padrão 30, `0` = nunca) depois do fim do turno, o agente é encerrado, limpo e a aba do herdr é fechada. Um
+  `orq agent -T -R` depois reabre a sessão (`tui_resume`). Um agente `-T` morto de fora agora fecha a aba também.
+
 ## [0.5.0] — 2026-11-04
 ### Corrigido
 - Os avisos ao conductor (verify/agente terminou, CI vermelho) agora são entregues pelo próprio `orq`, destacados, e não

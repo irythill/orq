@@ -264,7 +264,7 @@ Day to day, shortcuts and several issues at once: [docs/herdr.md](docs/herdr.md)
 
 | Command | What it does |
 |---|---|
-| `orq agent -a <agent> ...` (`herdr-agent`) | Runs an agent with a memory cap in a herdr tab, a tmux window or the background; `-r` read only, `-R <id>` continue the session, `-i` attach a file, `-b <base>` attach the diff, `-T` the agent's own screen (herdr or tmux; `-R` with it open types the follow-up into it) |
+| `orq agent -a <agent> ...` (`herdr-agent`) | Runs an agent with a memory cap in a herdr tab, a tmux window or the background; `-r` read only, `-R <id>` continue the session, `-i` attach a file, `-b <base>` attach the diff, `-T` the agent's own screen (herdr or tmux; `-R` with it open types the follow-up into it; a finished screen closes after `[machine] tui_idle_close_min` minutes without a follow-up, default 30, `0` = never) |
 | `orq instructions claude\|agents` | Writes the `/issue` playbook as `SKILL.md` (Claude Code) or into `AGENTS.md` (Codex, OpenCode…) |
 | `orq notice [--list] [-n N]` | The delivery log of notices to conductors: each attempt, retry and failure (`<state>/notices.jsonl`) |
 | `orq wait <prefix>...` | Blocks until those agents finish; prints `status=` and the answer file (any conductor, any terminal) |

@@ -18,6 +18,15 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   the `herdr-*` ones for old installs.
 - README: daily use is `orq conductor` in any terminal.
 
+### Fixed
+- Notices no longer go to a closed pane after a handoff: `orq handoff` redirects are followed only to a pane herdr still
+  knows; when the target is gone the notice stays on the last live pane and the stale redirect is deleted (herdr
+  unreachable: the redirect is followed as before). `orq claim --register` and a new handoff also clear redirects that
+  would point away from, or loop back to, a live conductor.
+- Finished `-T` agents no longer pile up: with the screen open and no follow-up for `[machine] tui_idle_close_min`
+  minutes (default 30, `0` = never) after the turn ended, the agent is stopped, cleaned up and its herdr tab closed. A
+  later `orq agent -T -R` reopens the session (`tui_resume`). A `-T` agent killed from outside now closes its tab too.
+
 ## [0.5.0] — 2026-11-04
 ### Fixed
 - Notices to the conductor (verify/agent done, CI red) are now delivered by `orq` itself, detached, and no longer fail

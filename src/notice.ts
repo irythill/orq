@@ -9,7 +9,7 @@
 // if ui.desktop_notify allows, a desktop notification. Successes stay quiet: a plain herdr notification, nothing else.
 // `orq board` reads the same log to show failures that were not delivered or not yet acknowledged.
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getPath, loadConfig } from "./config.js";
@@ -177,14 +177,27 @@ const exec = (cmd: string, args: string[], timeoutMs = 15_000): Res => {
 };
 const hasBin = (b: string) => spawnSync(process.platform === "win32" ? "where" : "which", [b], { stdio: "ignore" }).status === 0;
 
-/** Follow `orq handoff` redirects to the pane that now holds the conductor (stops at cycles and unreadable files). */
-export function currentPane(pane: string): string {
+/** Does herdr know this pane? true | false (herdr answered "not found") | undefined (herdr unreachable or unclear). */
+export function paneExists(pane: string, run: Deps["run"] = exec): boolean | undefined {
+  const r = run("herdr", ["agent", "get", pane], 10_000);
+  if (r.status === 0) return true;
+  if (r.status === null) return undefined; // herdr is not installed / did not answer
+  return /agent_not_found|pane_not_found|not found/i.test(`${r.stdout}\n${r.stderr}`) ? false : undefined;
+}
+
+/**
+ * Follow `orq handoff` redirects to the pane that now holds the conductor (stops at cycles and unreadable files). A hop
+ * is taken only when its target still exists: if the new pane was closed, stay on the last live pane of the chain and
+ * delete the stale redirect. When herdr cannot be asked, the redirect is followed blindly (the old behaviour).
+ */
+export function currentPane(pane: string, run: Deps["run"] = exec): string {
   const seen = new Set<string>();
   while (!seen.has(pane) && existsSync(handoffFile(pane))) {
     seen.add(pane);
     let next: string;
     try { next = readFileSync(handoffFile(pane), "utf8").trim(); } catch { break; }
     if (!next || next === pane) break;
+    if (paneExists(next, run) === false) { try { rmSync(handoffFile(pane), { force: true }); } catch { /* best effort */ } break; }
     pane = next;
   }
   return pane;
