@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { merge } from "./config.js";
@@ -2038,4 +2038,49 @@ test("board: a rerun on the same prefix doesn't lend its model to the earlier ru
   const r = spawnSync(process.execPath, [CLI, "board", "--once", "--json"], { env: { ...process.env, XDG_STATE_HOME: st, XDG_CONFIG_HOME: join(root, "cfg") }, cwd: root, encoding: "utf8" });
   const by = Object.fromEntries((JSON.parse(r.stdout).agents as { unit: string; model?: string }[]).map((a) => [a.unit, a.model]));
   assert.deepEqual(by, { "u-old": undefined, "u-new": "sonnet", "u-rec": "recorded" });
+});
+
+test("conductor: args are [account] [model] [-r id]; '-' keeps the account slot; -r without id is an error", async () => {
+  const { parseArgs } = await import("./commands/conductor.js");
+  assert.deepEqual(parseArgs([]), { account: "", model: "", resume: "", help: false });
+  assert.deepEqual(parseArgs(["work", "opus"]), { account: "work", model: "opus", resume: "", help: false });
+  assert.deepEqual(parseArgs(["-", "haiku", "-r", "abc"]), { account: "-", model: "haiku", resume: "abc", help: false });
+  assert.equal(parseArgs(["work", "--resume", "x", "opus"]).model, "opus");
+  assert.ok(parseArgs(["-r"]).error);
+  assert.equal(parseArgs(["--help"]).help, true);
+});
+
+test("conductor: model aliases map to the exact ids, anything else passes through", async () => {
+  const { modelId, claudeArgs } = await import("./commands/conductor.js");
+  assert.equal(modelId("sonnet"), "claude-sonnet-5");
+  assert.equal(modelId("opus"), "claude-opus-5-5");
+  assert.equal(modelId("haiku"), "claude-haiku-4-5-20251001");
+  assert.equal(modelId("claude-foo-1"), "claude-foo-1");
+  assert.deepEqual(claudeArgs(join("x", "ws-abc"), { model: "", resume: "" }, "P"), ["-n", "conductor-ws-abc", "--append-system-prompt-file", "P"]);
+  assert.deepEqual(claudeArgs(join("x", "ws"), { model: "opus", resume: "s1" }, "P"),
+    ["--resume", "s1", "-n", "conductor-ws", "--model", "claude-opus-5-5", "--append-system-prompt-file", "P"]);
+});
+
+test("conductor: workspace is cwd with .orquestra-conductor.md, else CONDUCTOR_WS; file override", async () => {
+  const { findWorkspace, instructionsFile } = await import("./commands/conductor.js");
+  const { root } = sandbox();
+  const ws = join(root, "ws"), other = join(root, "other");
+  mkdirSync(ws, { recursive: true }); mkdirSync(other, { recursive: true });
+  writeFileSync(join(ws, ".orquestra-conductor.md"), "x");
+  assert.equal(findWorkspace(ws, { CONDUCTOR_WS: other }), ws);
+  assert.equal(findWorkspace(other, { CONDUCTOR_WS: ws }), ws);
+  assert.equal(findWorkspace(other, {}), undefined);
+  assert.equal(instructionsFile(ws, {}), join(ws, ".orquestra-conductor.md"));
+  assert.equal(instructionsFile(ws, { CONDUCTOR_FILE: "rel.md" }), resolve("rel.md"));
+});
+
+test("orq conductor: outside a workspace exits 2; unknown account exits 1 listing accounts", () => {
+  const { root, env, run } = sandbox();
+  assert.equal(run("conductor").status, 2);
+  const ws = join(root, "ws"); mkdirSync(ws, { recursive: true });
+  writeFileSync(join(ws, ".orquestra-conductor.md"), "hi");
+  writeFileSync(join(root, "accounts"), `work ${join(root, "work")}\n`);
+  const r = spawnSync(process.execPath, [CLI, "conductor", "nope"], { env: { ...env, CLAUDE_ACCOUNTS_FILE: join(root, "accounts") }, cwd: ws, encoding: "utf8" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /work /);
 });

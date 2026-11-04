@@ -5,11 +5,12 @@ rules — read the repo's own before touching it. This file only holds the map a
 
 ## Orchestration (read by the `/issue` skill)
 - **Workspace:** `{{WORKSPACE}}`
-- **Conductor (herdr):** opened with `herdr-conductor [account] [model] [-r <session-id>]` in a herdr pane, in this folder
-  (instructions in `.orquestra-conductor.md`); the **Group** in the table below is the herdr workspace (`-g`).
-  Tests from the Verification column (jest/vitest) **don't run in the child**: the conductor runs `herdr-verify` (`orq verify`
-  outside herdr; one at a time on the machine); the child does lint + `tsc` (`NODE_OPTIONS=--max-old-space-size=2048`).
-- **Agents:** chosen by `orq-pick` from each developer's `~/.config/orq/config.toml` — nothing about models here.
+- **Conductor:** opened with `orq conductor [account] [model] [-r <session-id>]` in this folder, in any terminal (inside a
+  herdr pane too; `herdr-conductor` still works there). Instructions in `.orquestra-conductor.md`; the **Group** in the
+  table below is the herdr workspace (`-g`) or just a label outside herdr.
+  Tests from the Verification column (jest/vitest) **don't run in the child**: the conductor runs `orq verify`
+  (one at a time on the machine); the child does lint + `tsc` (`NODE_OPTIONS=--max-old-space-size=2048`).
+- **Agents:** chosen by `orq pick` from each developer's `~/.config/orq/config.toml` — nothing about models here.
 
 ## Scope
 - Before dispatching, split big issues into sub-issues or sequential batches (one PR, one implementer each) when they touch

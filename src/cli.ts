@@ -11,6 +11,7 @@ import { block, USAGE as BLOCK } from "./commands/block.js";
 import { claim, USAGE as CLAIM } from "./commands/claim.js";
 import { ci, USAGE as CI } from "./commands/ci.js";
 import { completion, USAGE as COMPLETION } from "./commands/completion.js";
+import { conductor, USAGE as CONDUCTOR } from "./commands/conductor.js";
 import { config, USAGE as CONFIG } from "./commands/config.js";
 import { deps, USAGE as DEPS } from "./commands/deps.js";
 import { gc, USAGE as GC } from "./commands/gc.js";
@@ -29,7 +30,7 @@ import { stats, USAGE as STATS } from "./commands/stats.js";
 import { verify, USAGE as VERIFY } from "./commands/verify.js";
 import { wait, USAGE as WAIT } from "./commands/wait.js";
 
-const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = { config, set, board, lang, block, quota, pick, stats, rounds, setup, lock, claim, deps, gc, ci, handoff, run, agent, wait, instructions, verify, baseline, notice: noticeCmd,
+const COMMANDS: Record<string, (argv: string[]) => number | Promise<number>> = { config, conductor, set, board, lang, block, quota, pick, stats, rounds, setup, lock, claim, deps, gc, ci, handoff, run, agent, wait, instructions, verify, baseline, notice: noticeCmd,
   completion: (a) => completion(a, Object.keys(COMMANDS)) };
 
 const usage = () => `orq <command> [args]
@@ -52,6 +53,7 @@ ${VERIFY}
 ${BASELINE}
 ${INSTRUCTIONS}
 ${NOTICE}
+${CONDUCTOR}
 ${CLAIM}
 ${DEPS}
 ${GC}
