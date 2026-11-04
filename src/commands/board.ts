@@ -16,6 +16,7 @@ import { collectCi, collectedAt, type CiEntry, loadCache as loadCiCache } from "
 import { getPath, loadConfig } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m, setLang } from "../i18n.js";
+import { argvModel } from "../agents.js";
 import { alive, status as lockStatus } from "../lock.js";
 import { expand, stateDir } from "../paths.js";
 import { processTableAsync, treeMem } from "../process.js";
@@ -50,18 +51,18 @@ export interface Snapshot {
 const read = (f: string) => { try { return readFileSync(f, "utf8"); } catch { return ""; } };
 const models = new Map<string, string | undefined>();
 
-/** The model a run was started with, from its job file (-m / --model in the argv). */
-function modelOf(prefix: string): string | undefined {
-  if (!models.has(prefix)) {
+/** The model of a run recorded before its state file had one, from its job file; a rerun on the same prefix
+ *  overwrites that file, so another unit's job says nothing about this run. */
+function modelOf(prefix: string, unit: string): string | undefined {
+  if (!models.has(unit)) {
     let v: string | undefined;
     try {
-      const a = (JSON.parse(read(`${prefix}.job.json`)).argv ?? []) as string[];
-      const i = a.findIndex((x) => x === "-m" || x === "--model");
-      v = i >= 0 ? a[i + 1] : a.find((x) => x.startsWith("--model="))?.slice(8);
+      const j = JSON.parse(read(`${prefix}.job.json`)) as { unit?: string; argv?: string[] };
+      if (!j.unit || j.unit === unit) v = argvModel(j.argv ?? []);
     } catch { /* no job file */ }
-    models.set(prefix, v?.split("/").pop());
+    models.set(unit, v);
   }
-  return models.get(prefix);
+  return models.get(unit);
 }
 
 /** What the agent did last, from the tail of its log (stream JSON of claude/opencode, else the last text line). */
@@ -104,7 +105,7 @@ function agents(table: Table | undefined, now: number): Agent[] {
     const st: Agent["state"] = s.status === "ok" || s.status === "fail" ? s.status : alive(pid) ? "running" : "died";
     if (st === "died" && now - at > ORPHAN_MS) continue;
     if ((st === "ok" || st === "fail") && now - (end ?? at) > RECENT_MS) continue;
-    const a: Agent = { unit: f.slice(0, -5), title: String(s.title ?? ""), agent: String(s.agent ?? "?"), model: modelOf(prefix),
+    const a: Agent = { unit: f.slice(0, -5), title: String(s.title ?? ""), agent: String(s.agent ?? "?"), model: typeof s.model === "string" ? s.model : modelOf(prefix, f.slice(0, -5)),
       host: s.host as string | undefined, pid, issue: basename(dirname(prefix)), label: basename(prefix), state: st,
       secs: Math.max(0, Math.round(((end ?? now) - at) / 1000)), cap: typeof s.cap === "number" ? s.cap : undefined };
     if (s.rc !== undefined) a.rc = Number(s.rc);
@@ -314,7 +315,7 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
   section("TRACKS", m("agents", "agentes"));
   s.agents.forEach((a, i) => {
     const n = `${c.mut}${String(i + 1).padStart(2, "0")}${c.r}`, who = `${c.ink}${fit(a.issue, 9)}${c.r} ${c.ink2}${fit(a.label, 22)}${c.r} `
-      + `${c.ink}${fit(a.agent, 11)}${c.r}${c.mut}${fit(a.model ?? m("default", "padrão"), 17)}${c.r} ${c.ink}${dur(a.secs).padEnd(7)}${c.r}`;
+      + `${c.ink}${fit(a.agent, 11)}${c.r}${c.mut}${fit(a.model ?? m("default", "padrão"), 17)}${c.r} ${c.ink}${(a.state === "died" ? "?" : dur(a.secs)).padEnd(7)}${c.r}`; // died: when it stopped is unknown
     if (a.state === "running") {
       const pct = a.cap && a.mem ? Math.round(100 * a.mem / a.cap) : 0, used = 1 + 2 + 2 + 10 + 23 + 11 + 17 + 1 + 8 + 6 + 1 + 7 + 1;
       const warn = a.secs > 3 * 3600 ? ` ${c.err}⚠ ${m("for", "há")} ${dur(a.secs)}${c.r}` : "";

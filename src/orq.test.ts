@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { merge } from "./config.js";
 import { limitsFor, parseWindows, pick as pickAgent } from "./pick.js";
-import { parseLocal } from "./commands/block.js";
+import { parseLocal, quotaUntil } from "./commands/block.js";
 import { handoffPrompt, owners, plan, tighter, trimHandoffContext } from "./commands/handoff.js";
 import { setTomlString } from "./toml-set.js";
 import { usesPrompt, useThrowaway } from "./agents.js";
@@ -1873,4 +1873,36 @@ test("orq rounds --diagnose refuses while a previous watchdog run is alive", () 
   const r = spawnSync(process.execPath, [CLI, "rounds", "ABC-4", "--diagnose", "-w", root], { env, encoding: "utf8" });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /still running/);
+});
+
+test("block --quota: the used-up week, else the 5h window; none known → nothing", () => {
+  assert.equal(quotaUntil("codex 5h=89% reset5h=100 week=21% resetweek=900"), 100);
+  assert.equal(quotaUntil("codex 5h=40% reset5h=100 week=100% resetweek=900"), 900);
+  assert.equal(quotaUntil("copilot 5h=- week=25% resetweek=900"), 900);
+  assert.equal(quotaUntil("antigravity 5h=? week=? [token idle]"), undefined);
+});
+
+test("agent: no -a and no $AGENT starts nothing", () => {
+  const root = mkdtempSync(join(tmpdir(), "orq-noagent-"));
+  writeFileSync(join(root, "p.md"), "x");
+  const env = { ...process.env, XDG_STATE_HOME: root, XDG_CONFIG_HOME: root };
+  delete (env as Record<string, string | undefined>).AGENT;
+  const O = join(root, "o");
+  const r = spawnSync(process.execPath, [CLI, "agent", "-t", "t", "-d", root, "-o", O, "--", join(root, "p.md")], { env, encoding: "utf8" });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /missing -a/);
+  assert.equal(existsSync(`${O}.job.json`), false);
+});
+
+test("board: a rerun on the same prefix doesn't lend its model to the earlier run", () => {
+  const root = mkdtempSync(join(tmpdir(), "orq-model-"));
+  const st = join(root, "state"), pre = join(root, "ws", ".orquestra", "X-1", "rebase");
+  mkdirSync(join(st, "orq", "agents"), { recursive: true }); mkdirSync(dirname(pre), { recursive: true });
+  writeFileSync(`${pre}.job.json`, JSON.stringify({ unit: "u-new", argv: ["claude", "--model", "sonnet"] }));
+  const at = new Date().toISOString();
+  const state = (unit: string, o: object) => writeFileSync(join(st, "orq", "agents", `${unit}.json`), JSON.stringify({ prefix: pre, title: "t", agent: "x", host: "plain", pid: 999999, at, ...o }));
+  state("u-old", {}); state("u-new", {}); state("u-rec", { model: "recorded" });
+  const r = spawnSync(process.execPath, [CLI, "board", "--once", "--json"], { env: { ...process.env, XDG_STATE_HOME: st, XDG_CONFIG_HOME: join(root, "cfg") }, cwd: root, encoding: "utf8" });
+  const by = Object.fromEntries((JSON.parse(r.stdout).agents as { unit: string; model?: string }[]).map((a) => [a.unit, a.model]));
+  assert.deepEqual(by, { "u-old": undefined, "u-new": "sonnet", "u-rec": "recorded" });
 });
