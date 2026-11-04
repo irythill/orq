@@ -200,12 +200,12 @@ O que já está rodando continua no idioma em que começou. Os conductors sempre
 
 Abra o conductor em qualquer terminal, na pasta do seu workspace (a que o `orq setup` preparou):
 ```bash
-cd ~/Code/<workspace> && claude          # qualquer terminal: o CLAUDE.md do workspace e a skill /issue são carregados
+cd ~/Code/<workspace> && orq conductor [conta] [modelo]   # qualquer terminal: carrega as instruções do conductor, o CLAUDE.md do workspace e a skill /issue
 ```
 Com vários conductors, dê a cada um um nome fixo (`export ORQ_CONDUCTOR_ID=<nome>`) para o `orq claim` distingui-los.
 Variantes:
-- **herdr:** rode `herdr` (o servidor roda como serviço) e, num pane, `herdr-conductor` (conta e modelo opcionais).
-- **tmux:** inicie o `claude` num pane; os filhos abrem como janelas do tmux.
+- **herdr:** rode `herdr` (o servidor roda como serviço) e, num pane, o mesmo `orq conductor` (o `herdr-conductor` continua funcionando).
+- **tmux:** rode `orq conductor` num pane; os filhos abrem como janelas do tmux.
 - **Nenhum dos dois:** os filhos rodam em segundo plano e o conductor espera com `orq wait`.
 
 No conductor: **`/issue DEMO-123`**. Ele responde numa linha e segue sozinho a cada sinal de conclusão
@@ -234,7 +234,7 @@ Várias issues ao mesmo tempo: um conductor por issue (de preferência em contas
 
 O herdr é opcional, mas é com ele que o orq fica mais redondo: filhos em abas próprias, avisos digitados no pane do
 conductor e alguns extras:
-- `herdr-conductor` abre o conductor no pane atual do herdr e dá nome a ele.
+- `orq conductor` (ou `herdr-conductor`) num pane do herdr também dá o nome "conductor" ao pane.
 - `ui.toast.delivery = "system"` na config do herdr faz cada etapa concluída gerar uma notificação nativa do sistema;
   falhas também geram uma notificação do herdr com som, e um CI que fica verde ou vermelho também gera uma.
 - O `orq quota --line` cabe na barra de abas do herdr (uma entrada `command` no `tab_bar_right`,
@@ -264,7 +264,7 @@ Dia a dia, atalhos e várias issues ao mesmo tempo: [docs/pt-BR/herdr.md](docs/p
 | `orq wait <prefixo>...` | Bloqueia até esses agentes terminarem; imprime `status=` e o arquivo da resposta (qualquer conductor, qualquer terminal) |
 | `orq verify ...` (`herdr-verify`) | Testes relacionados ao diff, em fila e com limite de memória; falhas que também falham na base contam como pré-existentes |
 | `orq board` (`herdr-board`) | Painel ao vivo: fila, agentes, conductors, cota, bloqueios, placar |
-| `herdr-conductor` | Abre o conductor no pane atual do herdr |
+| `orq conductor [conta] [modelo] [-r <id>]` (`herdr-conductor`) | Abre o conductor (Claude) no terminal atual com as instruções, conta e modelo; `-r` retoma uma sessão |
 | `orq claim` (`herdr-claim`) | Dono de cada issue entre os conductors |
 | `orq deps` (`herdr-deps`) | Liga as dependências do worktree às do repo principal (sem reinstalar) |
 | `orq baseline ...` (`herdr-baseline`) | Snapshot manual dos testes que falham na base (fora do fluxo) |

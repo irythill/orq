@@ -1,38 +1,8 @@
 #!/usr/bin/env bash
-# Opens the conductor (Claude) in the current herdr pane, with the conductor instructions and the chosen account/model.
-# Must run INSIDE herdr: its pane is what receives the children's [HERDR-AGENT DONE] notices.
+# herdr-conductor → `orq conductor` (TypeScript CLI in src/, built to dist/ by install.sh); the logic lives there and
+# works in any terminal. This wrapper only keeps the old name and its check: it must run INSIDE herdr.
 #
-#   herdr-conductor                    # default account (~/.claude), Claude's default model
-#   herdr-conductor work               # an account from `claude-accounts`
-#   herdr-conductor work opus          # account + model (sonnet | opus | haiku | full id)
-#   herdr-conductor - opus             # model only ("-" = default account)
-#   herdr-conductor work opus -r <id>  # resume that conversation (e.g. after a reboot), same account and instructions
-#
-# Workspace: the current folder if it has .orquestra-conductor.md (created by new-conductor.sh); otherwise CONDUCTOR_WS.
-# The session name is conductor-<workspace folder>.
-set -euo pipefail
+#   herdr-conductor [account|-] [model] [-r <session-id>]
 . "$(dirname "$(realpath "$0")")/orq-i18n.sh"
-if [ -f "$PWD/.orquestra-conductor.md" ]; then WS=$PWD
-else WS=${CONDUCTOR_WS:?"$(m "no .orquestra-conductor.md here: cd into a workspace (see new-conductor.sh) or set CONDUCTOR_WS" "não há .orquestra-conductor.md aqui: entre num workspace (veja new-conductor.sh) ou defina CONDUCTOR_WS")"}; fi
-F=${CONDUCTOR_FILE:-$WS/.orquestra-conductor.md}
-[ "${HERDR_ENV:-}" = 1 ] || { echo "$(m "run it inside a herdr pane (open 'herdr' and call herdr-conductor there)" "rode dentro de um pane do herdr (abra o 'herdr' e chame o herdr-conductor lá)")"; exit 2; }
-[ -f "$F" ] || { echo "$(m "conductor instructions not found" "instruções do conductor não encontradas"): $F"; exit 2; }
-
-RESUME=""; ARGS=()
-while [ $# -gt 0 ]; do case $1 in -r|--resume) RESUME=${2:?"$(m "give the session id" "informe o id da sessão")"}; shift 2 ;; *) ARGS+=("$1"); shift ;; esac; done
-ACC=${ARGS[0]:-}; MODEL=${ARGS[1]:-}
-case $MODEL in
-  sonnet) MODEL=claude-sonnet-5 ;;
-  opus)   MODEL=claude-opus-5-5 ;;
-  haiku)  MODEL=claude-haiku-4-5-20251001 ;;
-esac
-ENVV=()
-if [ -n "$ACC" ] && [ "$ACC" != "-" ]; then
-  CD=$(claude-accounts "$ACC") || exit 1
-  ENVV=(CLAUDE_CONFIG_DIR="$CD")
-fi
-
-herdr pane rename "$HERDR_PANE_ID" conductor >/dev/null 2>&1 || true
-cd "$WS"
-if command -v orq >/dev/null 2>&1; then env "${ENVV[@]}" orq claim -w "$WS" --register >/dev/null 2>&1 || true; fi
-exec env "${ENVV[@]}" claude ${RESUME:+--resume "$RESUME"} -n "conductor-$(basename "$WS")" ${MODEL:+--model "$MODEL"} --append-system-prompt "$(cat "$F")"
+[ "${HERDR_ENV:-}" = 1 ] || { echo "$(m "run it inside a herdr pane (open 'herdr' and call herdr-conductor there; elsewhere use: orq conductor)" "rode dentro de um pane do herdr (abra o 'herdr' e chame o herdr-conductor lá; fora dele use: orq conductor)")"; exit 2; }
+exec node "$(dirname "$(realpath "$0")")/../dist/cli.js" conductor "$@"

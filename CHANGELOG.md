@@ -5,6 +5,18 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
+### Added
+- `orq conductor [account|-] [model] [-r <session>]` opens the conductor (Claude) in any terminal and OS: finds the workspace
+  (`.orquestra-conductor.md` in the folder, else `CONDUCTOR_WS`), maps `sonnet|opus|haiku`, resolves the account from the
+  `claude-accounts` file, registers the conductor and runs `claude` with the instructions. `herdr-conductor` is now a thin
+  wrapper around it (still herdr-only, and renames the pane).
+
+### Changed
+- The `/issue` skill and the conductor templates use the `orq <cmd>` names (`orq agent`, `orq verify`, `orq claim`,
+  `orq deps`, `orq baseline`, `orq pick`, `orq conductor`) and no longer assume herdr; the completion signal is
+  `[HERDR-AGENT DONE]` in herdr and `orq wait` elsewhere. The permission allowlist gains the `orq ...` patterns and keeps
+  the `herdr-*` ones for old installs.
+- README: daily use is `orq conductor` in any terminal.
 
 ## [0.5.0] — 2026-11-04
 ### Fixed

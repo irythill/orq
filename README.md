@@ -208,12 +208,12 @@ Whatever is already running keeps its language. Conductors always talk to you in
 
 Open the conductor in any terminal, in your workspace folder (the one `orq setup` prepared):
 ```bash
-cd ~/Code/<workspace> && claude          # any terminal: the workspace CLAUDE.md and the /issue skill are loaded
+cd ~/Code/<workspace> && orq conductor [account] [model]   # any terminal: loads the conductor instructions, the workspace CLAUDE.md and the /issue skill
 ```
 With several conductors, give each a fixed name (`export ORQ_CONDUCTOR_ID=<name>`) so `orq claim` can tell them apart.
 Variants:
-- **herdr:** run `herdr` (the server runs as a service), then `herdr-conductor` in a pane (account and model optional).
-- **tmux:** start `claude` in a pane; children open as tmux windows.
+- **herdr:** run `herdr` (the server runs as a service), then the same `orq conductor` in a pane (`herdr-conductor` still works).
+- **tmux:** run `orq conductor` in a pane; children open as tmux windows.
 - **Neither:** children run in the background and the conductor waits with `orq wait`.
 
 In the conductor: **`/issue DEMO-123`**. It answers in one line and moves on by itself at every completion signal
@@ -240,7 +240,7 @@ conductors off the same issue.
 
 herdr is optional, but it gives orq the most polish: children in their own tabs, notices typed into the conductor's
 pane, and a few extras:
-- `herdr-conductor` opens the conductor in the current herdr pane and names it.
+- `orq conductor` (or `herdr-conductor`) in a herdr pane also names the pane "conductor".
 - `ui.toast.delivery = "system"` in herdr's config makes each finished step pop up a native OS notification; failures
   also get a herdr notification with sound, and a CI run turning red or green pops one too.
 - `orq quota --line` fits herdr's tab bar (a `tab_bar_right` command entry,
@@ -270,7 +270,7 @@ Day to day, shortcuts and several issues at once: [docs/herdr.md](docs/herdr.md)
 | `orq wait <prefix>...` | Blocks until those agents finish; prints `status=` and the answer file (any conductor, any terminal) |
 | `orq verify ...` (`herdr-verify`) | Tests related to the diff, queued and memory-capped; failures that also fail on the base count as pre-existing |
 | `orq board` (`herdr-board`) | Live board: queue, agents, conductors, quota, blocks, scoreboard |
-| `herdr-conductor` | Opens the conductor in the current herdr pane |
+| `orq conductor [account] [model] [-r <id>]` (`herdr-conductor`) | Opens the conductor (Claude) in the current terminal with its instructions, account and model; `-r` resumes a session |
 | `orq claim` (`herdr-claim`) | Owner of each issue among conductors |
 | `orq deps` (`herdr-deps`) | Links the worktree's dependencies to the main repo's (no reinstall) |
 | `orq baseline ...` (`herdr-baseline`) | Manual snapshot of the tests failing on the base (outside the flow) |
