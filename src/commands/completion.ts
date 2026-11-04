@@ -20,9 +20,9 @@ const DESC: Record<string, string> = {
 export const WORDS: Record<string, string[]> = {
   setup: ["--preset", "--detect", "--answers", "--write", "--install", "--workspace"],
   config: ["get", "files", "-w"], lang: ["pt", "en", "auto", "toggle"], lock: ["wait", "release", "run", "status"],
-  pick: ["impl", "fix", "worker", "review", "opinion"], instructions: ["claude", "agents"], board: ["--once", "--json", "-w"],
+  pick: ["impl", "fix", "worker", "review", "opinion", "watchdog"], instructions: ["claude", "agents"], board: ["--once", "--json", "-w"],
   completion: ["bash", "zsh", "fish", "powershell"], stats: ["--days", "--json", "-w"], wait: ["--any", "--timeout", "--answer"],
-  ci: ["--json", "-w"], rounds: ["--json", "-w"],
+  ci: ["--json", "-w"], rounds: ["--json", "--diagnose", "-w"],
 };
 
 const q = (s: string) => `'${s.replace(/'/g, "''")}'`; // PowerShell single quotes

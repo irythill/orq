@@ -7,10 +7,10 @@
 import type { Obj } from "./config.js";
 
 /** What the conductor asks for (orq pick <role>) → the [roles] section that answers it. */
-export const PICK_ROLES = ["impl", "fix", "worker", "review", "opinion"] as const;
+export const PICK_ROLES = ["impl", "fix", "worker", "review", "opinion", "watchdog"] as const;
 export type PickRole = (typeof PICK_ROLES)[number];
 const SECTION: Record<PickRole, string[]> = {
-  impl: ["primary"], fix: ["primary"], worker: ["workers", "primary"], review: ["reviewer"], opinion: ["opinion"],
+  impl: ["primary"], fix: ["primary"], worker: ["workers", "primary"], review: ["reviewer"], opinion: ["opinion"], watchdog: ["watchdog"],
 };
 /** The role name used in the old agents.<name>.roles lists. */
 export const legacyRole = (r: PickRole) => (r === "worker" ? "impl" : r);
@@ -25,7 +25,17 @@ export type Resolved =
   | { mode: "fixed"; order: string[]; rule: string; section: string }
   | { mode: "auto"; pool: string[]; rule: string; section?: string };
 
+const count = (r: Resolved) => (r.mode === "fixed" ? r.order : r.pool).length;
+
+/** The watchdog (orq rounds --diagnose) uses its own role when something declares it, else the opinion pool, else the review one. */
 export function resolveRole(cfg: Obj, role: PickRole): Resolved {
+  const own = direct(cfg, role);
+  if (role !== "watchdog" || count(own)) return own;
+  const op = direct(cfg, "opinion");
+  return count(op) ? op : direct(cfg, "review");
+}
+
+function direct(cfg: Obj, role: PickRole): Resolved {
   const agents = (cfg.agents ?? {}) as Record<string, Obj>;
   const roles = (cfg.roles ?? {}) as Record<string, Obj>;
   const policyRule = String(((cfg.policy ?? {}) as Obj).review ?? "other-vendor");

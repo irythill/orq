@@ -93,7 +93,7 @@ export function modelFor(a: Obj, role: PickRole, level: string): [string, string
   if (a.models === undefined) return ["", undefined]; // no models configured: the CLI's default
   const models = a.models as Record<string, Record<string, string>>;
   const lr = legacyRole(role);
-  const ms = models[lr] ?? (lr === "fix" ? models.impl : undefined) ?? {};
+  const ms = models[lr] ?? (lr === "fix" ? models.impl : lr === "watchdog" ? models.opinion ?? models.review : undefined) ?? {};
   const spec = ms[level] ?? ms.default ?? ms.medium ?? ms.simple;
   if (!spec) return undefined;
   const [model, effort] = spec.split("@");
@@ -126,10 +126,10 @@ export function pick(inp: PickInput): PickResult {
     if (!a) { out(name, m("not declared in [agents]", "não declarado em [agents]")); continue; }
     if (inp.exclude.has(name)) { out(name, m("excluded (--exclude-agent)", "excluído (--exclude-agent)")); continue; }
     if (inp.blocks.has(name)) { out(name, m("blocked (orq block -l)", "bloqueado (orq block -l)")); continue; }
-    if ((role === "review" || role === "opinion") && name === inp.implAgent && someoneElse) {
+    if ((role === "review" || role === "opinion" || role === "watchdog") && name === inp.implAgent && someoneElse) {
       out(name, m("it implemented this code", "foi quem implementou")); continue;
     }
-    if ((role === "review" || role === "opinion") && res.rule === "other-vendor" && inp.implVendor && otherVendor
+    if ((role === "review" || role === "opinion" || role === "watchdog") && res.rule === "other-vendor" && inp.implVendor && otherVendor
         && vendorOf(name, a) === inp.implVendor) {
       out(name, m("same vendor as the implementer", "mesmo fornecedor do implementador")); continue;
     }
@@ -183,7 +183,7 @@ export function pick(inp: PickInput): PickResult {
       .sort((x, y) => Number(x.hot) - Number(y.hot) || x.v - y.v);
     const chosen = ranked[0];
     const acct = qn.length > 1 ? chosen?.n : undefined;
-    const statRole = role === "fix" || role === "worker" ? "impl" : role;
+    const statRole = role === "fix" || role === "worker" ? "impl" : role === "watchdog" ? "review" : role;
     const st = inp.stats.find((r) => r.role === statRole && r.agent === name && r.model === (mf[0].split("/").pop() || "default"));
     pass.push({ agent: name, model: mf[0], effort: mf[1], acct, a, st, pace: chosen?.pace, hot: Boolean(chosen?.hot) });
     if (res.mode === "fixed") break; // the first that passes wins

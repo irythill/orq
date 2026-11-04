@@ -4,6 +4,15 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 [Keep a Changelog](https://keepachangelog.com/); versions follow `package.json`.
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
+## [Unreleased]
+### Added
+- Watchdog layer 2: `orq rounds <ID> --diagnose` (only on warn/stop) has a cheap, read only agent of another vendor than the
+  implementer diagnose why the rounds don't converge, from the metrics, `fix-<n>.md` and the review outputs, and recommend
+  continue / split / change-implementer / ask-user. Saved to `.orquestra/<ID>/diagnosis-<rounds>.md`; `orq rounds` shows its
+  `RECOMMENDATION` line. New pick role `watchdog` (own pool or `[roles.watchdog]`, else the `opinion` pool, else `review`).
+- `orq agent -R -F` past `policy.max_rounds` now refuses (exit 4) without a diagnosis for the current round count that is newer
+  than the latest fix/review file. `-F -F` bypasses the check (the user's own call).
+
 ## [0.4.0] — 2026-11-04
 ### Fixed
 - `orq rounds` now counts review findings written with a leading bold severity (`**Bloqueante**`, `**Sugestão — `file:7–8`:**`, PT/EN),
