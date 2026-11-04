@@ -9,7 +9,7 @@ export const USAGE = "orq completion bash|zsh|fish|powershell   print the shell 
 
 const DESC: Record<string, string> = {
   setup: "guided first configuration", config: "show the merged config", set: "write one config value", lang: "language of orq's messages",
-  quota: "quota per agent/account", pick: "pick agent, model and account for a role", stats: "scoreboard per agent",
+  quota: "quota per agent/account", pick: "pick agent, model and account for a role", stats: "scoreboard per agent", rounds: "rounds, time and repeated findings of an issue",
   board: "live board", lock: "test queue", run: "run a command under a memory cap", agent: "run a child agent",
   wait: "wait for child agents", verify: "tests of a diff", baseline: "tests already failing on the base",
   instructions: "write the /issue playbook", claim: "issue owner among conductors", deps: "link node_modules into a worktree", gc: "remove merged issue worktrees", ci: "CI/CD status per claimed issue", handoff: "move a conductor low on quota to another account",
@@ -22,7 +22,7 @@ export const WORDS: Record<string, string[]> = {
   config: ["get", "files", "-w"], lang: ["pt", "en", "auto", "toggle"], lock: ["wait", "release", "run", "status"],
   pick: ["impl", "fix", "worker", "review", "opinion"], instructions: ["claude", "agents"], board: ["--once", "--json", "-w"],
   completion: ["bash", "zsh", "fish", "powershell"], stats: ["--days", "--json", "-w"], wait: ["--any", "--timeout", "--answer"],
-  ci: ["--json", "-w"],
+  ci: ["--json", "-w"], rounds: ["--json", "-w"],
 };
 
 const q = (s: string) => `'${s.replace(/'/g, "''")}'`; // PowerShell single quotes

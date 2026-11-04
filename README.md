@@ -251,6 +251,7 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 | `orq baseline ...` (`herdr-baseline`) | Manual snapshot of the tests failing on the base (outside the flow) |
 | `orq gc [-w <workspace>] [--yes] [--days N] [--json]` | Lists issue worktrees that are safe to remove (PR merged, or content already in the base, squash merges included); `--yes` removes them. Never touches uncommitted work, unpushed commits, a live claim or a running agent. Optional daily `orq-gc.timer` |
 | `orq ci [-w <workspace>] [--json]` | CI/CD status per claimed issue with a PR: queued, running, passed, failed or none, collected live via `gh` right then (the cache it fills is what `orq board`'s CI column reads, never blocking on the network). A run turning red or green pops a herdr notification, and a failure also pings the owning conductor |
+| `orq rounds <ID> [-w <workspace>] [--json]` | Watchdog without an LLM: fix rounds vs `policy.max_rounds`, time per round, reviewer findings repeated across rounds, alert ok / warn / stop. The board marks each issue (`r2/2 ⚠`) |
 | `orq quota --line` | One line of quota for a status bar (`work 64 · home 94! · codex 81`), from the board's cache, never the network |
 | `orq setup` | First configuration and install: environment, skills for Claude, config, conductor workspace |
 | `orq completion bash\|zsh\|fish\|powershell` | Prints the shell completion script (see Install) |

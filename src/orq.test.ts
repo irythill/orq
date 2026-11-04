@@ -10,6 +10,7 @@ import { limitsFor, parseWindows, pick as pickAgent } from "./pick.js";
 import { parseLocal } from "./commands/block.js";
 import { handoffPrompt, owners, plan, tighter, trimHandoffContext } from "./commands/handoff.js";
 import { setTomlString } from "./toml-set.js";
+import { metrics, parseFindings, repeats, similar, slowRounds, mark } from "./rounds.js";
 import { agyNote, antigravityFromModels, copilotFromUser, fromCache, humanReset, minimaxFromRemains } from "./quota.js";
 
 process.env.ORQ_LANG = "en"; // messages checked below are the English ones
@@ -1154,6 +1155,7 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
   agent("u-done", { pid: dead, status: "fail", rc: 3, end: iso(now - 60_000) });
   agent("u-old", { pid: dead, status: "ok", rc: 0, at: iso(now - 7200_000), end: iso(now - 7000_000) });
   writeFileSync(join(st, "locks", "verify", `${now - 5000}-${process.pid}.json`), JSON.stringify({ pid: process.pid, label: "verify ABC-1 api", at: now - 5000, held: true }));
+  writeFileSync(join(ws, ".orquestra", "ABC-1", "review-api.out.md"), "- [blocker] src/a.ts:1 missing null check\n");
   writeFileSync(join(ws, ".orquestra", "ABC-1", "owner"), `pane=me@box kind=id account=work at=${iso(now)}\n`);
   writeFileSync(join(st, "blocks.json"), JSON.stringify({ copilot: { until: now / 1000 + 86400, reason: "out" } }));
   writeFileSync(join(st, "board", "quota.txt"), "work 5h=42% week=7%\nopencode 5h=- week=- [no quota collector]\n");
@@ -1175,7 +1177,7 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
   assert.deepEqual([a.issue, a.label, a.model, a.activity, a.cap], ["ABC-1", "impl-api", "claude-opus-5", "· Edit", 2 ** 32]);
   assert.ok(a.secs >= 89 && a.mem > 0, `secs=${a.secs} mem=${a.mem}`);
   assert.equal(j.queue.holders[0].label, "verify ABC-1 api");
-  assert.deepEqual(j.conductors, [{ id: "me@box", kind: "id", account: "work", alive: true, issues: ["ABC-1"], name: "" }]);
+  assert.deepEqual(j.conductors, [{ id: "me@box", kind: "id", account: "work", alive: true, issues: ["ABC-1"], name: "", rounds: { "ABC-1": { rounds: 0, max: 2, level: "ok" } } }]);
   assert.deepEqual(j.quota.lines[0], { name: "work", five: "42%", week: "7%" });
   assert.deepEqual(j.ci.entries[0], { ws, issue: "ABC-1", repo: "api", branch: "work/plane-abc-1", pr: 9, sha: "abc1234", state: "failed", at: now });
   assert.equal(j.blocks.copilot.reason, "out");
@@ -1184,7 +1186,7 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
   assert.equal(o.status, 0, o.stderr);
   assert.ok(!o.stdout.includes("\x1b"), "no escape codes when piped");
   for (const s of ["TRANSPORT", "verify ABC-1 api", "impl-api", "claude-opus-5", "· Edit", "runner gone", "rc=3", "me@box", "42%",
-    "no quota collector: opencode", "copilot", "CHARTS", "MONITOR", "ABC-1", "failed"]) assert.ok(o.stdout.includes(s), `missing ${s}\n${o.stdout}`);
+    "no quota collector: opencode", "copilot", "CHARTS", "MONITOR", "ABC-1 r0/2", "failed"]) assert.ok(o.stdout.includes(s), `missing ${s}\n${o.stdout}`);
   const pt = spawnSync(process.execPath, [CLI, "board", "--once", "-w", ws], { env: { ...env, ORQ_LANG: "pt" }, encoding: "utf8" });
   assert.ok(pt.stdout.includes("fila de testes"), pt.stdout);
 });
@@ -1648,4 +1650,64 @@ test("orq pick review|opinion: more than one declared agent and no --impl-agent/
   } }));
   assert.equal(go("review").status, 0);
   assert.equal(go("review", "--exclude-agent", "y").status, 0);
+});
+
+test("rounds: findings parse from tagged list items and match by file + word overlap", () => {
+  const fs = parseFindings("Summary\n- [blocker] src/a.ts:10 missing null check on user input\n- plain note\n2. [minor] rename helper", 1);
+  assert.equal(fs.length, 2);
+  assert.equal(fs[0].file, "src/a.ts");
+  assert.equal(similar({ file: "src/a.ts", title: "missing null check on user input" }, { file: "src/a.ts", title: "null check missing for the user input" }), true);
+  assert.equal(similar({ file: "src/a.ts", title: "missing null check" }, { file: "src/b.ts", title: "missing null check" }), false);
+  assert.equal(similar({ file: "", title: "race in the queue" }, { file: "", title: "unrelated typo" }), false);
+});
+
+test("rounds: repeats, slow rounds and the alert level", () => {
+  const f = (round: number, title: string) => ({ round, severity: "blocker", file: "src/a.ts", title });
+  assert.equal(repeats([f(0, "missing null check input"), f(1, "other thing entirely")]).length, 0);
+  const rep = repeats([f(0, "missing null check input"), f(1, "missing null check input again")]);
+  assert.deepEqual(rep[0].rounds, [0, 1]);
+  const t = (...s: number[]) => s.map((secs, round) => ({ round, secs }));
+  assert.deepEqual(slowRounds(t(900, 1000, 1100, 4000)), [3]);
+  assert.deepEqual(slowRounds(t(9000, 1000, 1100, 1200)), []); // a slow implementation is not a slow round
+  assert.deepEqual(slowRounds(t(900, 1000, 4000)), []); // only 2 fix rounds: nothing to compare
+  assert.deepEqual(slowRounds([{ round: 0, secs: 10 }, { round: 1, secs: 100 }]), []);
+  const base = { max: 2, perRound: [], secs: 0, findings: [] };
+  assert.equal(metrics("X-1", { ...base, rounds: 1 }).level, "ok");
+  assert.equal(metrics("X-1", { ...base, rounds: 2 }).level, "warn");
+  assert.equal(metrics("X-1", { ...base, rounds: 3 }).level, "stop");
+  assert.equal(metrics("X-1", { ...base, rounds: 1, findings: [f(0, "missing null check input"), f(1, "missing null check input")] }).level, "warn");
+  const three = [0, 1, 2].map((r) => f(r, "missing null check input"));
+  assert.equal(metrics("X-1", { ...base, rounds: 1, findings: three }).level, "stop");
+  assert.equal(mark({ rounds: 2, max: 2, level: "warn" }), "r2/2 ⚠");
+});
+
+test("orq rounds reads fix/review files of an issue", () => {
+  const { root, env } = sandbox();
+  const d = join(root, ".orquestra", "X-1");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, "review-app.out.md"), "- [blocker] src/a.ts:1 missing null check on input\n");
+  writeFileSync(join(d, "fix-1.md"), "1. missing null check on input\n");
+  writeFileSync(join(d, "review-app-1.out.md"), "- [blocker] src/a.ts:1 missing null check on input\n");
+  const r = spawnSync("node", [CLI, "rounds", "X-1", "-w", root, "--json"], { env, encoding: "utf8" });
+  assert.equal(r.status, 0);
+  const j = JSON.parse(r.stdout);
+  assert.equal(j.rounds, 1);
+  assert.equal(j.repeats.length, 1);
+  assert.equal(j.level, "warn");
+  assert.equal(spawnSync("node", [CLI, "rounds", "NOPE-9", "-w", root], { env, encoding: "utf8" }).status, 1);
+});
+
+test("rounds: a -<digits> repo suffix is a round only when fix-<n>.md exists; minor findings never escalate; -w needs a value", () => {
+  const { root, env } = sandbox(), d = join(root, ".orquestra", "X-2");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, "review-app-2.out.md"), "- [minor] src/a.ts:1 rename helper function\n");
+  const go = (...a: string[]) => spawnSync(process.execPath, [CLI, "rounds", ...a], { env, encoding: "utf8" });
+  const j = JSON.parse(go("X-2", "-w", root, "--json").stdout);
+  assert.deepEqual([j.rounds, j.perRound.length], [0, 1]); // "app-2" is the repo, round 0
+  writeFileSync(join(d, "review-app-2-1.out.md"), "- [minor] src/a.ts:1 rename helper function\n");
+  writeFileSync(join(d, "fix-1.md"), "x\n");
+  const k = JSON.parse(go("X-2", "-w", root, "--json").stdout);
+  assert.deepEqual([k.rounds, k.repeats.length, k.level], [1, 0, "ok"]);
+  assert.deepEqual(metrics("X", { rounds: 3, max: 2, perRound: [], findings: [], secs: 0 }).reasons, [{ code: "over_max", n: 3, max: 2 }]);
+  assert.equal(go("X-2", "-w").status, 2);
 });
