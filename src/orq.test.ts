@@ -1857,3 +1857,20 @@ test("orq wait --timeout returns 124 while the agent has not finished", () => {
   const r = spawnSync(process.execPath, [CLI, "wait", "--timeout", "1", join(root, "watchdog-1")], { env, encoding: "utf8" });
   assert.equal(r.status, 124);
 });
+
+test("watchdog pool: built-ins declared without run stay in; unknown agents without run drop out", () => {
+  const ag = { claude: { roles: ["watchdog"], models: { watchdog: { default: "m" } } }, mytool: { vendor: "v2", roles: ["watchdog"] } };
+  const r = pickAgent({ cfg: { agents: ag }, role: "watchdog", level: "simple", implVendor: "v1", exclude: new Set(), stats: [], quota: {}, blocks: new Set(), recent: [] });
+  assert.deepEqual(r.cands.map((c) => c.agent), ["claude"]);
+});
+
+test("orq rounds --diagnose refuses while a previous watchdog run is alive", () => {
+  const { root, env } = sandbox(), d = join(root, ".orquestra", "ABC-4");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, "review-app.out.md"), "- [blocker] src/a.ts:1 missing null check on input\n");
+  writeFileSync(join(d, "fix-1.md"), "x"); writeFileSync(join(d, "fix-2.md"), "x");
+  writeFileSync(join(d, "watchdog-2-1.pid"), String(process.pid)); // this process is alive
+  const r = spawnSync(process.execPath, [CLI, "rounds", "ABC-4", "--diagnose", "-w", root], { env, encoding: "utf8" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /still running/);
+});

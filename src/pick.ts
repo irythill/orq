@@ -12,7 +12,7 @@
 // Pacing: an account whose usage, at the pace so far in a window (used ÷ elapsed share), projects past
 // that window's pick limit (the filter's) at its reset is passed over for another account under the limit when the agent has several,
 // and otherwise loses policy.pacing_penalty (default 0.3, 0 = off) of score — soft, never a drop.
-import { type AgentDef, usesPrompt } from "./agents.js";
+import { agentDef, usesPrompt } from "./agents.js";
 import type { Obj } from "./config.js";
 import { m } from "./i18n.js";
 import { humanReset } from "./quota.js";
@@ -105,6 +105,11 @@ const WEIGHTS = { quality: 0.4, tokens: 0.45, speed: 0.15, rotation: 0.2, reserv
 export const weights = (cfg: Obj) =>
   ({ ...WEIGHTS, ...((((cfg.policy ?? {}) as Obj).weights ?? {}) as Partial<typeof WEIGHTS>) });
 
+/** The merged definition (built-in + config) takes a prompt; an agent that can't be resolved doesn't. */
+function takesPrompt(cfg: Obj, name: string): boolean {
+  try { return usesPrompt(agentDef(cfg, name)); } catch { return false; }
+}
+
 export function pick(inp: PickInput): PickResult {
   const { cfg, role, level } = inp;
   const agents = (cfg.agents ?? {}) as Record<string, Obj>;
@@ -134,7 +139,7 @@ export function pick(inp: PickInput): PickResult {
         && vendorOf(name, a) === inp.implVendor) {
       out(name, m("same vendor as the implementer", "mesmo fornecedor do implementador")); continue;
     }
-    if (role === "watchdog" && !usesPrompt(a as unknown as AgentDef)) { out(name, m("ignores prompts (a review tool)", "ignora prompts (ferramenta de revisão)")); continue; }
+    if (role === "watchdog" && !takesPrompt(cfg, name)) { out(name, m("ignores prompts (a review tool)", "ignora prompts (ferramenta de revisão)")); continue; }
     const mf = modelFor(a, role, level);
     if (!mf) { out(name, m(`no model for ${role}/${level}`, `sem modelo para ${role}/${level}`)); continue; }
     // Quota: an agent with several accounts (claude) prefers one not projecting past the limit, then the least used.
