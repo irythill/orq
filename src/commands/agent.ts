@@ -36,7 +36,7 @@ interface Job {
   env: Record<string, string>; unset: string[]; stdin: boolean; format: string; answer: string;
   session?: string; fromLog?: string; parent: string; host: Host; unit: string; cap?: number; swap?: number;
   mode: MemMode; throwaway: boolean; promptInDir: boolean; closeAfter: number; keep: boolean; tui?: boolean;
-  okExit?: number[]; filter?: string; noReview?: string; idleCloseMin?: number;
+  okExit?: number[]; filter?: string; noReview?: string; idleCloseMin?: number; ro?: boolean;
 }
 
 const git = (dir: string, ...a: string[]) => {
@@ -188,7 +188,7 @@ export async function agent(argv: string[]): Promise<number> {
     swap: parseSize(mach.agent_swap_max as string | undefined), mode: (mach.mem_enforce as MemMode | undefined) ?? "auto",
     throwaway, promptInDir: Boolean(def.prompt_in_dir), closeAfter,
     keep: process.env.HERDR_KEEP_TAB === "1" || process.env.ORQ_KEEP_TAB === "1" || closeAfter <= 0, tui,
-    okExit: def.ok_exit, filter: def.filter, noReview: def.no_review,
+    okExit: def.ok_exit, filter: def.filter, noReview: def.no_review, ro,
     idleCloseMin: tui ? Number(mach.tui_idle_close_min ?? 30) : undefined,
   };
   writeAtomic(`${O}.job.json`, JSON.stringify(job, null, 1));
@@ -330,6 +330,8 @@ async function runJob(file: string): Promise<number> {
   state();
   const fmt = FORMATS[j.format] ?? FORMATS.text;
   let rc = 0, stdout = "", logText = "";
+  // State of the worktree before the run, to tell what this run changed (a -R on a dirty tree is not progress).
+  const headBefore = j.throwaway ? undefined : git(j.dir, "rev-parse", "HEAD"), statusBefore = j.throwaway ? undefined : git(j.dir, "status", "--porcelain");
   const pre = (): boolean => {
     if (j.throwaway) {
       // Throwaway worktree: detached copy of HEAD with the repo's node_modules linked; removed at the end.
@@ -445,10 +447,20 @@ async function runJob(file: string): Promise<number> {
   await new Promise((r) => log.end(r));
   post();
   const res = fmt.finish(logText, stdout);
+  // Denied commands do not sink a write run that did work: keep the diff and report ok with the denied list in the answer.
+  let recovered = false;
+  if (res.denied?.length && !j.ro && !j.throwaway && existsSync(j.dir)) {
+    const status = git(j.dir, "status", "--porcelain"), head = git(j.dir, "rev-parse", "HEAD");
+    if (status !== statusBefore || head !== headBefore) {
+      const stat = (headBefore && git(j.dir, "diff", "--stat", headBefore)) || status || `HEAD ${headBefore?.slice(0, 7)} -> ${head?.slice(0, 7)}`;
+      recovered = true;
+      res.answer = `${res.answer ?? ""}\n## Worktree\nSome commands were denied, but the worktree changes are kept (review them before accepting):\n\`\`\`\n${stat}\n\`\`\`\n`;
+    } else res.answer = `${res.answer ?? ""}\nNo changes were made in the worktree.\n`;
+  }
   if (j.answer !== "file") writeFileSync(`${O}.out.md`, res.answer ?? "");
   const sid = j.fromLog ? new RegExp(j.fromLog, "m").exec(logText)?.[1] : res.session ?? j.session;
   if (sid) writeFileSync(`${O}.id`, `${sid}\n`);
-  if (rc === 0 && res.rc) rc = res.rc;
+  if (rc === 0 && res.rc && !recovered) rc = res.rc;
   // A review tool exits non-zero on findings: an ok_exit code is a verdict (rc stays in .done), not a failure.
   let verdict = rc === 0 || (j.okExit ?? []).includes(rc);
   if (j.filter && verdict) {

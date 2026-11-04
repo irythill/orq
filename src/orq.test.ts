@@ -10,7 +10,7 @@ import { limitsFor, parseWindows, pick as pickAgent } from "./pick.js";
 import { parseLocal, quotaUntil } from "./commands/block.js";
 import { handoffPrompt, owners, plan, tighter, trimHandoffContext } from "./commands/handoff.js";
 import { setTomlString } from "./toml-set.js";
-import { usesPrompt, useThrowaway } from "./agents.js";
+import { FORMATS, usesPrompt, useThrowaway } from "./agents.js";
 import { buildPrompt, diagnosisGate, recommendation, trim } from "./diagnose.js";
 import { resolveRole } from "./roles.js";
 import { metrics, parseFindings, repeats, similar, slowRounds, mark } from "./rounds.js";
@@ -2150,4 +2150,74 @@ test("idleExpired: a -T agent is idle only once .done has been untouched for the
   assert.equal(idleExpired(d, 30 * 60_000), true);
   rmSync(d); // follow-up typed: .done removed resets the timer
   assert.equal(idleExpired(d, 60_000, Date.now() + 1e9), false);
+});
+
+test("agent: a denied-commands run is ok only if this run changed the worktree (commit counts, dirty before does not, -r never)", () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  (env as Record<string, string>).ORQ_TERMINAL = "plain";
+  const repo = join(root, "repo");
+  mkdirSync(repo);
+  const g = (...a: string[]) => spawnSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
+  for (const a of [["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "x"]]) g(...a);
+  const fake = join(root, "fake.mjs");
+  writeFileSync(fake, `import { writeFileSync } from "node:fs"; import { spawnSync } from "node:child_process";
+const [, , mode] = process.argv;
+if (mode === "commit") { writeFileSync("a.txt", "x"); spawnSync("git", ["add", "."]); spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "work"]); }
+console.log(JSON.stringify({ event: "step_update", step_update: { step_type: "tool", state: "ERROR", tool_info: { parameters: { CommandLine: "/usr/bin/pwd" } }, error: { message: "permission check failed for command" } } }));
+console.log(JSON.stringify({ event: "result", result: { response: "", conversation_id: "c1", denied_actions: [{ action: "command", display_name: "RunCommand" }] } }));
+process.stdin.resume().on("data", () => {}).on("end", () => process.exit(0));\n`);
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { fake: {
+    run: `'${process.execPath}' '${fake}' {mode}`, readonly: "ro", write: "commit", format: "antigravity", stdin: true, mem_max: "off" } } }));
+  writeFileSync(join(root, "p.md"), "hi\n");
+  const go = (name: string, ...extra: string[]) => {
+    const O = join(root, "out", name);
+    assert.equal(run("agent", "-a", "fake", "-t", name, "-d", repo, "-o", O, ...extra, "--", join(root, "p.md")).status, 0);
+    const w = run("wait", "--timeout", "60", O);
+    return { out: w.stdout + w.stderr, ans: readFileSync(`${O}.out.md`, "utf8") };
+  };
+  const a = go("commit");
+  assert.match(a.out, /status=ok/);
+  assert.match(a.ans, /## Denied commands/);
+  assert.match(a.ans, /a\.txt/);
+  // Nothing changes now (same HEAD, same status): not a recovery.
+  writeFileSync(join(repo, "dirty.txt"), "d");
+  writeFileSync(fake, readFileSync(fake, "utf8").replace('mode === "commit"', "false"));
+  const b = go("nochange");
+  assert.match(b.out, /status=fail/);
+  assert.match(b.ans, /No changes were made/);
+  const c = go("ro", "-r");
+  assert.match(c.out, /status=fail/);
+});
+
+const agyStream = (events: object[], stderr: string[] = []) => [...events.map((e) => JSON.stringify(e)), ...stderr].join("\n");
+
+test("antigravity: denied commands with an empty response keep the partial text, list the denied commands and the session", () => {
+  const log = agyStream([
+    { event: "step_update", step_update: { step_type: "agent_response", step_id: 1, text_delta: "Edited the file, " } },
+    { event: "step_update", step_update: { step_type: "agent_response", step_id: 1, text_delta: "then ran checks." } },
+    { event: "step_update", step_update: { step_type: "tool", state: "ERROR", tool_info: { parameters: { CommandLine: "/usr/bin/pwd" } },
+      error: { message: 'permission check failed for command "/usr/bin/pwd": not allowed' } } },
+    { event: "result", result: { response: "", conversation_id: "conv-1", denied_actions: [{ action: "command", display_name: "RunCommand" }] } },
+  ], ['jetski: no output produced — a tool required the "command" permission']);
+  const r = FORMATS.antigravity.finish(log, "");
+  assert.equal(r.session, "conv-1");
+  assert.match(r.answer ?? "", /Edited the file, then ran checks\./);
+  assert.match(r.answer ?? "", /## Denied commands/);
+  assert.match(r.answer ?? "", /`\/usr\/bin\/pwd` — permission check failed/);
+  assert.match(r.answer ?? "", /agy-impl\.json/);
+  assert.equal(r.denied?.length, 1);
+  assert.equal(r.rc, 3);
+});
+
+test("antigravity: denied_actions alone still produce a denied section; a clean run is untouched", () => {
+  const d = FORMATS.antigravity.finish(agyStream([
+    { event: "result", result: { response: "", denied_actions: [{ action: "command", display_name: "RunCommand" }] } }]), "");
+  assert.match(d.answer ?? "", /## Denied commands[\s\S]*- command \(RunCommand\)/);
+  assert.ok(d.denied?.length);
+  const ok = FORMATS.antigravity.finish(agyStream([{ event: "result", result: { response: "all good", conversation_id: "c2" } }]), "");
+  assert.equal(ok.answer, "all good");
+  assert.equal(ok.denied, undefined);
+  assert.equal(ok.rc, undefined);
 });

@@ -56,6 +56,9 @@ vendor = "google"
 roles  = ["review"]       # headless denies commands outside its allowlist: it only reads (diff attached)
 quota  = ["antigravity"]
 prior  = 0.6
+# To let it implement: copy examples/agy-impl.json to ~/.config/orq/agy-impl.json (globs allowed, e.g. command(/usr/bin/*))
+# and point the write template at it (use the absolute path), then add "impl" to roles and a models.impl:
+# write = "--mode accept-edits --add-dir {gitdir} --settings /path/to/home/.config/orq/agy-impl.json"
 [agents.antigravity.models.review]
 heavy   = "gemini-3.1-pro-high"
 

@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "command(git)",
+      "command(npm)",
+      "command(npx)",
+      "command(node)",
+      "command(ls)",
+      "command(pwd)",
+      "command(head)",
+      "command(tail)",
+      "command(wc)",
+      "command(cat)",
+      "command(grep)",
+      "command(rg)",
+      "command(/usr/bin/*)",
+      "command(*/node_modules/.bin/*)",
+      "command(*/mise/installs/*)"
+    ]
+  }
+}
