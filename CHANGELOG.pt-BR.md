@@ -5,6 +5,8 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
+
+## [0.5.0] — 2026-11-04
 ### Corrigido
 - Os avisos ao conductor (verify/agente terminou, CI vermelho) agora são entregues pelo próprio `orq`, destacados, e não
   falham mais em silêncio: o antigo `herdr-notify` dependia do `jq`, desistia após 3 tentativas em um minuto e imprimia os
