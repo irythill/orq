@@ -1661,6 +1661,22 @@ test("rounds: findings parse from tagged list items and match by file + word ove
   assert.equal(similar({ file: "", title: "race in the queue" }, { file: "", title: "unrelated typo" }), false);
 });
 
+test("rounds: bold severity words, markdown links, worktree paths and en-dash ranges", () => {
+  const txt = [
+    "1. **Bloqueante** — A validação falha [orders.service.ts](/work/.worktrees/api-plane-abc-1.review-111/src/orders/orders.service.ts:481) no fluxo",
+    "- **Bloqueante — `src/components/order-form.tsx:7–8`:** texto",
+    "3. **Sugestão** — texto",
+    "- **Sugestão — `package-lock.json:10048`:** texto",
+    "- **Critério 1** — não é achado",
+  ].join("\n");
+  const fs = parseFindings(txt, 0);
+  assert.deepEqual(fs.map((f) => f.severity), ["blocker", "blocker", "suggestion", "suggestion"]);
+  assert.deepEqual(fs.map((f) => f.file), ["src/orders/orders.service.ts", "src/components/order-form.tsx", "", "package-lock.json"]);
+  const other = parseFindings("1. **Bloqueante** — A validação falha [orders.service.ts](/work/.worktrees/api-plane-abc-1.review-222/src/orders/orders.service.ts:490) no fluxo", 1);
+  assert.equal(other[0].file, fs[0].file);
+  assert.equal(parseFindings("- **Critical** — x in a.ts\n- **Nit** y\n- **Major** z", 0).map((f) => f.severity).join(), "critical,nit,major");
+});
+
 test("rounds: repeats, slow rounds and the alert level", () => {
   const f = (round: number, title: string) => ({ round, severity: "blocker", file: "src/a.ts", title });
   assert.equal(repeats([f(0, "missing null check input"), f(1, "other thing entirely")]).length, 0);
