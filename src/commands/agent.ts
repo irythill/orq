@@ -127,6 +127,7 @@ export async function agent(argv: string[]): Promise<number> {
   let open = "", pid = 0;
   try { open = readFileSync(`${O}.pane`, "utf8").trim(); pid = Number(readFileSync(`${O}.pid`, "utf8")); } catch { /* first run or ended */ }
   if (tui && resume && alive(pid) && screenOpen(open)) {
+    ackPrefix(O); // a follow-up on the issue: its failure notices were seen
     for (const s of [".done", ".out.md"]) rmSync(O + s, { force: true });
     typeInto(open, readFileSync(P, "utf8"));
     console.log(`[orq agent] ${t} → ${open} ${m("(follow-up typed into the open screen)", "(follow-up digitado na tela aberta)")}`);

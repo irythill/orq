@@ -1616,6 +1616,15 @@ test("notice: ack records an acknowledgement and clears the pane title, only for
   ack("ABC-1", run, f);
   assert.equal(readLog(f).filter((e) => e.ev === "ack").length, 1);
   assert.deepEqual(calls, [["herdr", "pane", "report-metadata", "--source", "orq", "--clear-title", "w1:p1"]]);
+  // another issue on the same pane still has an open failure: its title replaces the old one instead of clearing it
+  calls.length = 0;
+  append({ id: "b", ev: "notice", pane: "w1:p1", loud: true, issue: "ABC-2", line: "[HERDR-AGENT DONE] ABC-2 impl status=fail" }, f);
+  append({ id: "b", ev: "delivered" }, f);
+  append({ id: "c", ev: "notice", pane: "w1:p1", loud: true, issue: "ABC-3", line: "[HERDR-AGENT DONE] ABC-3 impl status=fail" }, f);
+  append({ id: "c", ev: "delivered" }, f);
+  ack("ABC-2", run, f);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].includes("--title") && calls[0].includes("✗ ABC-3 impl") && !calls[0].includes("--clear-title"));
 });
 
 test("board: red line lists failures whose notice was not delivered or acknowledged", async () => {

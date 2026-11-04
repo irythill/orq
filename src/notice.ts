@@ -231,9 +231,12 @@ export function ack(issue: string | undefined, run: Deps["run"] = exec, file = l
     const open = pendingNotices(readLog(file), Date.now(), WINDOW_MS, 0).filter((p) => p.issue === issue);
     if (!open.length) return;
     append({ id: `ack-${Date.now().toString(36)}`, ev: "ack", issue }, file);
-    for (const p of open) {
-      const pane = readLog(file).find((e) => e.id === p.id && e.ev === "notice")?.pane;
-      if (pane) run("herdr", ["pane", "report-metadata", "--source", "orq", "--clear-title", pane], 5_000);
+    // Per pane: the title shows the newest failure still open there; cleared only when none remain.
+    const evs = readLog(file), paneOf = (id: string) => evs.find((e) => e.id === id && e.ev === "notice")?.pane;
+    const left = pendingNotices(evs, Date.now(), WINDOW_MS, 0);
+    for (const pane of new Set(open.map((p) => paneOf(p.id)).filter((x): x is string => !!x))) {
+      const next = left.find((p) => paneOf(p.id) === pane);
+      run("herdr", ["pane", "report-metadata", "--source", "orq", ...(next ? ["--title", popup(next.line).title, "--ttl-ms", String(TITLE_TTL_MS)] : ["--clear-title"]), pane], 5_000);
     }
   } catch { /* best effort */ }
 }
