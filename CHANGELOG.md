@@ -25,7 +25,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   would point away from, or loop back to, a live conductor.
 - Finished `-T` agents no longer pile up: with the screen open and no follow-up for `[machine] tui_idle_close_min`
   minutes (default 30, `0` = never) after the turn ended, the agent is stopped, cleaned up and its herdr tab closed. A
-  later `orq agent -T -R` reopens the session (`tui_resume`). A `-T` agent killed from outside now closes its tab too.
+  later `orq agent -T -R` reopens the session (`tui_resume`). On herdr, a turn typed straight into the screen counts as
+  activity; on tmux only the end of a turn does. Not applied with `close_tab_after = 0`. A `-T` agent killed from outside
+  now closes its herdr tab too (a tmux window closes with its runner).
 
 ## [0.5.0] — 2026-11-04
 ### Fixed

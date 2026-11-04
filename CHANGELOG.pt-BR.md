@@ -25,7 +25,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
   limpam redirecionamentos que sairiam de um conductor vivo ou voltariam a ele.
 - Agentes `-T` que terminaram não se acumulam mais: com a tela aberta e sem follow-up por `[machine] tui_idle_close_min`
   minutos (padrão 30, `0` = nunca) depois do fim do turno, o agente é encerrado, limpo e a aba do herdr é fechada. Um
-  `orq agent -T -R` depois reabre a sessão (`tui_resume`). Um agente `-T` morto de fora agora fecha a aba também.
+  `orq agent -T -R` depois reabre a sessão (`tui_resume`). No herdr, um turno digitado direto na tela conta como
+  atividade; no tmux só o fim do turno conta. Não vale com `close_tab_after = 0`. Um agente `-T` morto de fora agora fecha
+  a aba do herdr também (a janela do tmux fecha com o runner).
 
 ## [0.5.0] — 2026-11-04
 ### Corrigido

@@ -297,9 +297,16 @@ function noReviewMatch(pattern: unknown, answer: string): boolean {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** A -T agent is idle when its turn ended (.done exists) and nothing touched it for `idleMs`. */
-export function idleExpired(done: string, idleMs: number, now = Date.now()): boolean {
-  try { return idleMs > 0 && now - statSync(done).mtimeMs >= idleMs; } catch { return false; }
+/** A -T agent is idle when its turn ended (.done exists) and, for `idleMs`, nothing touched .done (a follow-up removes
+ *  it, a turn's end rewrites it) and the screen was not seen busy (`busyAt`, epoch ms, from herdr's agent status). */
+export function idleExpired(done: string, idleMs: number, now = Date.now(), busyAt = 0): boolean {
+  try { return idleMs > 0 && now - Math.max(statSync(done).mtimeMs, busyAt) >= idleMs; } catch { return false; }
+}
+
+/** herdr's view of the agent on a pane: working | blocked | idle | done | unknown; undefined when it can't be read. */
+function paneStatus(pane: string): string | undefined {
+  const r = spawnSync("herdr", ["pane", "get", pane], { encoding: "utf8", timeout: 5_000 });
+  try { return r.status === 0 ? (JSON.parse(r.stdout).result?.pane?.agent_status as string | undefined) : undefined; } catch { return undefined; }
 }
 
 /** Splits a stream into lines for `each`. */
@@ -378,9 +385,16 @@ async function runJob(file: string): Promise<number> {
           // turn, kill it; the normal end below cleans up and closes the tab. "New turn" = .done removed (`-R` typed
           // into the screen removes it) or rewritten (the next end of turn), so idle = .done untouched that long.
           const idleMs = (j.idleCloseMin ?? 0) * 60_000;
-          if (idleMs > 0) {
+          if (idleMs > 0 && !j.keep) {
+            // On herdr the pane's agent status also catches a turn typed straight into the screen (.done only changes
+            // when it ends). Elsewhere (tmux) only .done tells: a turn typed directly into the screen that runs longer
+            // than the timeout can still be closed.
+            let busyAt = 0;
+            const pane = j.host === "herdr" ? process.env.HERDR_PANE_ID : undefined;
             idleT = setInterval(() => {
-              if (!idleExpired(`${O}.done`, idleMs)) return;
+              const st = pane ? paneStatus(pane) : undefined;
+              if (st === "working" || st === "blocked") busyAt = Date.now();
+              if (!idleExpired(`${O}.done`, idleMs, Date.now(), busyAt)) return;
               clearInterval(idleT);
               console.log(m(`[orq agent] no follow-up for ${j.idleCloseMin} min: closing the finished agent`, `[orq agent] sem follow-up há ${j.idleCloseMin} min: fechando o agente que terminou`));
               if (child) killTree(child, false);

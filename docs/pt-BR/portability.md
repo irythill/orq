@@ -114,6 +114,7 @@ escolhido: `SKILL.md` + `CLAUDE.md` (Claude Code), `AGENTS.md` (Codex, OpenCode)
 agent_mem_max = "4G"       # padrão para todo agente; "off" desliga
 test_mem_max  = "6G"
 mem_enforce   = "auto"     # auto | kernel | watchdog | off
+tui_idle_close_min = 30    # minutos que um agente -T que terminou espera por follow-up antes de fechar; 0 = nunca
 [agents.codex]
 mem_max = "6G"             # sobrescreve só para este agente
 ```

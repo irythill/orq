@@ -2085,19 +2085,21 @@ test("orq conductor: outside a workspace exits 2; unknown account exits 1 listin
   assert.match(r.stderr, /work /);
 });
 
-test("currentPane: follows a handoff only to a pane that still exists, and drops the stale redirect", async () => {
+test("currentPane: returns the furthest live pane of the chain and prunes only the redirect that leads nowhere live", async () => {
   const { currentPane, paneExists } = await import("./notice.js");
   const { handoffFile } = await import("./testrun.js");
   const st = mkdtempSync(join(tmpdir(), "orq-n-"));
   const old = process.env.XDG_STATE_HOME; process.env.XDG_STATE_HOME = st;
   const res = (status: number | null, stderr = "") => ({ status, stdout: "", stderr });
-  const live = (...panes: string[]) => (_c: string, a: string[]) => panes.includes(a[2]) ? res(0) : res(1, '{"error":{"code":"agent_not_found"}}');
+  const live = (...panes: string[]) => (_c: string, a: string[]) => panes.includes(a[2]) ? res(0) : res(1, '{"error":{"code":"pane_not_found"}}');
   try {
     mkdirSync(dirname(handoffFile("A:p1")), { recursive: true });
     writeFileSync(handoffFile("A:p1"), "B:p1");
     writeFileSync(handoffFile("B:p1"), "C:p1");
-    // whole chain alive: ends on C
     assert.equal(currentPane("A:p1", live("B:p1", "C:p1")), "C:p1");
+    // B dead, C alive: still reach C, nothing deleted
+    assert.equal(currentPane("A:p1", live("C:p1")), "C:p1");
+    assert.ok(existsSync(handoffFile("A:p1")) && existsSync(handoffFile("B:p1")));
     // C closed: stay on B and drop only B's redirect
     assert.equal(currentPane("A:p1", live("B:p1")), "B:p1");
     assert.ok(existsSync(handoffFile("A:p1")));
@@ -2111,7 +2113,8 @@ test("currentPane: follows a handoff only to a pane that still exists, and drops
     assert.equal(currentPane("A:p1", () => res(1, "connection refused")), "Z:p1");
     assert.ok(existsSync(handoffFile("A:p1")));
     assert.equal(paneExists("Z:p1", () => res(0)), true);
-    assert.equal(paneExists("Z:p1", () => res(1, "pane_not_found")), false);
+    assert.equal(paneExists("Z:p1", () => res(1, '{"error":{"code":"pane_not_found"}}')), false);
+    assert.equal(paneExists("Z:p1", () => res(1, '{"error":{"code":"agent_not_found"}}')), undefined);
   } finally {
     if (old === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = old;
   }
@@ -2142,6 +2145,7 @@ test("idleExpired: a -T agent is idle only once .done has been untouched for the
   assert.equal(idleExpired(d, 60_000), false); // just finished
   assert.equal(idleExpired(d, 60_000, Date.now() + 61_000), true);
   assert.equal(idleExpired(d, 0, Date.now() + 1e9), false); // 0 = never
+  assert.equal(idleExpired(d, 60_000, Date.now() + 61_000, Date.now() + 30_000), false); // seen working 31 s ago
   utimesSync(d, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
   assert.equal(idleExpired(d, 30 * 60_000), true);
   rmSync(d); // follow-up typed: .done removed resets the timer
