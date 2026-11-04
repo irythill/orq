@@ -18,6 +18,7 @@ export const DEFAULTS: Obj = {
     mem_enforce: "auto", // auto (kernel cap where possible, else watchdog) | kernel | watchdog | off
     test_slots: 1, // test suites in parallel on the machine
     close_tab_after: 20, // seconds until a finished child tab closes (0 = never)
+    tui_idle_close_min: 30, // minutes a finished -T agent waits for a follow-up before it is closed (0 = never)
     tui: false, // children in the agent's own screen (-T) by default
     terminal: "auto", // where children show their output: auto (herdr, else tmux, else plain) | herdr | tmux | plain
   },

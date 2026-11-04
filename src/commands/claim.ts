@@ -12,6 +12,7 @@ import { basename, join, resolve } from "node:path";
 import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
 import { acquire, release } from "../lock.js";
+import { handoffFile } from "../notice.js";
 
 export const USAGE = `orq claim [-w <workspace>] <ID> | -f <ID> | -r <ID> | -l | --register   issue owner among conductors (exit 1 = someone else's)
 orq claim [-w <workspace>] --from <name> [-f]   a conductor's issues by its name (part of it is enough); -f takes them all`;
@@ -118,6 +119,7 @@ export async function claim(argv: string[]): Promise<number> {
     + (myName ? ` name=${myName}` : "") + "\n";
   if (mode === "register") {
     if (kind !== "herdr") return 0;
+    rmSync(handoffFile(me), { force: true }); // this pane is a live conductor again: drop a stale `orq handoff` redirect out of it
     const dir = join(O, ".conductors"); mkdirSync(dir, { recursive: true });
     writeAtomic(join(dir, me.replace(/[^A-Za-z0-9_-]/g, "_")),
       `pane=${me} kind=herdr account=${account} at=${new Date().toISOString()} name=${myName || me}\n`);

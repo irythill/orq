@@ -258,7 +258,7 @@ Dia a dia, atalhos e várias issues ao mesmo tempo: [docs/pt-BR/herdr.md](docs/p
 
 | Comando | O que faz |
 |---|---|
-| `orq agent -a <agent> ...` (`herdr-agent`) | Roda um agente com limite de memória numa aba do herdr, numa janela do tmux ou em segundo plano; `-r` só leitura, `-R <id>` continua a sessão, `-i` anexa um arquivo, `-b <base>` anexa o diff, `-T` a tela do próprio agente (herdr ou tmux; `-R` com ela aberta digita o follow-up nela) |
+| `orq agent -a <agent> ...` (`herdr-agent`) | Roda um agente com limite de memória numa aba do herdr, numa janela do tmux ou em segundo plano; `-r` só leitura, `-R <id>` continua a sessão, `-i` anexa um arquivo, `-b <base>` anexa o diff, `-T` a tela do próprio agente (herdr ou tmux; `-R` com ela aberta digita o follow-up nela; a tela que terminou fecha após `[machine] tui_idle_close_min` minutos sem follow-up, padrão 30, `0` = nunca) |
 | `orq instructions claude\|agents` | Escreve o playbook do `/issue` como `SKILL.md` (Claude Code) ou dentro do `AGENTS.md` (Codex, OpenCode…) |
 | `orq notice [--list] [-n N]` | O log de entrega dos avisos aos conductors: cada tentativa, nova tentativa e falha (`<state>/notices.jsonl`) |
 | `orq wait <prefixo>...` | Bloqueia até esses agentes terminarem; imprime `status=` e o arquivo da resposta (qualquer conductor, qualquer terminal) |

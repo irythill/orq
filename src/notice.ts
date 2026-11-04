@@ -9,7 +9,7 @@
 // if ui.desktop_notify allows, a desktop notification. Successes stay quiet: a plain herdr notification, nothing else.
 // `orq board` reads the same log to show failures that were not delivered or not yet acknowledged.
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getPath, loadConfig } from "./config.js";
@@ -66,7 +66,7 @@ export function desktopEnabled(setting: unknown, platform: string, hasBin: boole
 }
 
 // --- log --------------------------------------------------------------------------------------------------------
-export interface Ev { at: number; id: string; ev: "notice" | "try" | "delivered" | "failed" | "ack"; pane?: string; issue?: string; loud?: boolean;
+export interface Ev { at: number; id: string; ev: "notice" | "try" | "delivered" | "failed" | "ack" | "redirect"; pane?: string; issue?: string; loud?: boolean;
   line?: string; n?: number; detail?: string }
 
 export function append(e: Omit<Ev, "at"> & { at?: number }, file = logFile()): void {
@@ -177,17 +177,40 @@ const exec = (cmd: string, args: string[], timeoutMs = 15_000): Res => {
 };
 const hasBin = (b: string) => spawnSync(process.platform === "win32" ? "where" : "which", [b], { stdio: "ignore" }).status === 0;
 
-/** Follow `orq handoff` redirects to the pane that now holds the conductor (stops at cycles and unreadable files). */
-export function currentPane(pane: string): string {
-  const seen = new Set<string>();
+/** Does herdr know this pane? true | false (herdr answered pane_not_found) | undefined (unreachable or unclear).
+ *  `pane get`, not `agent get`: a live pane whose agent exited has no agent but is still a place to type. */
+export function paneExists(pane: string, run: Deps["run"] = exec): boolean | undefined {
+  const r = run("herdr", ["pane", "get", pane], 2_000);
+  if (r.status === 0) return true;
+  if (r.status === null) return undefined; // herdr is not installed / did not answer
+  return /"code"\s*:\s*"pane_not_found"/.test(`${r.stdout}\n${r.stderr}`) ? false : undefined;
+}
+
+/**
+ * Follow `orq handoff` redirects to the pane that now holds the conductor (stops at cycles and unreadable files).
+ * Walks the whole chain by files and returns the furthest pane that still exists, so a dead middle hop (A→B→C, B gone,
+ * C alive) does not strand the notice. The redirect out of that last live pane leads nowhere live: it is deleted (and
+ * logged). When herdr cannot be asked, a hop counts as live (the old behaviour: follow blindly).
+ */
+export function currentPane(pane: string, run: Deps["run"] = exec): string {
+  const chain = [pane], seen = new Set<string>();
   while (!seen.has(pane) && existsSync(handoffFile(pane))) {
     seen.add(pane);
     let next: string;
     try { next = readFileSync(handoffFile(pane), "utf8").trim(); } catch { break; }
     if (!next || next === pane) break;
-    pane = next;
+    chain.push(next); pane = next;
   }
-  return pane;
+  let last = 0;
+  for (let i = 1; i < chain.length; i++) if (paneExists(chain[i], run) !== false) last = i;
+  // A redirect out of the last live pane exists only when the chain went on to dead panes.
+  if (last < chain.length - 1 && existsSync(handoffFile(chain[last]))) {
+    try {
+      rmSync(handoffFile(chain[last]), { force: true });
+      append({ id: `redirect-${Date.now().toString(36)}`, ev: "redirect", pane: chain[last], detail: `stale handoff to closed ${chain[last + 1]} removed` });
+    } catch { /* best effort */ }
+  }
+  return chain[last];
 }
 
 function realDeps(id: string, pane: string, issue?: string): Deps {

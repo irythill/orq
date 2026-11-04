@@ -10,7 +10,7 @@
 // the follow-up into it; with the screen closed it reopens the session (tui_resume).
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, copyFileSync, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "../accounts.js";
@@ -36,7 +36,7 @@ interface Job {
   env: Record<string, string>; unset: string[]; stdin: boolean; format: string; answer: string;
   session?: string; fromLog?: string; parent: string; host: Host; unit: string; cap?: number; swap?: number;
   mode: MemMode; throwaway: boolean; promptInDir: boolean; closeAfter: number; keep: boolean; tui?: boolean;
-  okExit?: number[]; filter?: string; noReview?: string;
+  okExit?: number[]; filter?: string; noReview?: string; idleCloseMin?: number;
 }
 
 const git = (dir: string, ...a: string[]) => {
@@ -189,6 +189,7 @@ export async function agent(argv: string[]): Promise<number> {
     throwaway, promptInDir: Boolean(def.prompt_in_dir), closeAfter,
     keep: process.env.HERDR_KEEP_TAB === "1" || process.env.ORQ_KEEP_TAB === "1" || closeAfter <= 0, tui,
     okExit: def.ok_exit, filter: def.filter, noReview: def.no_review,
+    idleCloseMin: tui ? Number(mach.tui_idle_close_min ?? 30) : undefined,
   };
   writeAtomic(`${O}.job.json`, JSON.stringify(job, null, 1));
   // Readable copy of the command (also what orq stats and herdr-board read).
@@ -296,6 +297,18 @@ function noReviewMatch(pattern: unknown, answer: string): boolean {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** A -T agent is idle when its turn ended (.done exists) and, for `idleMs`, nothing touched .done (a follow-up removes
+ *  it, a turn's end rewrites it) and the screen was not seen busy (`busyAt`, epoch ms, from herdr's agent status). */
+export function idleExpired(done: string, idleMs: number, now = Date.now(), busyAt = 0): boolean {
+  try { return idleMs > 0 && now - Math.max(statSync(done).mtimeMs, busyAt) >= idleMs; } catch { return false; }
+}
+
+/** herdr's view of the agent on a pane: working | blocked | idle | done | unknown; undefined when it can't be read. */
+function paneStatus(pane: string): string | undefined {
+  const r = spawnSync("herdr", ["pane", "get", pane], { encoding: "utf8", timeout: 5_000 });
+  try { return r.status === 0 ? (JSON.parse(r.stdout).result?.pane?.agent_status as string | undefined) : undefined; } catch { return undefined; }
+}
+
 /** Splits a stream into lines for `each`. */
 function lines(s: NodeJS.ReadableStream | null, each: (l: string) => void): Promise<void> {
   return new Promise((res) => {
@@ -360,12 +373,36 @@ async function runJob(file: string): Promise<number> {
       for (const k of j.unset) delete env[k];
       // Ctrl+C belongs to the agent (it reaches us too, as part of the terminal's foreground group). The screen going
       // away (tab or tmux server closed) still ends the agent and cleans up.
-      let child: number | undefined;
+      let child: number | undefined, idleT: NodeJS.Timeout | undefined;
       process.on("SIGINT", () => { /* the agent's */ });
-      const gone = () => { if (child) killTree(child, false); end(129); process.exit(0); };
+      // The screen going away or being killed from outside: end the agent, and close the tab too (a dead tab stayed open).
+      const gone = () => { if (child) killTree(child, false); end(129); closeOwnTab(j.host); process.exit(0); };
       for (const sig of ["SIGHUP", "SIGTERM"] as NodeJS.Signals[]) process.on(sig, gone);
       rc = await runCapped(j.argv[0], j.argv.slice(1), { cap: j.cap, swap: j.swap, mode: j.mode, unit: j.unit, cwd: j.dir, env, quote: true, tty: true,
-        onSpawn: (c) => { child = c.pid; } });
+        onSpawn: (c) => {
+          child = c.pid;
+          // A finished agent waits for a follow-up forever and holds its memory: after the idle timeout without a new
+          // turn, kill it; the normal end below cleans up and closes the tab. "New turn" = .done removed (`-R` typed
+          // into the screen removes it) or rewritten (the next end of turn), so idle = .done untouched that long.
+          const idleMs = (j.idleCloseMin ?? 0) * 60_000;
+          if (idleMs > 0 && !j.keep) {
+            // On herdr the pane's agent status also catches a turn typed straight into the screen (.done only changes
+            // when it ends). Elsewhere (tmux) only .done tells: a turn typed directly into the screen that runs longer
+            // than the timeout can still be closed.
+            let busyAt = 0;
+            const pane = j.host === "herdr" ? process.env.HERDR_PANE_ID : undefined;
+            idleT = setInterval(() => {
+              const st = pane ? paneStatus(pane) : undefined;
+              if (st === "working" || st === "blocked") busyAt = Date.now();
+              if (!idleExpired(`${O}.done`, idleMs, Date.now(), busyAt)) return;
+              clearInterval(idleT);
+              console.log(m(`[orq agent] no follow-up for ${j.idleCloseMin} min: closing the finished agent`, `[orq agent] sem follow-up há ${j.idleCloseMin} min: fechando o agente que terminou`));
+              if (child) killTree(child, false);
+            }, Math.min(30_000, Math.max(1_000, idleMs / 2)));
+            idleT.unref();
+          }
+        } });
+      clearInterval(idleT);
     }
     const st = end(rc);
     state({ status: st, rc, end: new Date().toISOString() });

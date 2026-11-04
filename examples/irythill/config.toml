@@ -7,6 +7,7 @@ mem_enforce   = "auto"    # auto (systemd scope where available, else watchdog) 
 #                           per agent: [agents.<name>] mem_max = "6G" (or "off")
 test_slots    = 1
 close_tab_after = 20
+tui_idle_close_min = 30   # minutes a finished -T agent waits for a follow-up before closing (0 = never)
 
 # ---------------------------------------------------------------------------------------------------------------
 # Agents. Only the ones declared here exist for orq. Fields:

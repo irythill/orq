@@ -159,6 +159,7 @@ async function move(ws: string, c: ReturnType<typeof owners>[number], to: string
     for (const id of c.issues) writeAtomic(join(ws, ".orquestra", id, "owner"),
       `pane=${pane} kind=herdr account=${basename(dir)} at=${new Date().toISOString()} name=${label}\n`);
     writeAtomic(handoffFile(c.pane), pane);
+    rmSync(handoffFile(pane), { force: true }); // the new pane is live: a leftover redirect out of it would make a cycle
     const regs = join(ws, ".orquestra", ".conductors"); mkdirSync(regs, { recursive: true });
     writeAtomic(join(regs, pane.replace(/[^A-Za-z0-9_-]/g, "_")),
       `pane=${pane} kind=herdr account=${basename(dir)} at=${new Date().toISOString()} name=${label}\n`);
