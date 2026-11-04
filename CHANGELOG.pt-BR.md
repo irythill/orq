@@ -4,7 +4,7 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 [Keep a Changelog](https://keepachangelog.com/pt-BR/); as versões seguem o `package.json`.
 English: [CHANGELOG.md](CHANGELOG.md).
 
-## [Não lançado]
+## [0.4.0] — 2026-11-04
 ### Corrigido
 - O `orq rounds` agora conta achados de review escritos com severidade em negrito no início (`**Bloqueante**`, `**Sugestão — `arquivo:7–8`:**`, PT/EN),
   e não só tags `[blocker]`, e lê caminhos em links markdown, faixas de linha com travessão e o prefixo `.worktrees/<dir>/`
