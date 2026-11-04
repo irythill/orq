@@ -14,7 +14,7 @@ import { PICK_ROLES, type PickRole, resolveRole, vendorOf } from "../roles.js";
 import { collectRuns, rows } from "../stats.js";
 import { load as loadBlocks } from "./block.js";
 
-export const USAGE = `orq pick <impl|fix|worker|review|opinion> [--level simple|medium|heavy] [--impl-vendor <v>|--impl-agent <a>]
+export const USAGE = `orq pick <impl|fix|worker|review|opinion|watchdog> [--level simple|medium|heavy] [--impl-vendor <v>|--impl-agent <a>]
          [--exclude-agent <a>]... [-w <workspace>] [--explain] [--no-record]
 orq pick fix --same <impl pick file>   same agent/model/account as the implementer, effort one level up`;
 

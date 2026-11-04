@@ -16,7 +16,7 @@ export interface Row {
   min: number; new: number | null; tot: number | null;
 }
 
-const ROLE = /^(impl|fix\d*|review\d*|[a-z]+-review\d*)-?/;
+const ROLE = /^(impl|fix\d*|review\d*|[a-z]+-review\d*|watchdog\d*)-?/;
 const read = (f: string) => { try { return readFileSync(f, "utf8"); } catch { return ""; } };
 
 export function agentModel(run: string, log: string): [string, string] {
@@ -94,6 +94,7 @@ export function collectRuns(ws: string, days: number): Run[] {
       const name = basename(pre);
       const rm = ROLE.exec(name);
       const role = rm && rm[1].includes("review") ? "review"
+        : rm && rm[1].startsWith("watchdog") ? "watchdog"
         : name.startsWith("fix") || txt.includes("-R ") || txt.includes(" resume ") || txt.includes("--resume") ? "fix"
           : name.startsWith("impl") ? "impl" : "other";
       const out = read(`${pre}.out.md`);

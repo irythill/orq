@@ -14,7 +14,8 @@ import { appendFileSync, copyFileSync, createWriteStream, existsSync, mkdirSync,
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "../accounts.js";
-import { agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
+import { gateFor } from "../diagnose.js";
+import { useThrowaway, agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
 import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
@@ -24,7 +25,7 @@ import { killTree, type MemMode, parseSize, resolveMode, runCapped } from "../pr
 import { closeOwnTab, detectHost, type Host, launch, screenOpen, shq, typeInto } from "../terminal.js";
 import { dropWorktree, notify } from "../testrun.js";
 
-export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base] [-r] [-R session [-F]] [-T] -- <prompt.md>   run a child agent";
+export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base] [-r] [-R session [-F [-F]]] [-T] -- <prompt.md>   run a child agent";
 
 const CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
 const PF = ".herdr-agent-prompt.md"; // prompt_in_dir file name (kept from herdr-agent)
@@ -46,7 +47,7 @@ export async function agent(argv: string[]): Promise<number> {
   if (argv[0] === "--run") return runJob(argv[1]);
   if (argv[0] === "--turn") return turn(argv[1], argv[2], argv.slice(3));
   let a = process.env.AGENT || "codex", g = "", t = "", d = "", o = "", model = "", effort = "", acc = "", resume = "", base = "";
-  let ro = false, tui = false, force = false, prompt: string | undefined;
+  let ro = false, tui = false, force = 0, prompt: string | undefined;
   const inc: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i], v = () => argv[++i] ?? "";
@@ -54,7 +55,7 @@ export async function agent(argv: string[]): Promise<number> {
     if (x === "-a") a = v(); else if (x === "-g") g = v(); else if (x === "-t") t = v(); else if (x === "-d") d = v();
     else if (x === "-o") o = v(); else if (x === "-m") model = v(); else if (x === "-e") effort = v();
     else if (x === "-c") acc = v(); else if (x === "-i") inc.push(resolve(v())); else if (x === "-R") resume = v();
-    else if (x === "-b") base = v(); else if (x === "-p") v(); else if (x === "-r") ro = true; else if (x === "-T") tui = true; else if (x === "-F") force = true;
+    else if (x === "-b") base = v(); else if (x === "-p") v(); else if (x === "-r") ro = true; else if (x === "-T") tui = true; else if (x === "-F") force++;
     else if (!x.startsWith("-") && prompt === undefined) prompt = x;
     else { console.error(USAGE); return 2; }
   }
@@ -85,9 +86,19 @@ export async function agent(argv: string[]): Promise<number> {
     let n = 0;
     try { n = Number(readFileSync(cf, "utf8")) || 0; } catch { /* first follow-up */ }
     if (n >= max && !force) {
-      console.error(m(`round limit: session ${resume} already had ${n} follow-up(s) (policy.max_rounds = ${max}). Stop and tell the user; with their OK, repeat with -F.`,
-        `limite de rodadas: a sessão ${resume} já teve ${n} follow-up(s) (policy.max_rounds = ${max}). Pare e avise o usuário; com o OK dele, repita com -F.`));
+      console.error(m(`round limit: session ${resume} already had ${n} follow-up(s) (policy.max_rounds = ${max}). Stop and tell the user; with their OK, run \`orq rounds <ID> --diagnose\`, then repeat with -F.`,
+        `limite de rodadas: a sessão ${resume} já teve ${n} follow-up(s) (policy.max_rounds = ${max}). Pare e avise o usuário; com o OK dele, rode \`orq rounds <ID> --diagnose\` e repita com -F.`));
       return 4;
+    }
+    // -F past the limit also needs the watchdog's diagnosis of this round count (-F -F skips it: the user's own call).
+    // The issue folder is the prefix's folder, .orquestra/<ID>/ (where the .rounds-<session> counter lives).
+    if (n >= max && force === 1 && basename(dirname(dirname(O))) === ".orquestra") {
+      const g = gateFor(dirname(O)), id = basename(dirname(O));
+      if (g.verdict !== "ok") {
+        console.error(m(`no current diagnosis: ${g.verdict === "stale" ? `diagnosis-${g.rounds}.md is older than the latest fix/review` : `diagnosis-${g.rounds}.md does not exist`}. Run \`orq rounds ${id} --diagnose\` first, read it, and ask the user. -F -F skips this check.`,
+          `sem diagnóstico atual: ${g.verdict === "stale" ? `diagnosis-${g.rounds}.md é mais antigo que o último fix/revisão` : `diagnosis-${g.rounds}.md não existe`}. Rode \`orq rounds ${id} --diagnose\` antes, leia e consulte o usuário. -F -F pula esta checagem.`));
+        return 4;
+      }
     }
     mkdirSync(dirname(O), { recursive: true });
     writeFileSync(cf, String(n + 1));
@@ -119,7 +130,7 @@ export async function agent(argv: string[]): Promise<number> {
     return 0;
   }
   for (const s of [".done", ".out.md", ".pid"]) rmSync(O + s, { force: true });
-  const throwaway = Boolean(def.throwaway && ro && !resume);
+  const throwaway = useThrowaway(def, ro, Boolean(resume), git(repo, "rev-parse", "--git-dir") !== undefined);
   const dir = throwaway ? `${repo}.review-${process.pid}` : repo;
   const gd = git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir");
   const wg = git(repo, "rev-parse", "--absolute-git-dir");

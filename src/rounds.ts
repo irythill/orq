@@ -116,6 +116,17 @@ export function metrics(issue: string, f: Facts): Metrics {
   return { issue, rounds: f.rounds, max: f.max, secs: f.secs, perRound: f.perRound, findings: f.findings.length, repeats: reps, level, reasons };
 }
 
+/** Rounds of an issue folder: the highest .rounds-<session> counter or fix-<n>.md. Shared by `orq rounds` and the -F gate. */
+export function countRounds(dir: string, names: string[]): number {
+  let n = 0;
+  for (const f of names) {
+    const fx = /^fix-(\d+)\.md$/.exec(f);
+    if (fx) n = Math.max(n, Number(fx[1]));
+    else if (f.startsWith(".rounds-")) n = Math.max(n, Number(read(join(dir, f))) || 0);
+  }
+  return n;
+}
+
 /** The impure part: read .orquestra/<issue>/. undefined when the issue has no fix or review files at all. */
 export function collectRounds(ws: string, issue: string, max: number): Metrics | undefined {
   const dir = join(ws, ".orquestra", issue);
@@ -123,7 +134,6 @@ export function collectRounds(ws: string, issue: string, max: number): Metrics |
   try { names = readdirSync(dir); } catch { return undefined; }
   const mt = (n: string) => statSync(join(dir, n)).mtimeMs;
   const fixes = new Map<number, number>(), reviews = new Map<number, string[]>();
-  let counter = 0;
   for (const n of names) {
     const fx = /^fix-(\d+)\.md$/.exec(n);
     if (fx) fixes.set(Number(fx[1]), mt(n));
@@ -132,11 +142,10 @@ export function collectRounds(ws: string, issue: string, max: number): Metrics |
     // A trailing -<n> is a round only when fix-<n>.md exists; otherwise it is part of the repo name (round 0).
     const rv = /^review-(.+?)(?:-(\d+))?\.out\.md$/.exec(n), k = rv && rv[2] !== undefined && fixes.has(Number(rv[2])) ? Number(rv[2]) : 0;
     if (rv) reviews.set(k, [...(reviews.get(k) ?? []), n]);
-    else if (n.startsWith(".rounds-")) counter = Math.max(counter, Number(read(join(dir, n))) || 0);
   }
   if (!reviews.size && !fixes.size) return undefined;
-  const rounds = Math.max(counter, 0, ...fixes.keys());
-  const all = names.filter((n) => !n.startsWith(".")).map(mt), t0 = Math.min(...all), t1 = Math.max(...all);
+  const rounds = countRounds(dir, names);
+  const all = names.filter((n) => !n.startsWith(".") && !/^(diagnosis|watchdog)-/.test(n)).map(mt), t0 = Math.min(...all), t1 = Math.max(...all);
   // Round k runs from fix-k.md (round 0: the oldest file) to the next fix, the last one to the newest file.
   const starts = [t0, ...Array.from({ length: rounds }, (_, i) => fixes.get(i + 1) ?? NaN)];
   const perRound: RoundTime[] = starts.map((s, k) => {

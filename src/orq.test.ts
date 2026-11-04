@@ -10,6 +10,9 @@ import { limitsFor, parseWindows, pick as pickAgent } from "./pick.js";
 import { parseLocal } from "./commands/block.js";
 import { handoffPrompt, owners, plan, tighter, trimHandoffContext } from "./commands/handoff.js";
 import { setTomlString } from "./toml-set.js";
+import { usesPrompt, useThrowaway } from "./agents.js";
+import { buildPrompt, diagnosisGate, recommendation, trim } from "./diagnose.js";
+import { resolveRole } from "./roles.js";
 import { metrics, parseFindings, repeats, similar, slowRounds, mark } from "./rounds.js";
 import { agyNote, antigravityFromModels, copilotFromUser, fromCache, humanReset, minimaxFromRemains } from "./quota.js";
 
@@ -1744,4 +1747,130 @@ test("rounds: a -<digits> repo suffix is a round only when fix-<n>.md exists; mi
   assert.deepEqual([k.rounds, k.repeats.length, k.level], [1, 0, "ok"]);
   assert.deepEqual(metrics("X", { rounds: 3, max: 2, perRound: [], findings: [], secs: 0 }).reasons, [{ code: "over_max", n: 3, max: 2 }]);
   assert.equal(go("X-2", "-w").status, 2);
+});
+
+test("diagnose: the prompt carries metrics, repeats and the fix/review files, each trimmed to its share", () => {
+  const x = metrics("ABC-1", { rounds: 3, max: 2, perRound: [{ round: 0, secs: 600 }, { round: 1, secs: 1200 }], secs: 1800, findings: [] });
+  const p = buildPrompt({ ...x, repeats: [{ file: "src/a.ts", title: "missing null check", rounds: [0, 1] }] },
+    [{ name: "fix-1.md", text: "1. missing null check" }], [{ name: "review-app.out.md", text: "R".repeat(5000) }], 3000);
+  assert.match(p, /issue ABC-1/);
+  assert.match(p, /fix rounds: 3 \(policy\.max_rounds = 2\)/);
+  assert.match(p, /src\/a\.ts missing null check/);
+  assert.match(p, /--- fix-1\.md ---\n1\. missing null check/);
+  assert.match(p, /characters trimmed/);
+  assert.match(p, /RECOMMENDATION: <continue \| split \| change-implementer \| ask-user>/);
+  assert.ok(p.length < 6000);
+  assert.equal(trim("abc", 10), "abc");
+  assert.match(buildPrompt(x, [], []), /no fix or review files/);
+  assert.equal(recommendation("why\n**RECOMMENDATION:** split - too big"), "RECOMMENDATION: split - too big");
+  assert.equal(recommendation("nothing"), undefined);
+});
+
+test("diagnose: -F gate needs diagnosis-<rounds>.md not older than the latest fix/review", () => {
+  const f = (name: string, mtimeMs: number) => ({ name, mtimeMs });
+  const base = [f("fix-1.md", 100), f("review-app-1.out.md", 200), f("fix-2.md", 300), f("review-app-2.out.md", 400)];
+  assert.equal(diagnosisGate(2, base), "missing");
+  assert.equal(diagnosisGate(2, [...base, f("diagnosis-1.md", 500)]), "missing"); // wrong round count
+  assert.equal(diagnosisGate(2, [...base, f("diagnosis-2.md", 350)]), "stale"); // the loop went on after it
+  assert.equal(diagnosisGate(2, [...base, f("diagnosis-2.md", 450)]), "ok");
+});
+
+test("orq agent -R -F: past max_rounds needs a fresh diagnosis; -F -F skips the check", () => {
+  const { root, env } = sandbox();
+  mkdirSync(join(root, "cfg", "orq"), { recursive: true });
+  writeFileSync(join(root, "cfg", "orq", "config.toml"), "[policy]\nmax_rounds = 1\n");
+  const d = join(root, ".orquestra", "ABC-1");
+  mkdirSync(d, { recursive: true });
+  // no prompt file on purpose: a call that passes the gate stops at "no prompt file" (exit 2) instead of launching an agent
+  writeFileSync(join(d, ".rounds-S1"), "1");
+  writeFileSync(join(d, "fix-1.md"), "x");
+  const go = (...extra: string[]) => spawnSync(process.execPath, [CLI, "agent", "-a", "claude", "-t", "t", "-d", root, "-o", join(d, "fix2"), "-R", "S1", ...extra, "--", join(root, "p.md")],
+    { env, cwd: root, encoding: "utf8" });
+  let r = go("-F");
+  assert.equal(r.status, 4);
+  assert.match(r.stderr, /orq rounds ABC-1 --diagnose/);
+  assert.equal(go().status, 4);
+  r = go("-F", "-F"); // past the gate: stops later, at the missing prompt file
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /no prompt file/);
+  assert.doesNotMatch(r.stderr, /diagnos/);
+  writeFileSync(join(d, ".rounds-S1"), "1"); // the -F -F call above counted a round
+  writeFileSync(join(d, "diagnosis-1.md"), "RECOMMENDATION: split - big");
+  r = go("-F");
+  assert.match(r.stderr, /no prompt file/);
+});
+
+test("orq rounds --diagnose: ok needs no diagnosis; the latest recommendation shows in the text output", () => {
+  const { root, env } = sandbox(), d = join(root, ".orquestra", "ABC-2");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, "review-app.out.md"), "- [minor] src/a.ts:1 rename helper function\n");
+  const go = (...a: string[]) => spawnSync(process.execPath, [CLI, "rounds", "ABC-2", "-w", root, ...a], { env, encoding: "utf8" });
+  const r = go("--diagnose");
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /no diagnosis needed/);
+  assert.equal(existsSync(join(d, "diagnosis-0.md")), false);
+  writeFileSync(join(d, "diagnosis-0.md"), "text\nRECOMMENDATION: ask-user - spec unclear\n");
+  assert.match(go().stdout, /diagnosis 0: RECOMMENDATION: ask-user - spec unclear/);
+});
+
+test("watchdog role: own pool, else opinion, else review; models fall back the same way", () => {
+  const agents = { a: { roles: ["review"] }, b: { roles: ["opinion"] }, c: { roles: ["watchdog"] } };
+  assert.deepEqual(resolveRole({ agents }, "watchdog"), { mode: "auto", pool: ["c"], rule: "other-vendor", section: undefined });
+  assert.deepEqual(resolveRole({ agents: { a: agents.a, b: agents.b } }, "watchdog").mode === "auto" && (resolveRole({ agents: { a: agents.a, b: agents.b } }, "watchdog") as { pool: string[] }).pool, ["b"]);
+  assert.deepEqual((resolveRole({ agents: { a: agents.a } }, "watchdog") as { pool: string[] }).pool, ["a"]);
+  const cfg = { agents: { a: agents.a }, roles: { watchdog: { agent: "w", fallback: ["a"] } } };
+  assert.deepEqual(resolveRole(cfg, "watchdog"), { mode: "fixed", order: ["w", "a"], rule: "other-vendor", section: "watchdog" });
+  // pick: another vendor than the implementer, with the opinion models when the agent has none for watchdog
+  const mk = (n: string, vendor: string) => ({ vendor, run: "x {prompt_text}", roles: ["opinion"], models: { opinion: { default: `${n}-m@low` } } });
+  const r = pickAgent({ cfg: { agents: { x: mk("x", "v1"), y: mk("y", "v2") } }, role: "watchdog", level: "simple", implVendor: "v1", exclude: new Set(),
+    stats: [], quota: {}, blocks: new Set(), recent: [] });
+  assert.equal(r.best?.agent, "y");
+  assert.equal(r.best?.model, "y-m");
+});
+
+test("watchdog: no throwaway worktree outside git, review tools that ignore prompts are not in the pool", () => {
+  assert.equal(useThrowaway({ throwaway: true }, true, false, true), true);
+  assert.equal(useThrowaway({ throwaway: true }, true, false, false), false); // not a git repo: run in place
+  assert.equal(useThrowaway({ throwaway: true }, false, false, true), false);
+  assert.equal(useThrowaway({ throwaway: true }, true, true, true), false);
+  assert.equal(usesPrompt({ run: "tool --markdown [-b {base}]" }), false);
+  assert.equal(usesPrompt({ run: "chat -p {prompt_text}" }), true);
+  assert.equal(usesPrompt({ run: "chat", stdin: true }), true);
+  const ag = { tool: { vendor: "v2", roles: ["watchdog"], run: "tool --markdown" }, chat: { vendor: "v3", roles: ["watchdog"], run: "chat {prompt_text}" } };
+  const r = pickAgent({ cfg: { agents: ag }, role: "watchdog", level: "simple", implVendor: "v1", exclude: new Set(), stats: [], quota: {}, blocks: new Set(), recent: [] });
+  assert.deepEqual(r.cands.map((c) => c.agent), ["chat"]);
+});
+
+test("gate and orq rounds count rounds the same way (all .rounds-* files and fix-<n>)", async () => {
+  const { gateFor } = await import("./diagnose.js");
+  const { root, env } = sandbox(), d = join(root, ".orquestra", "ABC-3");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, ".rounds-S1"), "1"); writeFileSync(join(d, ".rounds-S2"), "3"); writeFileSync(join(d, "fix-2.md"), "x");
+  writeFileSync(join(d, "review-app.out.md"), "x");
+  const j = JSON.parse(spawnSync(process.execPath, [CLI, "rounds", "ABC-3", "-w", root, "--json"], { env, encoding: "utf8" }).stdout);
+  assert.equal(j.rounds, 3);
+  assert.deepEqual(gateFor(d), { verdict: "missing", rounds: 3 });
+});
+
+test("orq wait --timeout returns 124 while the agent has not finished", () => {
+  const { root, env } = sandbox();
+  const r = spawnSync(process.execPath, [CLI, "wait", "--timeout", "1", join(root, "watchdog-1")], { env, encoding: "utf8" });
+  assert.equal(r.status, 124);
+});
+
+test("watchdog pool: built-ins declared without run stay in; unknown agents without run drop out", () => {
+  const ag = { claude: { roles: ["watchdog"], models: { watchdog: { default: "m" } } }, mytool: { vendor: "v2", roles: ["watchdog"] } };
+  const r = pickAgent({ cfg: { agents: ag }, role: "watchdog", level: "simple", implVendor: "v1", exclude: new Set(), stats: [], quota: {}, blocks: new Set(), recent: [] });
+  assert.deepEqual(r.cands.map((c) => c.agent), ["claude"]);
+});
+
+test("orq rounds --diagnose refuses while a previous watchdog run is alive", () => {
+  const { root, env } = sandbox(), d = join(root, ".orquestra", "ABC-4");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, "review-app.out.md"), "- [blocker] src/a.ts:1 missing null check on input\n");
+  writeFileSync(join(d, "fix-1.md"), "x"); writeFileSync(join(d, "fix-2.md"), "x");
+  writeFileSync(join(d, "watchdog-2-1.pid"), String(process.pid)); // this process is alive
+  const r = spawnSync(process.execPath, [CLI, "rounds", "ABC-4", "--diagnose", "-w", root], { env, encoding: "utf8" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /still running/);
 });

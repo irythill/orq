@@ -12,6 +12,7 @@
 // Pacing: an account whose usage, at the pace so far in a window (used ÷ elapsed share), projects past
 // that window's pick limit (the filter's) at its reset is passed over for another account under the limit when the agent has several,
 // and otherwise loses policy.pacing_penalty (default 0.3, 0 = off) of score — soft, never a drop.
+import { agentDef, usesPrompt } from "./agents.js";
 import type { Obj } from "./config.js";
 import { m } from "./i18n.js";
 import { humanReset } from "./quota.js";
@@ -93,7 +94,7 @@ export function modelFor(a: Obj, role: PickRole, level: string): [string, string
   if (a.models === undefined) return ["", undefined]; // no models configured: the CLI's default
   const models = a.models as Record<string, Record<string, string>>;
   const lr = legacyRole(role);
-  const ms = models[lr] ?? (lr === "fix" ? models.impl : undefined) ?? {};
+  const ms = models[lr] ?? (lr === "fix" ? models.impl : lr === "watchdog" ? models.opinion ?? models.review : undefined) ?? {};
   const spec = ms[level] ?? ms.default ?? ms.medium ?? ms.simple;
   if (!spec) return undefined;
   const [model, effort] = spec.split("@");
@@ -103,6 +104,11 @@ export function modelFor(a: Obj, role: PickRole, level: string): [string, string
 const WEIGHTS = { quality: 0.4, tokens: 0.45, speed: 0.15, rotation: 0.2, reserve: 0.3, explore: 0.1, min_samples: 8, window: 6 };
 export const weights = (cfg: Obj) =>
   ({ ...WEIGHTS, ...((((cfg.policy ?? {}) as Obj).weights ?? {}) as Partial<typeof WEIGHTS>) });
+
+/** The merged definition (built-in + config) takes a prompt; an agent that can't be resolved doesn't. */
+function takesPrompt(cfg: Obj, name: string): boolean {
+  try { return usesPrompt(agentDef(cfg, name)); } catch { return false; }
+}
 
 export function pick(inp: PickInput): PickResult {
   const { cfg, role, level } = inp;
@@ -126,13 +132,14 @@ export function pick(inp: PickInput): PickResult {
     if (!a) { out(name, m("not declared in [agents]", "não declarado em [agents]")); continue; }
     if (inp.exclude.has(name)) { out(name, m("excluded (--exclude-agent)", "excluído (--exclude-agent)")); continue; }
     if (inp.blocks.has(name)) { out(name, m("blocked (orq block -l)", "bloqueado (orq block -l)")); continue; }
-    if ((role === "review" || role === "opinion") && name === inp.implAgent && someoneElse) {
+    if ((role === "review" || role === "opinion" || role === "watchdog") && name === inp.implAgent && someoneElse) {
       out(name, m("it implemented this code", "foi quem implementou")); continue;
     }
-    if ((role === "review" || role === "opinion") && res.rule === "other-vendor" && inp.implVendor && otherVendor
+    if ((role === "review" || role === "opinion" || role === "watchdog") && res.rule === "other-vendor" && inp.implVendor && otherVendor
         && vendorOf(name, a) === inp.implVendor) {
       out(name, m("same vendor as the implementer", "mesmo fornecedor do implementador")); continue;
     }
+    if (role === "watchdog" && !takesPrompt(cfg, name)) { out(name, m("ignores prompts (a review tool)", "ignora prompts (ferramenta de revisão)")); continue; }
     const mf = modelFor(a, role, level);
     if (!mf) { out(name, m(`no model for ${role}/${level}`, `sem modelo para ${role}/${level}`)); continue; }
     // Quota: an agent with several accounts (claude) prefers one not projecting past the limit, then the least used.
@@ -184,7 +191,8 @@ export function pick(inp: PickInput): PickResult {
     const chosen = ranked[0];
     const acct = qn.length > 1 ? chosen?.n : undefined;
     const statRole = role === "fix" || role === "worker" ? "impl" : role;
-    const st = inp.stats.find((r) => r.role === statRole && r.agent === name && r.model === (mf[0].split("/").pop() || "default"));
+    const stOf = (sr: string) => inp.stats.find((r) => r.role === sr && r.agent === name && r.model === (mf[0].split("/").pop() || "default"));
+    const st = stOf(statRole) ?? (role === "watchdog" ? stOf("review") : undefined); // no watchdog runs yet: its review record
     pass.push({ agent: name, model: mf[0], effort: mf[1], acct, a, st, pace: chosen?.pace, hot: Boolean(chosen?.hot) });
     if (res.mode === "fixed") break; // the first that passes wins
   }
