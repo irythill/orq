@@ -43,7 +43,7 @@ const SEV: Record<string, string> = {
 const fold = (w: string) => w.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 const LINK = /\[([^\]]*)\]\(([^)\s]*)\)/g;
 // Reviews run in a different worktree per round (".worktrees/<repo>-<id>.review-<pid>/"): drop it so the same file matches across rounds.
-const repoRel = (f: string) => f.replace(/^.*\.worktrees\/[^/]+\//, "");
+const repoRel = (f: string) => f.replace(/\\/g, "/").replace(/^.*\.worktrees\/[^/]+\//, "");
 
 /** One review-list item → finding. Only items carrying a severity (a "[blocker]" tag or a leading bold "**Bloqueante**") count. */
 export function parseFindings(text: string, round: number): Finding[] {
@@ -53,11 +53,11 @@ export function parseFindings(text: string, round: number): Finding[] {
     if (!it) continue;
     const tag = /\[(blocker|major|minor|nit|suggestion|important|critical)\]/i.exec(it[1]);
     const bold = tag ? null : /^\*\*\s*(\p{L}+)/u.exec(it[1]);
-    const sev = tag ? tag[1].toLowerCase() : bold && SEV[fold(bold[1])];
+    const sev = SEV[fold((tag ?? bold)?.[1] ?? "")];
     if (!sev) continue;
     const rest = it[1].replace((tag ?? bold)![0], " ");
-    const byTarget = rest.replace(LINK, (_, _t, p) => ` ${repoRel(p)} `);
-    const m = /([\w@./-]+\.\w+)(?::\d+(?:[-\u2013]\d+)?)?/.exec(byTarget);
+    const byTarget = rest.replace(LINK, (_, t, p) => ` ${/^[a-z][a-z0-9+.-]*:\/\//i.test(p) ? t : repoRel(p)} `);
+    const m = /([\w@./\\-]+\.\w+)(?::\d+(?:[-\u2013]\d+)?)?/.exec(byTarget);
     const file = m ? repoRel(m[1]) : "";
     out.push({ round, severity: sev, file, title: rest.replace(LINK, "$1").replace(/[`*_]/g, "").replace(/\s+/g, " ").trim() });
   }

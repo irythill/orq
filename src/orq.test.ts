@@ -1677,6 +1677,15 @@ test("rounds: bold severity words, markdown links, worktree paths and en-dash ra
   assert.equal(parseFindings("- **Critical** — x in a.ts\n- **Nit** y\n- **Major** z", 0).map((f) => f.severity).join(), "critical,nit,major");
 });
 
+test("rounds: windows paths, URL links and [important] tags", () => {
+  const w = parseFindings("- **Bloqueante — `C:\\work\\.worktrees\\api-plane-abc-1.review-1\\src\\orders\\orders.service.ts:7–8`:** texto", 0);
+  assert.equal(w[0].file, "src/orders/orders.service.ts");
+  const u = parseFindings("1. **Sugestão** — veja [orders.service.ts](https://github.com/acme/api/blob/main/src/orders/orders.service.ts#L4) agora", 0);
+  assert.equal(u[0].file, "orders.service.ts");
+  const i = parseFindings("- [important] src/a.ts:3 falta validar\n- **Importante** src/a.ts:3 falta validar", 0);
+  assert.deepEqual(i.map((f) => f.severity), ["major", "major"]);
+});
+
 test("rounds: repeats, slow rounds and the alert level", () => {
   const f = (round: number, title: string) => ({ round, severity: "blocker", file: "src/a.ts", title });
   assert.equal(repeats([f(0, "missing null check input"), f(1, "other thing entirely")]).length, 0);
