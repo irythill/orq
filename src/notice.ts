@@ -9,7 +9,7 @@
 // if ui.desktop_notify allows, a desktop notification. Successes stay quiet: a plain herdr notification, nothing else.
 // `orq board` reads the same log to show failures that were not delivered or not yet acknowledged.
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getPath, loadConfig } from "./config.js";
@@ -23,7 +23,10 @@ export const handoffFile = (pane: string) => join(stateDir(), "handoff", pane.re
 /** Wait before retry n (1-based): 5s, 15s, 45s, 2min, 5min — six attempts, about eight minutes in all. */
 export const BACKOFF_S = [5, 15, 45, 120, 300];
 export const WINDOW_MS = 60 * 60_000; // the board looks at failures this recent
-export const GRACE_MS = 3 * 60_000; // a notice with no outcome yet is "in flight" this long, then it counts as undelivered
+// A notice with no outcome is "in flight" while its delivery process is alive. It writes an event per attempt, and the
+// longest silence between two is the longest backoff plus one attempt's timeouts (get 10s + wait 70s + prompt 20s):
+// past that (plus a margin) with nothing new in the log, the process died and the notice counts as undelivered.
+export const GRACE_MS = (BACKOFF_S[BACKOFF_S.length - 1] + 100 + 30) * 1000;
 const TITLE_TTL_MS = 30 * 60_000; // the "✗" pane title clears itself
 
 export type Attempt = "sent" | "blocked" | "no-agent" | "error";
@@ -70,15 +73,18 @@ export function append(e: Omit<Ev, "at"> & { at?: number }, file = logFile()): v
   try {
     mkdirSync(dirname(file), { recursive: true });
     appendFileSync(file, JSON.stringify({ at: Date.now(), ...e }) + "\n");
-    if (statSync(file).size > 512 * 1024) // keep the newest half
-      writeFileSync(file, readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-1000).join("\n") + "\n");
+    // Rotate instead of rewriting: a rename is atomic, so a concurrent detached writer's append lands in the old or the
+    // new file, never lost. readLog() reads both.
+    if (statSync(file).size > 512 * 1024) renameSync(file, `${file}.1`);
   } catch { /* the log never takes the caller down */ }
 }
 
 export function readLog(file = logFile()): Ev[] {
-  try {
-    return readFileSync(file, "utf8").split("\n").filter(Boolean).flatMap((l) => { try { return [JSON.parse(l) as Ev]; } catch { return []; } });
-  } catch { return []; }
+  const one = (f: string): Ev[] => {
+    try { return readFileSync(f, "utf8").split("\n").filter(Boolean).flatMap((l) => { try { return [JSON.parse(l) as Ev]; } catch { return []; } }); }
+    catch { return []; }
+  };
+  return [...one(`${file}.1`), ...one(file)];
 }
 
 export interface Pending { id: string; issue?: string; line: string; at: number; why: "undelivered" | "unacknowledged" }
@@ -97,7 +103,7 @@ export function pendingNotices(events: Ev[], now: number, windowMs = WINDOW_MS, 
     if (!n || !n.loud || now - n.at > windowMs) continue;
     if (n.issue && events.some((e) => e.ev === "ack" && e.issue === n.issue && e.at >= n.at)) continue;
     const delivered = evs.some((e) => e.ev === "delivered"), failed = evs.some((e) => e.ev === "failed");
-    if (!delivered && !failed && now - n.at < graceMs) continue; // still being delivered
+    if (!delivered && !failed && now - Math.max(...evs.map((e) => e.at)) < graceMs) continue; // still being delivered
     const p: Pending = { id, ...(n.issue ? { issue: n.issue } : {}), line: n.line ?? "", at: n.at, why: delivered ? "unacknowledged" : "undelivered" };
     // A delivered notice with no issue has nothing to acknowledge against: nothing to show.
     if (p.why === "unacknowledged" && !n.issue) continue;

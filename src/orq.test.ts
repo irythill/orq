@@ -1582,6 +1582,7 @@ test("notice: board indicator picks undelivered and unacknowledged failures, not
     n("c", 20 * 60_000, "ABC-3"), { at: now - 19 * 60_000, id: "c", ev: "delivered" as const },
     { at: now - 5 * 60_000, id: "ack1", ev: "ack" as const, issue: "ABC-3" },                            // acknowledged
     n("d", 30_000, "ABC-4"),                                                                            // still in flight
+    n("i", GRACE_MS + 60_000, "ABC-8"), { at: now - 60_000, id: "i", ev: "try" as const },                // retrying (slept a long backoff): in flight
     n("e", GRACE_MS + 1000, "ABC-5"),                                                                   // no outcome: delivery process died
     n("f", WINDOW_MS + 1000, "ABC-6"), { at: now - WINDOW_MS, id: "f", ev: "failed" as const },          // too old
     n("g", 5 * 60_000, "ABC-7", false), { at: now - 4 * 60_000, id: "g", ev: "failed" as const },        // quiet success: never listed
@@ -1591,7 +1592,7 @@ test("notice: board indicator picks undelivered and unacknowledged failures, not
   assert.equal(got.find((p) => p.issue === "ABC-1")?.why, "unacknowledged");
   assert.equal(got.find((p) => p.issue === "ABC-2")?.why, "undelivered");
   assert.equal(got.find((p) => p.issue === "ABC-5")?.why, "undelivered");
-  assert.deepEqual(got.map((p) => p.issue).sort(), ["ABC-1", "ABC-2", "ABC-5"]);
+  assert.deepEqual(got.map((p) => p.issue).sort(), ["ABC-1", "ABC-2", "ABC-5"]); // ABC-8 is not there
   // a later ack for ABC-1 clears it; an ack from BEFORE the notice does not
   assert.ok(!pendingNotices([...ev, { at: now, id: "x", ev: "ack" as const, issue: "ABC-1" }], now).some((p) => p.issue === "ABC-1"));
   assert.ok(pendingNotices([...ev, { at: now - 11 * 60_000, id: "y", ev: "ack" as const, issue: "ABC-1" }], now).some((p) => p.issue === "ABC-1"));
@@ -1600,6 +1601,12 @@ test("notice: board indicator picks undelivered and unacknowledged failures, not
 test("notice: ack records an acknowledgement and clears the pane title, only for open failures", async () => {
   const { ack, append, readLog } = await import("./notice.js");
   const f = join(mkdtempSync(join(tmpdir(), "orq-ack-")), "notices.jsonl");
+  // rotation keeps old lines readable instead of rewriting the file
+  writeFileSync(f, JSON.stringify({ at: 1, id: "old", ev: "notice" }) + "\n" + " ".repeat(600 * 1024) + "\n");
+  append({ id: "new", ev: "delivered" }, f);
+  assert.deepEqual(readLog(f).map((e) => e.id), ["old", "new"]);
+  assert.ok(existsSync(`${f}.1`));
+  writeFileSync(f, ""); writeFileSync(`${f}.1`, "");
   const calls: string[][] = [];
   const run = (cmd: string, args: string[]) => { calls.push([cmd, ...args]); return { status: 0, stdout: "", stderr: "" }; };
   ack("ABC-1", run, f);
