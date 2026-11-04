@@ -445,10 +445,20 @@ async function runJob(file: string): Promise<number> {
   await new Promise((r) => log.end(r));
   post();
   const res = fmt.finish(logText, stdout);
+  // Denied commands do not sink a write run that did work: keep the diff and report ok with the denied list in the answer.
+  let recovered = false;
+  if (res.denied?.length && !j.throwaway && existsSync(j.dir)) {
+    const changed = git(j.dir, "status", "--porcelain");
+    if (changed) {
+      const stat = git(j.dir, "diff", "--stat", "HEAD") || changed;
+      recovered = true;
+      res.answer = `${res.answer ?? ""}\n## Worktree\nSome commands were denied, but the worktree changes are kept (review them before accepting):\n\`\`\`\n${stat}\n\`\`\`\n`;
+    } else res.answer = `${res.answer ?? ""}\nNo changes were made in the worktree.\n`;
+  }
   if (j.answer !== "file") writeFileSync(`${O}.out.md`, res.answer ?? "");
   const sid = j.fromLog ? new RegExp(j.fromLog, "m").exec(logText)?.[1] : res.session ?? j.session;
   if (sid) writeFileSync(`${O}.id`, `${sid}\n`);
-  if (rc === 0 && res.rc) rc = res.rc;
+  if (rc === 0 && res.rc && !recovered) rc = res.rc;
   // A review tool exits non-zero on findings: an ok_exit code is a verdict (rc stays in .done), not a failure.
   let verdict = rc === 0 || (j.okExit ?? []).includes(rc);
   if (j.filter && verdict) {

@@ -10,7 +10,7 @@ import { limitsFor, parseWindows, pick as pickAgent } from "./pick.js";
 import { parseLocal, quotaUntil } from "./commands/block.js";
 import { handoffPrompt, owners, plan, tighter, trimHandoffContext } from "./commands/handoff.js";
 import { setTomlString } from "./toml-set.js";
-import { usesPrompt, useThrowaway } from "./agents.js";
+import { FORMATS, usesPrompt, useThrowaway } from "./agents.js";
 import { buildPrompt, diagnosisGate, recommendation, trim } from "./diagnose.js";
 import { resolveRole } from "./roles.js";
 import { metrics, parseFindings, repeats, similar, slowRounds, mark } from "./rounds.js";
@@ -2150,4 +2150,35 @@ test("idleExpired: a -T agent is idle only once .done has been untouched for the
   assert.equal(idleExpired(d, 30 * 60_000), true);
   rmSync(d); // follow-up typed: .done removed resets the timer
   assert.equal(idleExpired(d, 60_000, Date.now() + 1e9), false);
+});
+
+const agyStream = (events: object[], stderr: string[] = []) => [...events.map((e) => JSON.stringify(e)), ...stderr].join("\n");
+
+test("antigravity: denied commands with an empty response keep the partial text, list the denied commands and the session", () => {
+  const log = agyStream([
+    { event: "step_update", step_update: { step_type: "agent_response", step_id: 1, text_delta: "Edited the file, " } },
+    { event: "step_update", step_update: { step_type: "agent_response", step_id: 1, text_delta: "then ran checks." } },
+    { event: "step_update", step_update: { step_type: "tool", state: "ERROR", tool_info: { parameters: { CommandLine: "/usr/bin/pwd" } },
+      error: { message: 'permission check failed for command "/usr/bin/pwd": not allowed' } } },
+    { event: "result", result: { response: "", conversation_id: "conv-1", denied_actions: [{ action: "command", display_name: "RunCommand" }] } },
+  ], ['jetski: no output produced — a tool required the "command" permission']);
+  const r = FORMATS.antigravity.finish(log, "");
+  assert.equal(r.session, "conv-1");
+  assert.match(r.answer ?? "", /Edited the file, then ran checks\./);
+  assert.match(r.answer ?? "", /## Denied commands/);
+  assert.match(r.answer ?? "", /`\/usr\/bin\/pwd` — permission check failed/);
+  assert.match(r.answer ?? "", /agy-impl\.json/);
+  assert.equal(r.denied?.length, 1);
+  assert.equal(r.rc, 3);
+});
+
+test("antigravity: denied_actions alone still produce a denied section; a clean run is untouched", () => {
+  const d = FORMATS.antigravity.finish(agyStream([
+    { event: "result", result: { response: "", denied_actions: [{ action: "command", display_name: "RunCommand" }] } }]), "");
+  assert.match(d.answer ?? "", /## Denied commands[\s\S]*- command \(RunCommand\)/);
+  assert.ok(d.denied?.length);
+  const ok = FORMATS.antigravity.finish(agyStream([{ event: "result", result: { response: "all good", conversation_id: "c2" } }]), "");
+  assert.equal(ok.answer, "all good");
+  assert.equal(ok.denied, undefined);
+  assert.equal(ok.rc, undefined);
 });

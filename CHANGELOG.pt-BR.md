@@ -28,6 +28,14 @@ English: [CHANGELOG.md](CHANGELOG.md).
   `orq agent -T -R` depois reabre a sessão (`tui_resume`). No herdr, um turno digitado direto na tela conta como
   atividade; no tmux só o fim do turno conta. Não vale com `close_tab_after = 0`. Um agente `-T` morto de fora agora fecha
   a aba do herdr também (a janela do tmux fecha com o runner).
+- Novo `examples/agy-impl.json`: allowlist padrão de implementador para o agy (git, npm, node, ... mais globs como
+  `command(/usr/bin/*)` e `command(*/node_modules/.bin/*)`); aponte o template `write` para ele com `--settings <arquivo>`
+  (veja `examples/irythill/config.toml`). A resposta de comandos negados, abaixo, aponta para ele.
+- Execuções do Antigravity (`agy`) em que alguns comandos foram negados pela allowlist não se perdem mais: a resposta
+  ganha uma seção "Denied commands" (cada comando e mensagem, e como tentar de novo ou ampliar
+  `~/.config/orq/agy-impl.json`), e uma execução de escrita com mudanças no worktree fica `ok` com o diff stat anexado
+  (o id da sessão é mantido, então `-R` funciona). Sem mudanças (ou só leitura) continua `fail`, agora com a lista de
+  negados como resposta em vez de vazia.
 
 ## [0.5.0] — 2026-11-04
 ### Corrigido

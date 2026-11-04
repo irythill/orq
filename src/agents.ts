@@ -105,8 +105,8 @@ export const BUILTIN_AGENTS: Record<string, AgentDef> = {
     turn_hook: "opencode",
   },
   antigravity: {
-    // --sandbox + accept-edits (no skip-permissions); headless denies commands outside agy's allowlist, so in practice
-    // it reviews. The prompt goes in a file in its folder (excluded from git) and -p only says "read it".
+    // --sandbox + accept-edits (no skip-permissions); headless denies commands outside agy's allowlist (see agy-impl.json);
+    // a run that only had commands denied still counts when the worktree changed (see the antigravity format). The prompt goes in a file in its folder (excluded from git) and -p only says "read it".
     run: `${AGY} {mode} -p {prompt_hint}`, resume: `${AGY} --conversation {session} {mode} -p {prompt_hint}`,
     readonly: "--mode plan", write: "--mode accept-edits --add-dir {gitdir}",
     format: "antigravity", throwaway: true, prompt_in_dir: true,
@@ -197,7 +197,7 @@ export const expandString = (s: string, vars: Vars) =>
 // Output formats: what to show live from each line of output, and how to read the answer and session at the end.
 export interface Format {
   show(line: string): string | undefined;
-  finish(log: string, stdout: string): { answer?: string; session?: string; rc?: number };
+  finish(log: string, stdout: string): { answer?: string; session?: string; rc?: number; denied?: string[] };
   /** True when the agent has finished but may not exit (OpenCode): the runner stops it after a quiet period. */
   idle?(last: string): boolean;
 }
@@ -239,12 +239,40 @@ export const FORMATS: Record<string, Format> = {
       return s.step_type === "tool" && s.state === "DONE" ? "\n· tool\n" : undefined;
     },
     finish(log) {
-      const res = (jsonLines(log) as J[]).filter((j) => j.event === "result").map((j) => j.result ?? {});
+      const evs = jsonLines(log) as J[];
+      const res = evs.filter((j) => j.event === "result").map((j) => j.result ?? {});
       let answer = lastOf(res.map((r) => String(r.response ?? ""))) ?? "";
-      // An agy error (e.g. a denied command) is a failure, even with an answer.
       const errs = log.split(/\r?\n/).filter((l) => l.startsWith("jetski: "));
+      // Denied commands: ERROR steps with the command line, plus denied_actions on the result.
+      const denied: string[] = [];
+      let text = "", textId: unknown;
+      for (const e of evs) {
+        const s = e.event === "step_update" ? e.step_update : undefined;
+        if (!s) continue;
+        if (s.step_type === "agent_response") {
+          const id = s.step_id ?? s.step_index ?? s.id;
+          if (id !== textId) { textId = id; text = ""; }
+          text += String(s.text_delta ?? "");
+        }
+        if (s.state === "ERROR") {
+          const ti = s.tool_info ?? e.tool_info, cmd = ti?.parameters?.CommandLine, msg = String(s.error?.message ?? "");
+          if (cmd || /permission check failed/.test(msg)) {
+            const d = `${cmd ? `\`${cmd}\`` : "(command)"}${msg ? ` — ${msg}` : ""}`;
+            if (!denied.includes(d)) denied.push(d);
+          }
+        }
+      }
+      const acts = res.flatMap((r) => (Array.isArray(r.denied_actions) ? r.denied_actions : []));
+      const wasDenied = denied.length > 0 || acts.length > 0 || errs.some((l) => /permission/.test(l));
+      if (wasDenied && !answer.trim()) answer = text.trim();
+      if (wasDenied) {
+        answer += `${answer ? "\n\n" : ""}## Denied commands\n` +
+          "agy denied commands outside its allowlist (headless, nobody to approve). Retry with a different command, or add a glob rule such as command(/usr/bin/*) to agy's allowlist (~/.config/orq/agy-impl.json, see examples/agy-impl.json) -- usually that is the fix.\n" +
+          (denied.length ? denied.map((d) => `- ${d}`).join("\n") : acts.map((a: Obj) => `- ${a.action ?? "command"} (${a.display_name ?? "?"})`).join("\n")) + "\n";
+      }
       if (errs.length) answer += (answer ? "\n" : "") + errs.join("\n") + "\n";
-      return { session: lastOf(res.map((r) => r.conversation_id).filter(Boolean)), answer, rc: errs.length ? 3 : undefined };
+      return { session: lastOf(res.map((r) => r.conversation_id).filter(Boolean)), answer, rc: errs.length || wasDenied ? 3 : undefined,
+        denied: wasDenied ? (denied.length ? denied : ["(command)"]) : undefined };
     },
   },
 };

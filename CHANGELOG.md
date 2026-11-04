@@ -28,6 +28,13 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   later `orq agent -T -R` reopens the session (`tui_resume`). On herdr, a turn typed straight into the screen counts as
   activity; on tmux only the end of a turn does. Not applied with `close_tab_after = 0`. A `-T` agent killed from outside
   now closes its herdr tab too (a tmux window closes with its runner).
+- New `examples/agy-impl.json`: a default implementer allowlist for agy (git, npm, node, ... plus globs such as
+  `command(/usr/bin/*)` and `command(*/node_modules/.bin/*)`); point the `write` template at it with `--settings <file>`
+  (see `examples/irythill/config.toml`). The denied-commands answer below points to it.
+- Antigravity (`agy`) runs where some commands were denied by its allowlist are no longer lost: the answer gets a
+  "Denied commands" section (each command and message, plus how to retry or extend `~/.config/orq/agy-impl.json`), and
+  a write run whose worktree has changes is `ok` with the diff stat attached (the session id is kept, so `-R` works).
+  Without changes (or read only) it stays `fail`, now with the denied list as the answer instead of an empty one.
 
 ## [0.5.0] — 2026-11-04
 ### Fixed
