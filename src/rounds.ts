@@ -35,12 +35,16 @@ const STOP = new Set(["the", "a", "an", "of", "in", "on", "to", "is", "are", "an
 
 const words = (s: string) => new Set(s.toLowerCase().replace(/[^\p{L}\p{N}_]+/gu, " ").split(" ").filter((w) => w.length > 2 && !STOP.has(w)));
 
-const SEV: Record<string, string> = {
+const SEV: Record<string, string> = { // looked up with Object.hasOwn: "constructor" and friends are not severities
+ 
   bloqueante: "blocker", bloqueador: "blocker", blocker: "blocker", critico: "critical", critical: "critical",
   importante: "major", important: "major", major: "major", menor: "minor", minor: "minor",
   sugestao: "suggestion", suggestion: "suggestion", nit: "nit",
 };
 const fold = (w: string) => w.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+const URL = /^[a-z][a-z0-9+.-]*:\/\//i;
+// GitHub-style ".../blob/<ref>/<path>" → "<path>" (no query, no #L4), so URL mentions match plain-path mentions.
+const blobPath = (u: string) => /^[a-z][a-z0-9+.-]*:\/\/[^/]+\/[^/]+\/[^/]+\/blob\/[^/]+\/([^#?\s)]+)/i.exec(u)?.[1];
 const LINK = /\[([^\]]*)\]\(([^)\s]*)\)/g;
 // Reviews run in a different worktree per round (".worktrees/<repo>-<id>.review-<pid>/"): drop it so the same file matches across rounds.
 const repoRel = (f: string) => f.replace(/\\/g, "/").replace(/^.*\.worktrees\/[^/]+\//, "");
@@ -51,12 +55,14 @@ export function parseFindings(text: string, round: number): Finding[] {
   for (const line of text.split("\n")) {
     const it = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line);
     if (!it) continue;
-    const tag = /\[(blocker|major|minor|nit|suggestion|important|critical)\]/i.exec(it[1]);
-    const bold = tag ? null : /^\*\*\s*(\p{L}+)/u.exec(it[1]);
-    const sev = SEV[fold((tag ?? bold)?.[1] ?? "")];
-    if (!sev) continue;
-    const rest = it[1].replace((tag ?? bold)![0], " ");
-    const byTarget = rest.replace(LINK, (_, t, p) => ` ${/^[a-z][a-z0-9+.-]*:\/\//i.test(p) ? t : repoRel(p)} `);
+    const sevOf = (w?: string) => { const k = fold(w ?? ""); return Object.hasOwn(SEV, k) ? SEV[k] : undefined; };
+    let m0 = /^\*\*\s*(\p{L}+)/u.exec(it[1]); // a leading bold severity wins over a [tag]
+    if (!sevOf(m0?.[1])) m0 = /\[(blocker|major|minor|nit|suggestion|important|critical)\]/i.exec(it[1]);
+    const sev = sevOf(m0?.[1]);
+    if (!m0 || !sev) continue;
+    const rest = it[1].replace(m0[0], " ");
+    const byTarget = rest.replace(LINK, (_, t, p) => ` ${URL.test(p) ? blobPath(p) ?? t : repoRel(p)} `)
+      .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, (u) => ` ${blobPath(u) ?? ""} `);
     const m = /([\w@./\\-]+\.\w+)(?::\d+(?:[-\u2013]\d+)?)?/.exec(byTarget);
     const file = m ? repoRel(m[1]) : "";
     out.push({ round, severity: sev, file, title: rest.replace(LINK, "$1").replace(/[`*_]/g, "").replace(/\s+/g, " ").trim() });
