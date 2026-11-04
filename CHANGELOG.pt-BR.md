@@ -8,7 +8,7 @@ English: [CHANGELOG.md](CHANGELOG.md).
 ### Adicionado
 - `orq conductor [conta|-] [modelo] [-r <sessão>]` abre o conductor (Claude) em qualquer terminal e SO: acha o workspace
   (`.orquestra-conductor.md` na pasta, senão `CONDUCTOR_WS`), mapeia `sonnet|opus|haiku`, resolve a conta pelo arquivo
-  `claude-accounts`, registra o conductor e roda o `claude` com as instruções. O `herdr-conductor` virou um wrapper fino
+  `claude-accounts`, registra o conductor (dentro do herdr) e roda o `claude` com as instruções (`--append-system-prompt-file`). O `herdr-conductor` virou um wrapper fino
   dele (continua só para herdr, e renomeia o pane).
 
 ### Alterado

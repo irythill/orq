@@ -4,7 +4,7 @@
 // Workspace: the current folder if it has .orquestra-conductor.md, else $CONDUCTOR_WS. $CONDUCTOR_FILE overrides the
 // instructions file. The session is named conductor-<workspace folder>.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { claudeAccounts } from "../accounts.js";
 import { m } from "../i18n.js";
@@ -47,12 +47,12 @@ export function findWorkspace(cwd: string, env: NodeJS.ProcessEnv, exists: (p: s
   return env.CONDUCTOR_WS ? resolve(cwd, env.CONDUCTOR_WS) : undefined;
 }
 
-export const instructionsFile = (ws: string, env: NodeJS.ProcessEnv) => env.CONDUCTOR_FILE || join(ws, ".orquestra-conductor.md");
+export const instructionsFile = (ws: string, env: NodeJS.ProcessEnv) => env.CONDUCTOR_FILE ? resolve(env.CONDUCTOR_FILE) : join(ws, ".orquestra-conductor.md");
 
-/** The claude command line (without the executable). */
-export function claudeArgs(ws: string, a: Pick<Args, "model" | "resume">, prompt: string): string[] {
+/** The claude command line (without the executable). The instructions go by file, so no shell ever sees their text. */
+export function claudeArgs(ws: string, a: Pick<Args, "model" | "resume">, file: string): string[] {
   return [...(a.resume ? ["--resume", a.resume] : []), "-n", `conductor-${basename(ws)}`,
-    ...(a.model ? ["--model", modelId(a.model)] : []), "--append-system-prompt", prompt];
+    ...(a.model ? ["--model", modelId(a.model)] : []), "--append-system-prompt-file", file];
 }
 
 export async function conductor(argv: string[]): Promise<number> {
@@ -83,11 +83,12 @@ export async function conductor(argv: string[]): Promise<number> {
     spawnSync("herdr", ["pane", "rename", process.env.HERDR_PANE_ID, "conductor"], { stdio: "ignore", timeout: 5_000 });
 
   process.chdir(ws);
-  // claim reads the account from this process's env; register this conductor (best effort, silent).
+  // Registration (.orquestra/.conductors) is a herdr thing (keyed by pane id; `claim --register` does nothing elsewhere),
+  // so only inside herdr. claim reads the account from this process's env (best effort, silent).
   const saved = process.env.CLAUDE_CONFIG_DIR;
   if (env.CLAUDE_CONFIG_DIR) process.env.CLAUDE_CONFIG_DIR = env.CLAUDE_CONFIG_DIR;
-  try { await claim(["-w", ws, "--register"]); } catch { /* best effort */ }
+  if (process.env.HERDR_PANE_ID) try { await claim(["-w", ws, "--register"]); } catch { /* best effort */ }
   if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved;
 
-  return runCapped("claude", claudeArgs(ws, a, readFileSync(file, "utf8")), { mode: "off", env, cwd: ws, quote: true, tty: true });
+  return runCapped("claude", claudeArgs(ws, a, file), { mode: "off", env, cwd: ws, quote: true, tty: true });
 }

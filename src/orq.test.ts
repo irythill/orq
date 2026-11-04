@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { merge } from "./config.js";
@@ -2056,9 +2056,9 @@ test("conductor: model aliases map to the exact ids, anything else passes throug
   assert.equal(modelId("opus"), "claude-opus-5-5");
   assert.equal(modelId("haiku"), "claude-haiku-4-5-20251001");
   assert.equal(modelId("claude-foo-1"), "claude-foo-1");
-  assert.deepEqual(claudeArgs(join("x", "ws-abc"), { model: "", resume: "" }, "P"), ["-n", "conductor-ws-abc", "--append-system-prompt", "P"]);
+  assert.deepEqual(claudeArgs(join("x", "ws-abc"), { model: "", resume: "" }, "P"), ["-n", "conductor-ws-abc", "--append-system-prompt-file", "P"]);
   assert.deepEqual(claudeArgs(join("x", "ws"), { model: "opus", resume: "s1" }, "P"),
-    ["--resume", "s1", "-n", "conductor-ws", "--model", "claude-opus-5-5", "--append-system-prompt", "P"]);
+    ["--resume", "s1", "-n", "conductor-ws", "--model", "claude-opus-5-5", "--append-system-prompt-file", "P"]);
 });
 
 test("conductor: workspace is cwd with .orquestra-conductor.md, else CONDUCTOR_WS; file override", async () => {
@@ -2071,7 +2071,7 @@ test("conductor: workspace is cwd with .orquestra-conductor.md, else CONDUCTOR_W
   assert.equal(findWorkspace(other, { CONDUCTOR_WS: ws }), ws);
   assert.equal(findWorkspace(other, {}), undefined);
   assert.equal(instructionsFile(ws, {}), join(ws, ".orquestra-conductor.md"));
-  assert.equal(instructionsFile(ws, { CONDUCTOR_FILE: "/tmp/f.md" }), "/tmp/f.md");
+  assert.equal(instructionsFile(ws, { CONDUCTOR_FILE: "rel.md" }), resolve("rel.md"));
 });
 
 test("orq conductor: outside a workspace exits 2; unknown account exits 1 listing accounts", () => {
