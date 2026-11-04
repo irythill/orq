@@ -6,12 +6,23 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Fixed
+- Notices to the conductor (verify/agent done, CI red) are now delivered by `orq` itself, detached, and no longer fail
+  silently: the old `herdr-notify` depended on `jq`, gave up after 3 tries in a minute and printed its errors to a tab or
+  `/dev/null`. Each notice is logged (`<state>/notices.jsonl`; `orq notice` shows it) with every attempt and its outcome,
+  retried with backoff (5s, 15s, 45s, 2min, 5min), waits out a dialog and sends to a working conductor (its input queues
+  the line).
 - `orq agent` without `-a` (or `$AGENT`) now refuses instead of starting Codex: an `orq pick` with no candidate gave an empty
   `$(orq pick ...)`, which started Codex past blocks and quota.
 - `orq board` shows each run's own model when a prefix is reused (the state file now records it), and `?` instead of a
   growing duration for a run whose runner is gone.
 
 ### Added
+- Failures are loud, independent of the conductor reading its pane: a herdr notification with sound, a `✗` title on the
+  conductor's pane (display only, clears after 30 min or when acknowledged) and a desktop notification (`notify-send`;
+  `[ui] desktop_notify = true|false`, default true, Linux only). Successes stay quiet (plain herdr notification).
+- `orq board`: a red line on top lists failures from the last hour whose notice was not delivered, or that the
+  conductor has not acted on. Acknowledged = the conductor ran `orq wait` (which printed the result), `orq verify` or
+  `orq agent` for that issue after the notice.
 - `orq block <name> --quota`: blocks until the quota window resets, read from the collector, instead of a fixed period.
 - Watchdog layer 2: `orq rounds <ID> --diagnose` (only on warn/stop) has a cheap, read only agent of another vendor than the
   implementer diagnose why the rounds don't converge, from the metrics, `fix-<n>.md` and the review outputs, and recommend

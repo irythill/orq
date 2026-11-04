@@ -1289,7 +1289,7 @@ test("board --collect-ci: a failing non-herdr owner's notice lands in ci.log, ne
 test("board: render colors only when asked, activity from the log tail", async () => {
   const { render, activity, dur } = await import("./commands/board.js");
   const s = { at: new Date().toISOString(), mem: { used: 1, total: 2 }, workspaces: ["/w"], queue: { holders: [], waiters: [] },
-    agents: [], conductors: [], quota: { lines: [] }, ci: { entries: [] }, blocks: {}, scoreboard: [] };
+    agents: [], conductors: [], quota: { lines: [] }, ci: { entries: [] }, blocks: {}, scoreboard: [], notices: [] };
   assert.ok(!render(s, "gunmetal", 80, "none").join("\n").includes("\x1b"));
   assert.ok(render(s, "gunmetal", 80, "true").join("\n").includes("\x1b[48;2;25;27;29m"));
   assert.ok(render(s, "gunmetal", 80, "basic").join("\n").includes("\x1b[36m"));
@@ -1482,28 +1482,161 @@ test("notify: never throws on an unreadable or cyclic handoff chain", async () =
   }
 });
 
-test("notify: background=true (collectCi's default for an owner) returns before a slow herdr-notify finishes", { skip: process.platform === "win32" }, async () => {
+test("notify: returns at once, logs the notice, and never starts anything slow in the caller", async () => {
   const { notify } = await import("./testrun.js");
-  const bin = mkdtempSync(join(tmpdir(), "orq-herdr-"));
-  const fake = join(bin, "herdr");
-  // "agent get" sleeps, simulating a conductor stuck in a dialog (herdr-notify waits up to 30 min for real).
-  writeFileSync(fake, `#!/usr/bin/env bash
-case "$1 $2" in
-  "agent get") sleep 1.5; echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
-  *) exit 0 ;;
-esac
-`, { mode: 0o755 });
-  const old = process.env.PATH; process.env.PATH = `${bin}:${old ?? ""}`;
+  const { readLog, logFile } = await import("./notice.js");
+  const st = mkdtempSync(join(tmpdir(), "orq-n-"));
+  const old = process.env.XDG_STATE_HOME; process.env.XDG_STATE_HOME = st;
   try {
-    const t0 = Date.now();
-    notify("some-pane", "line", true); // background: must not wait for the subprocess
-    assert.ok(Date.now() - t0 < 500, "background notify blocked on herdr-notify");
-    const t1 = Date.now();
-    notify("some-pane", "line"); // foreground (default): proves the two really differ, not just both being fast
-    assert.ok(Date.now() - t1 >= 1000, "foreground notify should have blocked on herdr-notify");
+    const started: string[][] = []; // never start the real delivery process (it would call herdr and notify-send)
+    notify("w1:p9", "[HERDR-AGENT DONE] verify demo status=fail new=2 answer: /w/.orquestra/ABC-1/verify.txt", (a) => { started.push(a); });
+    assert.deepEqual(started.map((a) => a.slice(0, 2)), [["notice", "--send"]]);
+    const [n] = readLog(logFile());
+    assert.equal(n.ev, "notice");
+    assert.equal(n.loud, true);
+    assert.equal(n.issue, "ABC-1");
   } finally {
-    if (old === undefined) delete process.env.PATH; else process.env.PATH = old;
+    if (old === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = old;
   }
+});
+
+test("notice: retry decision, backoff and give up", async () => {
+  const { nextStep, BACKOFF_S } = await import("./notice.js");
+  assert.deepEqual(nextStep(1, "sent"), { kind: "done" });
+  assert.deepEqual(nextStep(1, "blocked"), { kind: "retry", afterMs: BACKOFF_S[0] * 1000 });
+  assert.deepEqual(nextStep(3, "no-agent"), { kind: "retry", afterMs: BACKOFF_S[2] * 1000 });
+  assert.deepEqual(nextStep(BACKOFF_S.length, "error"), { kind: "retry", afterMs: BACKOFF_S[BACKOFF_S.length - 1] * 1000 });
+  assert.deepEqual(nextStep(BACKOFF_S.length + 1, "error"), { kind: "giveup" });
+});
+
+test("notice: which events are loud, the issue and the desktop switch", async () => {
+  const { isLoud, issueOf, popup, desktopEnabled } = await import("./notice.js");
+  assert.equal(isLoud("[HERDR-AGENT DONE] verify demo status=ok new=0 answer: /x"), false);
+  assert.equal(isLoud("[HERDR-AGENT DONE] ABC-1 impl status=fail rc=1 answer: /x"), true);
+  assert.equal(isLoud("[HERDR-AGENT DONE] ABC-1 impl status=died"), true);
+  assert.equal(isLoud("[ORQ CI] ABC-1 demo failed (abc1234)"), true);
+  assert.equal(isLoud("some other line"), false);
+  assert.equal(issueOf("answer: /w/.orquestra/ABC-7/verify.txt"), "ABC-7");
+  assert.equal(issueOf("[ORQ CI] ABC-2 demo failed"), "ABC-2");
+  assert.equal(issueOf("nothing here"), undefined);
+  assert.deepEqual(popup("[HERDR-AGENT DONE] ABC-1 review status=fail rc=1 answer: /x"), { title: "✗ ABC-1 review", body: "status=fail rc=1" });
+  assert.equal(popup("[HERDR-AGENT DONE] ABC-1 review status=ok rc=0 answer: /x").title, "✓ ABC-1 review");
+  assert.equal(desktopEnabled(undefined, "linux", true), true);
+  assert.equal(desktopEnabled(true, "linux", false), false); // no notify-send
+  assert.equal(desktopEnabled(false, "linux", true), false);
+  assert.equal(desktopEnabled(true, "darwin", true), false); // no-op elsewhere
+});
+
+test("notice: deliver retries a busy conductor, logs every attempt, and signals a failure loudly", async () => {
+  const { deliver, BACKOFF_S } = await import("./notice.js");
+  const mk = (promptResults: number[], getOk = true) => {
+    const calls: string[][] = [], logs: { ev: string; n?: number }[] = [], sleeps: number[] = [];
+    let p = 0;
+    const run = (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      if (cmd === "herdr" && args[0] === "agent" && args[1] === "get")
+        return getOk ? { status: 0, stdout: JSON.stringify({ result: { agent: { agent_status: "blocked" } } }), stderr: "" } : { status: 1, stdout: "", stderr: "agent not found" };
+      if (cmd === "herdr" && args[0] === "agent" && args[1] === "prompt") {
+        const ok = promptResults[Math.min(p++, promptResults.length - 1)] === 0;
+        return { status: ok ? 0 : 1, stdout: "", stderr: ok ? "" : "agent_blocked" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    return { calls, logs, sleeps, d: { run, sleep: async (ms: number) => { sleeps.push(ms); }, log: (e: { ev: string; n?: number }) => logs.push(e), desktop: true } };
+  };
+  const fail = "[HERDR-AGENT DONE] verify demo status=fail new=1 answer: /w/.orquestra/ABC-1/verify.txt";
+  // 1st prompt rejected (blocked), 2nd accepted: one backoff, two "try" logs, then delivered.
+  let t = mk([1, 0]);
+  assert.equal(await deliver("id", "w1:p1", fail, t.d), true);
+  assert.deepEqual(t.sleeps, [BACKOFF_S[0] * 1000]);
+  assert.deepEqual(t.logs.map((e) => e.ev), ["try", "try", "delivered"]);
+  // loud: herdr notification with sound, pane title, desktop notification — before the typed line.
+  assert.ok(t.calls.some((c) => c[0] === "herdr" && c[1] === "notification" && c.includes("request")));
+  assert.ok(t.calls.some((c) => c.includes("report-metadata") && c.includes("--title") && c.includes("w1:p1")));
+  assert.ok(t.calls.some((c) => c[0] === "notify-send"));
+  // never accepted: gives up after BACKOFF.length + 1 attempts and says so (log + a second desktop notification).
+  t = mk([1]);
+  assert.equal(await deliver("id", "w1:p1", fail, t.d), false);
+  assert.equal(t.logs.filter((e) => e.ev === "try").length, BACKOFF_S.length + 1);
+  assert.equal(t.logs.at(-1)?.ev, "failed");
+  assert.equal(t.calls.filter((c) => c[0] === "notify-send").length, 2);
+  // the pane is gone: every attempt is "no-agent", still retried (herdr may be restarting), still logged.
+  t = mk([0], false);
+  assert.equal(await deliver("id", "w9:p9", fail, t.d), false);
+  assert.match(String((t.logs[0] as { detail?: string }).detail), /no-agent/);
+  // a success is quiet: herdr notification without sound, no pane title, no desktop popup.
+  t = mk([0]);
+  assert.equal(await deliver("id", "w1:p1", "[HERDR-AGENT DONE] verify demo status=ok new=0 answer: /x", t.d), true);
+  assert.ok(t.calls.some((c) => c[1] === "notification" && c.includes("none")));
+  assert.ok(!t.calls.some((c) => c.includes("report-metadata") || c[0] === "notify-send"));
+});
+
+test("notice: board indicator picks undelivered and unacknowledged failures, not acknowledged or old ones", async () => {
+  const { pendingNotices, GRACE_MS, WINDOW_MS } = await import("./notice.js");
+  const now = 10_000_000_000;
+  const n = (id: string, ago: number, issue: string | undefined, loud = true) =>
+    ({ at: now - ago, id, ev: "notice" as const, loud, line: `[HERDR-AGENT DONE] verify demo status=fail answer: /w/.orquestra/${issue}/v.txt`, ...(issue ? { issue } : {}) });
+  const ev = [
+    n("a", 10 * 60_000, "ABC-1"), { at: now - 9 * 60_000, id: "a", ev: "delivered" as const },          // delivered, no ack
+    n("b", 20 * 60_000, "ABC-2"), { at: now - 19 * 60_000, id: "b", ev: "failed" as const },             // undelivered
+    n("c", 20 * 60_000, "ABC-3"), { at: now - 19 * 60_000, id: "c", ev: "delivered" as const },
+    { at: now - 5 * 60_000, id: "ack1", ev: "ack" as const, issue: "ABC-3" },                            // acknowledged
+    n("d", 30_000, "ABC-4"),                                                                            // still in flight
+    n("i", GRACE_MS + 60_000, "ABC-8"), { at: now - 60_000, id: "i", ev: "try" as const },                // retrying (slept a long backoff): in flight
+    n("e", GRACE_MS + 1000, "ABC-5"),                                                                   // no outcome: delivery process died
+    n("f", WINDOW_MS + 1000, "ABC-6"), { at: now - WINDOW_MS, id: "f", ev: "failed" as const },          // too old
+    n("g", 5 * 60_000, "ABC-7", false), { at: now - 4 * 60_000, id: "g", ev: "failed" as const },        // quiet success: never listed
+    n("h", 8 * 60_000, undefined), { at: now - 7 * 60_000, id: "h", ev: "delivered" as const },          // delivered, no issue to ack against
+  ];
+  const got = pendingNotices(ev, now);
+  assert.equal(got.find((p) => p.issue === "ABC-1")?.why, "unacknowledged");
+  assert.equal(got.find((p) => p.issue === "ABC-2")?.why, "undelivered");
+  assert.equal(got.find((p) => p.issue === "ABC-5")?.why, "undelivered");
+  assert.deepEqual(got.map((p) => p.issue).sort(), ["ABC-1", "ABC-2", "ABC-5"]); // ABC-8 is not there
+  // a later ack for ABC-1 clears it; an ack from BEFORE the notice does not
+  assert.ok(!pendingNotices([...ev, { at: now, id: "x", ev: "ack" as const, issue: "ABC-1" }], now).some((p) => p.issue === "ABC-1"));
+  assert.ok(pendingNotices([...ev, { at: now - 11 * 60_000, id: "y", ev: "ack" as const, issue: "ABC-1" }], now).some((p) => p.issue === "ABC-1"));
+});
+
+test("notice: ack records an acknowledgement and clears the pane title, only for open failures", async () => {
+  const { ack, append, readLog } = await import("./notice.js");
+  const f = join(mkdtempSync(join(tmpdir(), "orq-ack-")), "notices.jsonl");
+  // rotation keeps old lines readable instead of rewriting the file
+  writeFileSync(f, JSON.stringify({ at: 1, id: "old", ev: "notice" }) + "\n" + " ".repeat(600 * 1024) + "\n");
+  append({ id: "new", ev: "delivered" }, f);
+  assert.deepEqual(readLog(f).map((e) => e.id), ["old", "new"]);
+  assert.ok(existsSync(`${f}.1`));
+  writeFileSync(f, ""); writeFileSync(`${f}.1`, "");
+  const calls: string[][] = [];
+  const run = (cmd: string, args: string[]) => { calls.push([cmd, ...args]); return { status: 0, stdout: "", stderr: "" }; };
+  ack("ABC-1", run, f);
+  assert.equal(readLog(f).length, 0); // nothing open: nothing written
+  append({ id: "a", ev: "notice", pane: "w1:p1", loud: true, issue: "ABC-1", line: "[HERDR-AGENT DONE] x status=fail" }, f);
+  append({ id: "a", ev: "delivered" }, f);
+  ack("ABC-1", run, f);
+  assert.equal(readLog(f).filter((e) => e.ev === "ack").length, 1);
+  assert.deepEqual(calls, [["herdr", "pane", "report-metadata", "--source", "orq", "--clear-title", "w1:p1"]]);
+  // another issue on the same pane still has an open failure: its title replaces the old one instead of clearing it
+  calls.length = 0;
+  append({ id: "b", ev: "notice", pane: "w1:p1", loud: true, issue: "ABC-2", line: "[HERDR-AGENT DONE] ABC-2 impl status=fail" }, f);
+  append({ id: "b", ev: "delivered" }, f);
+  append({ id: "c", ev: "notice", pane: "w1:p1", loud: true, issue: "ABC-3", line: "[HERDR-AGENT DONE] ABC-3 impl status=fail" }, f);
+  append({ id: "c", ev: "delivered" }, f);
+  ack("ABC-2", run, f);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].includes("--title") && calls[0].includes("✗ ABC-3 impl") && !calls[0].includes("--clear-title"));
+});
+
+test("board: red line lists failures whose notice was not delivered or acknowledged", async () => {
+  const { render } = await import("./commands/board.js");
+  const s = { at: new Date().toISOString(), mem: { used: 1, total: 2 }, workspaces: ["/w"], queue: { holders: [], waiters: [] },
+    agents: [], conductors: [], quota: { lines: [] }, ci: { entries: [] }, blocks: {}, scoreboard: [],
+    notices: [{ id: "a", issue: "ABC-1", line: "[HERDR-AGENT DONE] verify demo status=fail new=2 answer: /x", at: Date.now() - 120_000, why: "undelivered" as const }] };
+  const text = render(s, "gunmetal", 100, "none").join("\n");
+  assert.match(text, /1 failure\(s\) the conductor may not know about/);
+  assert.match(text, /ABC-1\s+verify demo status=fail new=2\s+not delivered/);
+  assert.ok(text.indexOf("failure(s)") < text.indexOf("TRANSPORT"));
+  assert.ok(!render({ ...s, notices: [] }, "gunmetal", 100, "none").join("\n").includes("failure(s)"));
 });
 
 test("handoff plan: moves at the limit to the emptiest account, skips blocked and unread ones", () => {

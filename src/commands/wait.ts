@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { m } from "../i18n.js";
 import { alive } from "../lock.js";
+import { ackPrefix } from "../notice.js";
 
 export const USAGE = "orq wait [--any] [--timeout <s>] [--answer] <prefix>...   block until child agents finish (exit 1 = one failed)";
 
@@ -44,6 +45,7 @@ export async function wait(argv: string[]): Promise<number> {
       if (!d) continue;
       pending.splice(pending.indexOf(p), 1);
       console.log(d.line);
+      ackPrefix(p); // the conductor has the result in hand: this issue's failure notice is acknowledged
       if (answer) { const t = read(`${p}.out.md`); if (t) console.log(t.trimEnd()); }
       failed ||= !d.ok;
       if (any) return d.ok ? 0 : 1;

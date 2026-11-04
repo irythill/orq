@@ -23,6 +23,7 @@ import { processTableAsync, treeMem } from "../process.js";
 import { collect, type Source } from "../quota.js";
 import { collectRounds, mark, roundsSig, type Metrics } from "../rounds.js";
 import { collectRuns, type Row, rows } from "../stats.js";
+import { pendingNotices, type Pending, readLog } from "../notice.js";
 import { load as loadBlocks } from "./block.js";
 import { herdrNamesAsync, nameOf } from "./claim.js";
 import { setValue } from "./set.js";
@@ -46,6 +47,7 @@ export interface Snapshot {
   queue: { holders: QItem[]; waiters: QItem[] }; agents: Agent[]; conductors: Conductor[];
   quota: { lines: Quota[]; age?: number }; ci: { entries: CiEntry[]; age?: number };
   blocks: Record<string, { until: number; reason?: string }>; scoreboard: Row[];
+  notices: Pending[]; // failures (last hour) whose notice was not delivered, or that the conductor has not acted on (src/notice.ts)
 }
 
 const read = (f: string) => { try { return readFileSync(f, "utf8"); } catch { return ""; } };
@@ -252,7 +254,7 @@ export async function snapshot(wss: string[], table?: Table): Promise<Snapshot> 
   return {
     at: new Date(now).toISOString(), mem: { used: totalmem() - freemem(), total: totalmem() }, workspaces: wss,
     queue: { holders: q.holders.map(item), waiters: q.waiters.map(item) }, agents: agents(table, now),
-    conductors: await conductors(wss), quota: quota(now), ci: ci(wss, now), blocks: loadBlocks(), scoreboard: scoreboard(wss[0], now),
+    conductors: await conductors(wss), quota: quota(now), ci: ci(wss, now), blocks: loadBlocks(), scoreboard: scoreboard(wss[0], now), notices: pendingNotices(readLog(), now),
   };
 }
 
@@ -304,6 +306,16 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
   out.push(`${c.surf}${c.b}${c.acc} ORQ${c.b ? "\x1b[22m" : ""}${c.surf}${c.ink2}  ${ws}${" ".repeat(Math.max(1, W - left.length - right.length))}${c.mut}${right}`);
   const mp = Math.round(100 * s.mem.used / s.mem.total);
   out.push(` ${c.mut}MEM${c.r}  ${meter(mp, 24)} ${c.ink}${gb(s.mem.used)}${c.r} ${c.mut}/ ${gb(s.mem.total)}${c.r}`);
+
+  // Red line(s) first: a failure the conductor may not know about is what a person must see before anything else.
+  if (s.notices.length) {
+    const ago = (at: number) => dur(Math.max(0, Math.round((new Date(s.at).getTime() - at) / 1000)));
+    out.push(` ${c.err}${c.b}✗ ${m(`${s.notices.length} failure(s) the conductor may not know about`, `${s.notices.length} falha(s) que o conductor pode não saber`)}${c.r}`);
+    for (const n of s.notices.slice(0, 5)) {
+      const what = n.line.replace(/^\[[^\]]+\] /, "").replace(/ answer: .*/, "");
+      out.push(` ${c.err}  ${fit(n.issue ?? "-", 10)}${c.r} ${c.ink}${fit(what, Math.max(20, W - 44))}${c.r} ${c.err}${n.why === "undelivered" ? m("not delivered", "não entregue") : m("not acknowledged", "sem resposta")}${c.r} ${c.mut}${ago(n.at)}${m(" ago", " atrás")}${c.r}`);
+    }
+  }
 
   section("TRANSPORT", m("test queue", "fila de testes"));
   for (const h of s.queue.holders)

@@ -216,6 +216,12 @@ To see everything at once, keep **`orq board`** open in a tab or window (any ter
 test queue, running agents (model, memory against the cap, last action), conductors and their issues, memory, quota,
 CI/CD per claimed issue, blocks and the 7-day scoreboard. `--once` prints it once, `--json` for scripts. With
 `ui.toast.delivery = "system"` in herdr's config, each finished step also pops up a native OS notification.
+A failure (tests red, agent `status=fail`, CI red) is also **loud**: besides the line typed into the conductor's pane
+(delivered by orq with retries and a log, `orq notice`), you get a herdr notification with sound, a `✗` title on the
+conductor's pane and, on Linux, a desktop notification (`[ui] desktop_notify = false` turns that one off; needs
+`notify-send`). Successes are quiet. The board's red top line lists failures from the last hour whose notice was not
+delivered or that the conductor has not yet acted on (it clears when the conductor runs `orq wait`, `orq verify` or
+`orq agent` for the issue).
 For quota without opening the board, `orq quota --line` fits herdr's tab bar (a `tab_bar_right` command entry,
 [docs/herdr.md](docs/herdr.md#quota-in-the-tab-bar)). `orq ci` shows each claimed issue's PR checks (queued, running,
 passed, failed or none, read from `gh` right then — it is a status check the user asked for, so unlike the board's
@@ -242,6 +248,7 @@ off the same issue. Details, shortcuts and scenarios: [docs/herdr.md](docs/herdr
 |---|---|
 | `orq agent -a <agent> ...` (`herdr-agent`) | Runs an agent with a memory cap in a herdr tab, a tmux window or the background; `-r` read only, `-R <id>` continue the session, `-i` attach a file, `-b <base>` attach the diff, `-T` the agent's own screen (herdr or tmux; `-R` with it open types the follow-up into it) |
 | `orq instructions claude\|agents` | Writes the `/issue` playbook as `SKILL.md` (Claude Code) or into `AGENTS.md` (Codex, OpenCode…) |
+| `orq notice [--list] [-n N]` | The delivery log of notices to conductors: each attempt, retry and failure (`<state>/notices.jsonl`) |
 | `orq wait <prefix>...` | Blocks until those agents finish; prints `status=` and the answer file (any conductor, any terminal) |
 | `orq verify ...` (`herdr-verify`) | Tests related to the diff, queued and memory-capped; failures that also fail on the base count as pre-existing |
 | `orq board` (`herdr-board`) | Live board: queue, agents, conductors, quota, blocks, scoreboard |

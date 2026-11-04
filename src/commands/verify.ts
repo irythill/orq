@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { getPath, loadConfig } from "../config.js";
 import { m } from "../i18n.js";
+import { ackPrefix } from "../notice.js";
 import { type Ctx, dropWorktree, failures, git, inJob, JS_EXT, launchJob, linkModules, runnerArgs, runnerOf, runTests, type TestJob,
   testCap, today, unsupported } from "../testrun.js";
 
@@ -29,6 +30,7 @@ export async function verify(argv: string[]): Promise<number> {
   for (const f of "wrdbo") if (!o[f]) { console.error(`${m("missing", "faltou")} -${f}\n${USAGE}`); return 2; }
   const out = resolve(o.o);
   mkdirSync(dirname(out), { recursive: true });
+  ackPrefix(out); // re-running the tests of an issue: its failure notices were seen
   rmSync(`${out}.done`, { force: true }); rmSync(`${out}.txt`, { force: true });
   // Title "<ID> verify <repo>" (ID = the prefix's folder, .orquestra/<ID>/) so closing the issue finds the tab.
   const j = { cmd: "verify" as const, title: `${basename(dirname(out))} verify ${o.r}`, ws: resolve(o.w), repo: o.r, wt: resolve(o.d), base: o.b, out };

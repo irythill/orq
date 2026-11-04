@@ -29,7 +29,7 @@
 | CI vermelho descoberto tarde demais | ninguém olhou os checks | `gh pr checks` depois de cada push (passo 7 da skill) |
 | Quota do Codex "no data" | o coletor falha de forma intermitente; o plano Plus não tem janela de 5h | o `agent-quota` lê a sessão mais recente do Codex quando o coletor falha e mostra `5h=-` |
 | O Plane some do conductor depois de trocar de conta | `CLAUDE_CONFIG_DIR=X` lê `X/.claude.json`, sem os MCPs do `~/.claude.json` | adicione o MCP também com `CLAUDE_CONFIG_DIR=X claude mcp add-json …` |
-| O aviso `[HERDR-AGENT DONE]` não aparece | conductor recém-aberto ou dentro de um diálogo | o `herdr-notify` espera o diálogo e tenta 3×; a notificação do herdr e o `.done` sempre ficam |
+| O aviso `[HERDR-AGENT DONE]` não aparece | id do pane do conductor desatualizado (herdr reiniciou, pane movido), diálogo aberto ou herdr fora do ar | `orq notice` lista cada tentativa e por que falhou (`<state>/notices.jsonl`); o orq tenta 6× em ~8 min, espera diálogos e sempre deixa a notificação do herdr, o título `✗` no pane, a linha vermelha do board e o `.done` |
 | Um script falha "do nada" logo depois de uma edição | o bash lê scripts incrementalmente; editar no lugar muda o que um processo na fila executa | substitua arquivos de forma atômica (escreva ao lado e `mv`); desenvolva num worktree separado |
 | O aviso digitado no conductor se mistura com o seu rascunho não enviado | `herdr agent prompt` digita na caixa de entrada | antes de mandar mensagem aos conductors, confira se há rascunho ou pergunta aberta |
 | O conductor "pensando" por minutos | espera bloqueante | `Esc`; as instruções proíbem esperas bloqueantes |

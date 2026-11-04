@@ -29,7 +29,7 @@
 | Red CI discovered too late | nobody looked at the checks | `gh pr checks` after every push (skill step 7) |
 | Codex quota "no data" | the collector fails intermittently; the Plus plan has no 5h window | `agent-quota` reads the latest Codex session when the collector fails and shows `5h=-` |
 | Plane disappears from the conductor after switching accounts | `CLAUDE_CONFIG_DIR=X` reads `X/.claude.json`, without the MCPs in `~/.claude.json` | add the MCP with `CLAUDE_CONFIG_DIR=X claude mcp add-json …` too |
-| `[HERDR-AGENT DONE]` notice doesn't show up | conductor just opened or inside a dialog | `herdr-notify` waits for the dialog and retries 3×; the herdr notification and `.done` always remain |
+| `[HERDR-AGENT DONE]` notice doesn't show up | conductor pane id stale (herdr restarted, pane moved), inside a dialog, or herdr down | `orq notice` lists every attempt and why it failed (`<state>/notices.jsonl`); orq retries 6× over ~8 min, waits out dialogs, and always leaves the herdr notification, the `✗` pane title, the board's red line and `.done` |
 | A script fails "out of nowhere" right after an edit | bash reads scripts incrementally; editing in place changes what a queued process executes | replace files atomically (write next to it and `mv`); develop in a separate worktree |
 | Notice typed into the conductor merges with your unsent draft | `herdr agent prompt` types into the input box | before messaging conductors, check for a draft or an open question |
 | Conductor "thinking" for minutes | blocking wait | `Esc`; the instructions forbid blocking waits |

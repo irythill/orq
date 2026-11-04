@@ -208,7 +208,13 @@ Para ver tudo de uma vez, deixe o **`orq board`** aberto numa aba ou janela (qua
 `herdr-board` o chama): fila de testes, agentes rodando (modelo, memória contra o limite, última ação), conductors e
 suas issues, memória, quota, CI/CD de cada issue reivindicada, bloqueios e o placar de 7 dias. `--once` imprime uma
 vez, `--json` para scripts. Com `ui.toast.delivery = "system"` na config do herdr, cada etapa concluída também gera
-uma notificação nativa do sistema. Para ver a cota sem abrir o board, o `orq quota --line` cabe na barra de abas do
+uma notificação nativa do sistema. Uma falha (testes vermelhos, agente `status=fail`, CI vermelho) também é **barulhenta**: além da linha digitada no pane do
+conductor (entregue pelo orq com novas tentativas e log, `orq notice`), você recebe uma notificação do herdr com som, um
+título `✗` no pane do conductor e, no Linux, uma notificação de desktop (`[ui] desktop_notify = false` desliga essa;
+precisa do `notify-send`). Sucessos ficam quietos. A linha vermelha no topo do board lista as falhas da última hora
+cujo aviso não foi entregue ou que o conductor ainda não tratou (some quando ele roda `orq wait`, `orq verify` ou
+`orq agent` para a issue).
+Para ver a cota sem abrir o board, o `orq quota --line` cabe na barra de abas do
 herdr (uma entrada `command` no `tab_bar_right`, [docs/pt-BR/herdr.md](docs/pt-BR/herdr.md#cota-na-barra-de-abas)).
 O `orq ci` mostra os checks do PR de cada issue reivindicada (na fila, rodando, passou, falhou ou nenhum, lido via
 `gh` na hora — é uma consulta que o usuário pediu agora, então, diferente da coluna de CI do board, não lê só o
@@ -235,6 +241,7 @@ dois conductors peguem a mesma issue. Detalhes, atalhos e cenários: [docs/pt-BR
 |---|---|
 | `orq agent -a <agent> ...` (`herdr-agent`) | Roda um agente com limite de memória numa aba do herdr, numa janela do tmux ou em segundo plano; `-r` só leitura, `-R <id>` continua a sessão, `-i` anexa um arquivo, `-b <base>` anexa o diff, `-T` a tela do próprio agente (herdr ou tmux; `-R` com ela aberta digita o follow-up nela) |
 | `orq instructions claude\|agents` | Escreve o playbook do `/issue` como `SKILL.md` (Claude Code) ou dentro do `AGENTS.md` (Codex, OpenCode…) |
+| `orq notice [--list] [-n N]` | O log de entrega dos avisos aos conductors: cada tentativa, nova tentativa e falha (`<state>/notices.jsonl`) |
 | `orq wait <prefixo>...` | Bloqueia até esses agentes terminarem; imprime `status=` e o arquivo da resposta (qualquer conductor, qualquer terminal) |
 | `orq verify ...` (`herdr-verify`) | Testes relacionados ao diff, em fila e com limite de memória; falhas que também falham na base contam como pré-existentes |
 | `orq board` (`herdr-board`) | Painel ao vivo: fila, agentes, conductors, cota, bloqueios, placar |

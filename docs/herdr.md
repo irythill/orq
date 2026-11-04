@@ -86,6 +86,6 @@ when `~/.config/herdr/config.toml` has:
 [ui.toast]
 delivery = "system"     # off | herdr (inside herdr) | terminal | system
 ```
-Then: `herdr server reload-config`. orq notices (`herdr-notify`) show up as "✓ <ID> <step> <repo>" or "✗ ..." with the
+Then: `herdr server reload-config`. orq notices show up as "✓ <ID> <step> <repo>" or "✗ ..." with the
 answer file in the body. On WSL the pop-up depends on herdr reaching Windows; if nothing shows, use
 `delivery = "herdr"` (notice inside the herdr window).
