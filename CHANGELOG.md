@@ -5,7 +5,14 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
+### Fixed
+- `orq agent` without `-a` (or `$AGENT`) now refuses instead of starting Codex: an `orq pick` with no candidate gave an empty
+  `$(orq pick ...)`, which started Codex past blocks and quota.
+- `orq board` shows each run's own model when a prefix is reused (the state file now records it), and `?` instead of a
+  growing duration for a run whose runner is gone.
+
 ### Added
+- `orq block <name> --quota`: blocks until the quota window resets, read from the collector, instead of a fixed period.
 - Watchdog layer 2: `orq rounds <ID> --diagnose` (only on warn/stop) has a cheap, read only agent of another vendor than the
   implementer diagnose why the rounds don't converge, from the metrics, `fix-<n>.md` and the review outputs, and recommend
   continue / split / change-implementer / ask-user. Saved to `.orquestra/<ID>/diagnosis-<rounds>.md`; `orq rounds` shows its

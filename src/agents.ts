@@ -248,3 +248,10 @@ export const FORMATS: Record<string, Format> = {
     },
   },
 };
+
+/** The model in an agent's argv (-m / --model / --model=x), without the provider prefix. */
+export function argvModel(a: string[]): string | undefined {
+  const i = a.findIndex((x) => x === "-m" || x === "--model");
+  const v = i >= 0 ? a[i + 1] : a.find((x) => x.startsWith("--model="))?.slice(8);
+  return v?.split("/").pop();
+}

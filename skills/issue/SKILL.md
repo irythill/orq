@@ -178,7 +178,9 @@ are in the attached verify)". If the reviewer ends with `status=fail` and no ver
 `jetski: ... permission` line), that is not a rejection: run `orq pick review ... --exclude-agent <it>` and redo it.
 `--exclude-agent` applies **only to redoing that review** (save the new pick to `review-<repo>.pick`); the next
 round reuses whoever gave the verdict. An agent that failed twice in a row with no verdict →
-`orq block <agent> --days 1` and tell the user.
+`orq block <agent> --days 1` and tell the user. If it stopped on a quota limit, use `orq block <agent> --quota` (until
+the window resets; a fixed period outlives it and keeps the agent out of `orq pick` for nothing). If `orq pick` finds no
+candidate, its output is empty and `orq agent` refuses to start: stop and tell the user.
 **Review tools** (an agent whose `run` has no `{prompt}`/`{prompt_text}`/stdin, e.g. a CodeRabbit-like CLI with
 `ok_exit`/`filter` in the config): same command; it ignores the prompt and the attachments and reviews the branch
 against `{base}` itself. Read its answer like any other: `status=ok` with `rc≠0` is a verdict with findings, not a

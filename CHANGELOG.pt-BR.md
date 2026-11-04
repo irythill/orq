@@ -5,7 +5,14 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
+### Corrigido
+- `orq agent` sem `-a` (ou `$AGENT`) agora recusa em vez de iniciar o Codex: um `orq pick` sem candidato deixava
+  `$(orq pick ...)` vazio, o que iniciava o Codex passando por cima de bloqueios e cota.
+- `orq board` mostra o modelo de cada execução quando um prefixo é reutilizado (o arquivo de estado agora o registra), e `?`
+  em vez de uma duração crescente para execução cujo runner sumiu.
+
 ### Adicionado
+- `orq block <nome> --quota`: bloqueia até a janela de cota renovar, lida do coletor, em vez de um prazo fixo.
 - Watchdog camada 2: `orq rounds <ID> --diagnose` (só em warn/stop) pede a um agente barato, somente leitura e de outro
   fornecedor que o implementador, um diagnóstico de por que as rodadas não convergem, a partir das métricas, dos `fix-<n>.md`
   e das saídas das revisões, recomendando continue / split / change-implementer / ask-user. Gravado em

@@ -15,7 +15,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "../accounts.js";
 import { gateFor } from "../diagnose.js";
-import { useThrowaway, agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
+import { argvModel, useThrowaway, agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
 import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
@@ -46,7 +46,7 @@ const git = (dir: string, ...a: string[]) => {
 export async function agent(argv: string[]): Promise<number> {
   if (argv[0] === "--run") return runJob(argv[1]);
   if (argv[0] === "--turn") return turn(argv[1], argv[2], argv.slice(3));
-  let a = process.env.AGENT || "codex", g = "", t = "", d = "", o = "", model = "", effort = "", acc = "", resume = "", base = "";
+  let a = process.env.AGENT || "", g = "", t = "", d = "", o = "", model = "", effort = "", acc = "", resume = "", base = "";
   let ro = false, tui = false, force = 0, prompt: string | undefined;
   const inc: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -61,6 +61,8 @@ export async function agent(argv: string[]): Promise<number> {
   }
   if (!prompt) { console.error(m("give the prompt file", "informe o arquivo de prompt")); return 2; }
   for (const [f, val] of [["t", t], ["d", d], ["o", o]]) if (!val) { console.error(`${m("missing", "faltou")} -${f}`); return 2; }
+  // No default agent: an empty $(orq pick ...) means no candidate, and must not start anything.
+  if (!a) { console.error(m("missing -a (if it came from orq pick, it found no candidate): nothing started", "faltou -a (se veio do orq pick, ele não achou candidato): nada foi iniciado")); return 2; }
   a = ALIASES[a] ?? a;
   const { cfg } = loadConfig();
   const def = agentDef(cfg, a);
@@ -308,7 +310,7 @@ async function runJob(file: string): Promise<number> {
   writeFileSync(`${O}.pid`, String(process.pid));
   const stateF = join(stateDir(), "agents", `${j.unit}.json`);
   const at = new Date().toISOString();
-  const state = (extra: Obj = {}) => { try { writeAtomic(stateF, JSON.stringify({ pid: process.pid, prefix: O, title: j.title, agent: j.agent, host: j.host, cap: j.cap, at, ...extra })); } catch { /* best effort */ } };
+  const state = (extra: Obj = {}) => { try { writeAtomic(stateF, JSON.stringify({ pid: process.pid, prefix: O, title: j.title, agent: j.agent, model: argvModel(j.argv), host: j.host, cap: j.cap, at, ...extra })); } catch { /* best effort */ } };
   state();
   const fmt = FORMATS[j.format] ?? FORMATS.text;
   let rc = 0, stdout = "", logText = "";
