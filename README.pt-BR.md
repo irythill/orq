@@ -2,11 +2,12 @@
 
 <p align="center"><img src="docs/img/orq-logo.svg" alt="orq — um orc de fraque erguendo a batuta de maestro" width="304"></p>
 
-# orq — orquestrando agentes de código com o herdr
+# orq — orquestrando agentes de código
 
 Você descreve o trabalho numa issue do Plane. Um **conductor** (Claude, de preferência Opus) lê a issue, escolhe o
-agente certo para cada etapa, despacha o **implementador**, os **testes** e uma **review cross-vendor** em abas do
-[herdr](https://herdr.dev), e devolve a issue *In Review* com um resumo no Plane. Merge, PR e deploy continuam com você.
+agente certo para cada etapa, despacha o **implementador**, os **testes** e uma **review cross-vendor** (cada um
+em sua própria aba ou janela no [herdr](https://herdr.dev) ou no tmux, ou em segundo plano), e devolve a issue
+*In Review* com um resumo no Plane. Merge, PR e deploy continuam com você.
 
 O que o orq **não** decide por você: quais agentes você tem, quanto cada um pode gastar e como você gosta de
 trabalhar. Tudo isso fica na sua config.
@@ -19,17 +20,18 @@ trabalhar. Tudo isso fica na sua config.
 ## Como funciona
 
 ```
-You ── "/issue DEMO-123" ──► conductor (Claude in herdr)
-                                │  orq-pick impl ──► which agent/model implements (config + history + quota)
-                                ├─► implementer   herdr-agent  own tab · worktree from origin/<base> · memory cap
-                                ├─► tests         herdr-verify  only the diff's tests · queue of one suite at a time
-                                │  orq-pick review ─► a reviewer from ANOTHER vendor
-                                ├─► reviewer      herdr-agent -r  read only · diff + criteria + test results attached
+You ── "/issue DEMO-123" ──► conductor (Claude, in any terminal)
+                                │  orq pick impl ──► which agent/model implements (config + history + quota)
+                                ├─► implementer   orq agent  own tab/window or background · worktree from origin/<base> · memory cap
+                                ├─► tests         orq verify  only the diff's tests · queue of one suite at a time
+                                │  orq pick review ─► a reviewer from ANOTHER vendor
+                                ├─► reviewer      orq agent -r  read only · diff + criteria + test results attached
                                 └─► Plane         comment, state, labels
-                                ◄── "[HERDR-AGENT DONE] ..." in the conductor's pane (the only completion signal)
+                                ◄── "[HERDR-AGENT DONE] ..." typed into the conductor's herdr pane, or `orq wait` printing "[ORQ AGENT DONE] ..."
 ```
 
-- **Cada etapa numa aba do herdr.** Você acompanha ao vivo e a aba fecha quando termina. Os resultados ficam em
+- **Cada etapa na sua própria aba ou janela.** No herdr ou no tmux você acompanha ao vivo e a aba fecha quando
+  termina; sem eles a etapa roda em segundo plano (o `orq board` mostra). Os resultados ficam em
   `.orquestra/<ID>/` (`.out.md`, `.log`, `.done`).
 - **Ordem fixa em toda rodada:** implementador ok → testes sem falha nova → review. Só um `[blocker]` com
   `arquivo:linha` e uma falha concreta vira rodada de correção; o resto vai para o comentário no Plane (com máximo
@@ -181,13 +183,12 @@ orq pick fix --same .orquestra/<ID>/impl-<repo>.pick   # a fix round: the implem
 ```
 
 ### Idioma e tema
-O orq fala inglês e português: mensagens da CLI, `herdr-board`, avisos e `install.sh`. Ele segue `[ui] lang` na sua
+O orq fala inglês e português: mensagens da CLI, `orq board`, avisos e `install.sh`. Ele segue `[ui] lang` na sua
 config (`"auto"` = idioma do sistema, `"en"`, `"pt"`) ou a variável de ambiente `ORQ_LANG`. Para trocar a qualquer
 momento:
 - `orq-lang pt` / `orq-lang en` / `orq-lang toggle` (`orq-lang` sozinho mostra o atual);
 - a tecla `l` dentro do `orq board`;
-- uma tecla no herdr: o `install.sh` liga o plugin `orq` do herdr; associe a ação `orq.lang-toggle` (trecho pronto em
-  `herdr-plugin/herdr-plugin.toml`) — por exemplo, `prefix+shift+l` — e a `orq.board` para abrir o painel por cima.
+- no herdr, uma tecla para isso: veja [Com o herdr](#com-o-herdr).
 
 O `orq board` tem visual próprio, inspirado no portfólio [SYNTH.DECK](https://github.com/irythill/synth-deck-portfolio):
 `[ui] theme = "gunmetal"` (padrão, grafite escuro), `"chrome"` (prata claro), `"lcd"` (verde fósforo) ou `"terminal"`
@@ -197,33 +198,51 @@ O que já está rodando continua no idioma em que começou. Os conductors sempre
 
 ## Uso diário
 
+Abra o conductor em qualquer terminal, na pasta do seu workspace (a que o `orq setup` preparou):
 ```bash
-herdr                                    # abre a janela (o servidor roda como serviço)
-cd ~/Code/<workspace> && herdr-conductor # dentro de um pane do herdr: abre o conductor (conta e modelo opcionais)
+cd ~/Code/<workspace> && claude          # qualquer terminal: o CLAUDE.md do workspace e a skill /issue são carregados
 ```
-No conductor: **`/issue DEMO-123`**. Ele responde numa linha e segue sozinho a cada `[HERDR-AGENT DONE]`. Você só volta
+Com vários conductors, dê a cada um um nome fixo (`export ORQ_CONDUCTOR_ID=<nome>`) para o `orq claim` distingui-los.
+Variantes:
+- **herdr:** rode `herdr` (o servidor roda como serviço) e, num pane, `herdr-conductor` (conta e modelo opcionais).
+- **tmux:** inicie o `claude` num pane; os filhos abrem como janelas do tmux.
+- **Nenhum dos dois:** os filhos rodam em segundo plano e o conductor espera com `orq wait`.
+
+No conductor: **`/issue DEMO-123`**. Ele responde numa linha e segue sozinho a cada sinal de conclusão
+(`[HERDR-AGENT DONE]` num pane do herdr; fora dele, a linha `[ORQ AGENT DONE]` impressa pelo `orq wait`). Você só volta
 quando ele pede uma decisão ou avisa que terminou.
 
 Para ver tudo de uma vez, deixe o **`orq board`** aberto numa aba ou janela (qualquer terminal, qualquer SO; o
 `herdr-board` o chama): fila de testes, agentes rodando (modelo, memória contra o limite, última ação), conductors e
 suas issues, memória, quota, CI/CD de cada issue reivindicada, bloqueios e o placar de 7 dias. `--once` imprime uma
-vez, `--json` para scripts. Com `ui.toast.delivery = "system"` na config do herdr, cada etapa concluída também gera
-uma notificação nativa do sistema. Uma falha (testes vermelhos, agente `status=fail`, CI vermelho) também é **barulhenta**: além da linha digitada no pane do
-conductor (entregue pelo orq com novas tentativas e log, `orq notice`), você recebe uma notificação do herdr com som, um
-título `✗` no pane do conductor e, no Linux, uma notificação de desktop (`[ui] desktop_notify = false` desliga essa;
-precisa do `notify-send`). Sucessos ficam quietos. A linha vermelha no topo do board lista as falhas da última hora
-cujo aviso não foi entregue ou que o conductor ainda não tratou (some quando ele roda `orq wait`, `orq verify` ou
-`orq agent` para a issue).
-Para ver a cota sem abrir o board, o `orq quota --line` cabe na barra de abas do
-herdr (uma entrada `command` no `tab_bar_right`, [docs/pt-BR/herdr.md](docs/pt-BR/herdr.md#cota-na-barra-de-abas)).
-O `orq ci` mostra os checks do PR de cada issue reivindicada (na fila, rodando, passou, falhou ou nenhum, lido via
-`gh` na hora — é uma consulta que o usuário pediu agora, então, diferente da coluna de CI do board, não lê só o
-cache); quando um deles vira verde ou vermelho sai uma notificação do herdr, e uma falha também avisa o conductor
-dono num aviso só por commit. Depois dos merges, o `orq gc` lista e remove as worktrees de issues que ficaram para
-trás.
+vez, `--json` para scripts.
+Uma falha (testes vermelhos, agente `status=fail`, CI vermelho) também é **barulhenta**: além da linha digitada no pane
+do conductor (entregue pelo orq com novas tentativas e log, `orq notice`), você recebe um título `✗` no pane do
+conductor (herdr) e, no Linux, uma notificação de desktop (`[ui] desktop_notify = false` desliga essa; precisa do
+`notify-send`). Sucessos ficam quietos. A linha vermelha no topo do board lista as falhas da última hora cujo aviso não
+foi entregue ou que o conductor ainda não tratou (some quando ele roda `orq wait`, `orq verify` ou `orq agent` para a
+issue).
+O `orq quota --line` imprime a cota numa linha para qualquer barra de status. O `orq ci` mostra os checks do PR de cada
+issue reivindicada (na fila, rodando, passou, falhou ou nenhum, lido via `gh` na hora — é uma consulta que o usuário
+pediu agora, então, diferente da coluna de CI do board, não lê só o cache); uma falha também avisa o conductor dono num
+aviso só por commit. Depois dos merges, o `orq gc` lista e remove as worktrees de issues que ficaram para trás.
 
-Várias issues ao mesmo tempo: um conductor por issue (de preferência em contas diferentes). O `herdr-claim` impede que
-dois conductors peguem a mesma issue. Detalhes, atalhos e cenários: [docs/pt-BR/herdr.md](docs/pt-BR/herdr.md).
+Várias issues ao mesmo tempo: um conductor por issue (de preferência em contas diferentes). O `orq claim`
+(`herdr-claim`) impede que dois conductors peguem a mesma issue.
+
+## Com o herdr
+
+O herdr é opcional, mas é com ele que o orq fica mais redondo: filhos em abas próprias, avisos digitados no pane do
+conductor e alguns extras:
+- `herdr-conductor` abre o conductor no pane atual do herdr e dá nome a ele.
+- `ui.toast.delivery = "system"` na config do herdr faz cada etapa concluída gerar uma notificação nativa do sistema;
+  falhas também geram uma notificação do herdr com som, e um CI que fica verde ou vermelho também gera uma.
+- O `orq quota --line` cabe na barra de abas do herdr (uma entrada `command` no `tab_bar_right`,
+  [docs/pt-BR/herdr.md](docs/pt-BR/herdr.md#cota-na-barra-de-abas)).
+- Uma tecla para o idioma: o `install.sh` liga o plugin `orq` do herdr; associe a ação `orq.lang-toggle` (trecho pronto
+  em `herdr-plugin/herdr-plugin.toml`) — por exemplo, `prefix+shift+l` — e a `orq.board` para abrir o painel por cima.
+
+Dia a dia, atalhos e várias issues ao mesmo tempo: [docs/pt-BR/herdr.md](docs/pt-BR/herdr.md).
 
 ## Skills
 
@@ -245,9 +264,9 @@ dois conductors peguem a mesma issue. Detalhes, atalhos e cenários: [docs/pt-BR
 | `orq wait <prefixo>...` | Bloqueia até esses agentes terminarem; imprime `status=` e o arquivo da resposta (qualquer conductor, qualquer terminal) |
 | `orq verify ...` (`herdr-verify`) | Testes relacionados ao diff, em fila e com limite de memória; falhas que também falham na base contam como pré-existentes |
 | `orq board` (`herdr-board`) | Painel ao vivo: fila, agentes, conductors, cota, bloqueios, placar |
-| `herdr-conductor` | Abre o conductor no pane atual |
-| `herdr-claim` | Dono de cada issue entre os conductors |
-| `herdr-deps` | Liga as dependências do worktree às do repo principal (sem reinstalar) |
+| `herdr-conductor` | Abre o conductor no pane atual do herdr |
+| `orq claim` (`herdr-claim`) | Dono de cada issue entre os conductors |
+| `orq deps` (`herdr-deps`) | Liga as dependências do worktree às do repo principal (sem reinstalar) |
 | `orq baseline ...` (`herdr-baseline`) | Snapshot manual dos testes que falham na base (fora do fluxo) |
 | `orq gc [-w <workspace>] [--yes] [--days N] [--json]` | Lista worktrees de issues que podem ser removidas (PR mergeado, ou conteúdo já na base, inclusive squash merge); `--yes` as remove. Nunca mexe em trabalho não commitado, commit fora do remote, claim ativo ou agente rodando. `orq-gc.timer` diário opcional |
 | `orq ci [-w <workspace>] [--json]` | Status de CI/CD de cada issue reivindicada com PR: na fila, rodando, passou, falhou ou nenhum, coletado na hora via `gh` (o cache que ele preenche é o que a coluna de CI do `orq board` lê, sem nunca travar na rede). Quando vira verde ou vermelho sai uma notificação do herdr, e uma falha também avisa o conductor dono |
