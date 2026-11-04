@@ -6,6 +6,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Fixed
+- `orq rounds` now counts review findings written with a leading bold severity (`**Bloqueante**`, `**Sugestão — `file:7–8`:**`, PT/EN),
+  not only `[blocker]` tags, and reads markdown-link paths, en-dash line ranges and per-round `.worktrees/<dir>/` prefixes so
+  the same file matches across rounds.
 - `orq quota` no longer reports the antigravity login as expired after an hour idle: the access token only lives 1h
   and agy renews it on its next run, so with a refresh token in the keyring the note is "token idle (agy refreshes on
   next run)" and `orq pick` keeps the account. "login expired" stays for a missing refresh token or an API 401.

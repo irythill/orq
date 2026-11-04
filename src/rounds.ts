@@ -2,7 +2,9 @@
 //   fix-<n>.md                    the blockers sent to the implementer in fix round n (its mtime = the round started)
 //   review-<repo>.out.md          the first review (round 0);  review-<repo>-<n>.out.md  the review after fix round n
 // Rounds = highest fix-<n> (or the .rounds-<session> counter `orq agent -R` keeps). Findings are the tagged list items
-// of each review ("- [blocker] src/a.ts:10 title"); a finding "repeats" when a later review has one on the same file
+// of each review ("- [blocker] src/a.ts:10 title", or a leading bold severity word in PT/EN: "1. **Bloqueante** — ...",
+// "- **Sugestão — `a.ts:7–8`:** ..."; "**Critério 1**" is not one). Files may be markdown links; a ".worktrees/<dir>/" prefix is
+// stripped so a file matches across rounds. A finding "repeats" when a later review has one on the same file
 // with similar words (token overlap, see similar()).
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -33,16 +35,37 @@ const STOP = new Set(["the", "a", "an", "of", "in", "on", "to", "is", "are", "an
 
 const words = (s: string) => new Set(s.toLowerCase().replace(/[^\p{L}\p{N}_]+/gu, " ").split(" ").filter((w) => w.length > 2 && !STOP.has(w)));
 
-/** One review-list item → finding. Only items carrying a severity tag count (prose around the list is ignored). */
+const SEV: Record<string, string> = { // looked up with Object.hasOwn: "constructor" and friends are not severities
+ 
+  bloqueante: "blocker", bloqueador: "blocker", blocker: "blocker", critico: "critical", critical: "critical",
+  importante: "major", important: "major", major: "major", menor: "minor", minor: "minor",
+  sugestao: "suggestion", suggestion: "suggestion", nit: "nit",
+};
+const fold = (w: string) => w.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+const URL = /^[a-z][a-z0-9+.-]*:\/\//i;
+// GitHub-style ".../blob/<ref>/<path>" → "<path>" (no query, no #L4), so URL mentions match plain-path mentions.
+const blobPath = (u: string) => /^[a-z][a-z0-9+.-]*:\/\/[^/]+\/[^/]+\/[^/]+\/blob\/[^/]+\/([^#?\s)]+)/i.exec(u)?.[1];
+const LINK = /\[([^\]]*)\]\(([^)\s]*)\)/g;
+// Reviews run in a different worktree per round (".worktrees/<repo>-<id>.review-<pid>/"): drop it so the same file matches across rounds.
+const repoRel = (f: string) => f.replace(/\\/g, "/").replace(/^.*\.worktrees\/[^/]+\//, "");
+
+/** One review-list item → finding. Only items carrying a severity (a "[blocker]" tag or a leading bold "**Bloqueante**") count. */
 export function parseFindings(text: string, round: number): Finding[] {
   const out: Finding[] = [];
   for (const line of text.split("\n")) {
     const it = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line);
-    const tag = it && /\[(blocker|major|minor|nit|suggestion|important|critical)\]/i.exec(it[1]);
-    if (!it || !tag) continue;
-    const rest = it[1].replace(tag[0], " ");
-    const file = /([\w@./-]+\.\w+)(?::\d+(?:-\d+)?)?/.exec(rest)?.[1] ?? "";
-    out.push({ round, severity: tag[1].toLowerCase(), file, title: rest.replace(/[`*_]/g, "").replace(/\s+/g, " ").trim() });
+    if (!it) continue;
+    const sevOf = (w?: string) => { const k = fold(w ?? ""); return Object.hasOwn(SEV, k) ? SEV[k] : undefined; };
+    let m0 = /^\*\*\s*(\p{L}+)/u.exec(it[1]); // a leading bold severity wins over a [tag]
+    if (!sevOf(m0?.[1])) m0 = /\[(blocker|major|minor|nit|suggestion|important|critical)\]/i.exec(it[1]);
+    const sev = sevOf(m0?.[1]);
+    if (!m0 || !sev) continue;
+    const rest = it[1].replace(m0[0], " ");
+    const byTarget = rest.replace(LINK, (_, t, p) => ` ${URL.test(p) ? blobPath(p) ?? t : repoRel(p)} `)
+      .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, (u) => ` ${blobPath(u) ?? ""} `);
+    const m = /([\w@./\\-]+\.\w+)(?::\d+(?:[-\u2013]\d+)?)?/.exec(byTarget);
+    const file = m ? repoRel(m[1]) : "";
+    out.push({ round, severity: sev, file, title: rest.replace(LINK, "$1").replace(/[`*_]/g, "").replace(/\s+/g, " ").trim() });
   }
   return out;
 }
