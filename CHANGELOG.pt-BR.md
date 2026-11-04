@@ -6,6 +6,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Não lançado]
 ### Corrigido
+- O `orq rounds` agora conta achados de review escritos com severidade em negrito no início (`**Bloqueante**`, `**Sugestão — `arquivo:7–8`:**`, PT/EN),
+  e não só tags `[blocker]`, e lê caminhos em links markdown, faixas de linha com travessão e o prefixo `.worktrees/<dir>/`
+  de cada rodada, para o mesmo arquivo casar entre rodadas.
 - O `orq quota` não diz mais que o login do antigravity expirou após uma hora parado: o access token dura 1h e o agy
   o renova só quando roda, então com refresh token no chaveiro a nota é "token ocioso (o agy renova no próximo uso)"
   e o `orq pick` mantém a conta. "login expirado" fica para refresh token ausente ou 401 da API.
