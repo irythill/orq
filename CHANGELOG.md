@@ -5,6 +5,8 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
+
+## [0.5.0] — 2026-11-04
 ### Fixed
 - Notices to the conductor (verify/agent done, CI red) are now delivered by `orq` itself, detached, and no longer fail
   silently: the old `herdr-notify` depended on `jq`, gave up after 3 tries in a minute and printed its errors to a tab or
