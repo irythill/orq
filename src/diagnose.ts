@@ -3,7 +3,7 @@
 // past policy.max_rounds needs that file for the current round count, newer than the latest fix/review file.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { Metrics, Reason } from "./rounds.js";
+import { countRounds, type Metrics, type Reason } from "./rounds.js";
 
 export const DIAG_CAP = 24000; // characters of fix/review text put in the prompt
 export const RECOMMENDATIONS = ["continue", "split", "change-implementer", "ask-user"] as const;
@@ -76,19 +76,14 @@ export function diagnosisGate(rounds: number, files: FileTime[]): "ok" | "missin
   return d.mtimeMs >= latest ? "ok" : "stale";
 }
 
-/** Round count the gate looks for: the session counter or the highest fix-<n>.md, whichever is larger (as `orq rounds`). */
-export function roundsIn(files: FileTime[], counter: number): number {
-  return Math.max(counter, 0, ...files.map((f) => num(/^fix-(\d+)\.md$/, f.name) ?? 0));
-}
-
 const times = (dir: string): FileTime[] => {
   try { return readdirSync(dir).map((name) => ({ name, mtimeMs: statSync(join(dir, name)).mtimeMs })); } catch { return []; }
 };
 const read = (f: string) => { try { return readFileSync(f, "utf8"); } catch { return ""; } };
 
 /** The impure part of the gate: the folder .orquestra/<ID>/ → verdict and the round count it was judged for. */
-export function gateFor(dir: string, counter: number): { verdict: "ok" | "missing" | "stale"; rounds: number } {
-  const files = times(dir), rounds = roundsIn(files, counter);
+export function gateFor(dir: string): { verdict: "ok" | "missing" | "stale"; rounds: number } {
+  const files = times(dir), rounds = countRounds(dir, files.map((f) => f.name)); // the same count `orq rounds` shows
   return { verdict: diagnosisGate(rounds, files), rounds };
 }
 

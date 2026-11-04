@@ -15,6 +15,7 @@ import { wait } from "./wait.js";
 export const USAGE = `orq rounds <ID> [-w <workspace>] [--json]   rounds vs max_rounds, time per round, repeated findings, alert level
 orq rounds <ID> --diagnose [-w <workspace>]   on warn/stop: an independent cheap agent diagnoses why rounds don't converge (advisory; needed for orq agent -R -F)`;
 
+export const WATCHDOG_TIMEOUT = 900; // seconds `orq rounds --diagnose` waits for the agent
 const CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
 
 const dur = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)}h${String(Math.floor(s / 60) % 60).padStart(2, "0")}m` : s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s` : `${s}s`);
@@ -67,10 +68,11 @@ async function diagnoseIssue(ws: string, id: string, x: Metrics): Promise<number
   const p = orq("pick", "watchdog", "--level", "simple", "-w", ws, ...(implPick ? ["--impl-agent", implPick] : []));
   if (p.status !== 0) { console.error(p.stderr.trim() || `orq pick watchdog: exit ${p.status}`); return p.status ?? 1; }
   const picked = p.stdout.trim().split(/\s+/);
-  const a = orq("agent", ...picked, "-r", "-t", `${id} watchdog`, "-d", ws, "-g", "watchdog", "-o", prefix, "--", `${prefix}.md`);
+  const a = orq("agent", ...picked, "-r", "-t", `${id} watchdog`, "-d", dir, "-g", "watchdog", "-o", prefix, "--", `${prefix}.md`);
   process.stderr.write(a.stderr); process.stdout.write(a.stdout);
   if (a.status !== 0) return a.status ?? 1;
-  const rc = await wait([prefix]);
+  const rc = await wait(["--timeout", String(WATCHDOG_TIMEOUT), prefix]);
+  if (rc === 124) { console.error(m(`diagnosis not written: the watchdog agent did not finish in ${WATCHDOG_TIMEOUT}s`, `diagnóstico não gravado: o agente watchdog não terminou em ${WATCHDOG_TIMEOUT}s`)); return 124; }
   if (rc !== 0 || !existsSync(`${prefix}.out.md`)) { console.error(m("the watchdog agent failed; no diagnosis written", "o agente watchdog falhou; diagnóstico não gravado")); return 1; }
   copyFileSync(`${prefix}.out.md`, out);
   console.log(m(`diagnosis saved to ${out}`, `diagnóstico gravado em ${out}`));
