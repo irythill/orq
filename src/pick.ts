@@ -12,6 +12,7 @@
 // Pacing: an account whose usage, at the pace so far in a window (used ÷ elapsed share), projects past
 // that window's pick limit (the filter's) at its reset is passed over for another account under the limit when the agent has several,
 // and otherwise loses policy.pacing_penalty (default 0.3, 0 = off) of score — soft, never a drop.
+import { type AgentDef, usesPrompt } from "./agents.js";
 import type { Obj } from "./config.js";
 import { m } from "./i18n.js";
 import { humanReset } from "./quota.js";
@@ -133,6 +134,7 @@ export function pick(inp: PickInput): PickResult {
         && vendorOf(name, a) === inp.implVendor) {
       out(name, m("same vendor as the implementer", "mesmo fornecedor do implementador")); continue;
     }
+    if (role === "watchdog" && !usesPrompt(a as unknown as AgentDef)) { out(name, m("ignores prompts (a review tool)", "ignora prompts (ferramenta de revisão)")); continue; }
     const mf = modelFor(a, role, level);
     if (!mf) { out(name, m(`no model for ${role}/${level}`, `sem modelo para ${role}/${level}`)); continue; }
     // Quota: an agent with several accounts (claude) prefers one not projecting past the limit, then the least used.
@@ -183,8 +185,9 @@ export function pick(inp: PickInput): PickResult {
       .sort((x, y) => Number(x.hot) - Number(y.hot) || x.v - y.v);
     const chosen = ranked[0];
     const acct = qn.length > 1 ? chosen?.n : undefined;
-    const statRole = role === "fix" || role === "worker" ? "impl" : role === "watchdog" ? "review" : role;
-    const st = inp.stats.find((r) => r.role === statRole && r.agent === name && r.model === (mf[0].split("/").pop() || "default"));
+    const statRole = role === "fix" || role === "worker" ? "impl" : role;
+    const stOf = (sr: string) => inp.stats.find((r) => r.role === sr && r.agent === name && r.model === (mf[0].split("/").pop() || "default"));
+    const st = stOf(statRole) ?? (role === "watchdog" ? stOf("review") : undefined); // no watchdog runs yet: its review record
     pass.push({ agent: name, model: mf[0], effort: mf[1], acct, a, st, pace: chosen?.pace, hot: Boolean(chosen?.hot) });
     if (res.mode === "fixed") break; // the first that passes wins
   }

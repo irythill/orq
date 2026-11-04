@@ -10,6 +10,7 @@ import { limitsFor, parseWindows, pick as pickAgent } from "./pick.js";
 import { parseLocal } from "./commands/block.js";
 import { handoffPrompt, owners, plan, tighter, trimHandoffContext } from "./commands/handoff.js";
 import { setTomlString } from "./toml-set.js";
+import { usesPrompt, useThrowaway } from "./agents.js";
 import { buildPrompt, diagnosisGate, recommendation, trim } from "./diagnose.js";
 import { resolveRole } from "./roles.js";
 import { metrics, parseFindings, repeats, similar, slowRounds, mark } from "./rounds.js";
@@ -1820,9 +1821,39 @@ test("watchdog role: own pool, else opinion, else review; models fall back the s
   const cfg = { agents: { a: agents.a }, roles: { watchdog: { agent: "w", fallback: ["a"] } } };
   assert.deepEqual(resolveRole(cfg, "watchdog"), { mode: "fixed", order: ["w", "a"], rule: "other-vendor", section: "watchdog" });
   // pick: another vendor than the implementer, with the opinion models when the agent has none for watchdog
-  const mk = (n: string, vendor: string) => ({ vendor, roles: ["opinion"], models: { opinion: { default: `${n}-m@low` } } });
+  const mk = (n: string, vendor: string) => ({ vendor, run: "x {prompt_text}", roles: ["opinion"], models: { opinion: { default: `${n}-m@low` } } });
   const r = pickAgent({ cfg: { agents: { x: mk("x", "v1"), y: mk("y", "v2") } }, role: "watchdog", level: "simple", implVendor: "v1", exclude: new Set(),
     stats: [], quota: {}, blocks: new Set(), recent: [] });
   assert.equal(r.best?.agent, "y");
   assert.equal(r.best?.model, "y-m");
+});
+
+test("watchdog: no throwaway worktree outside git, review tools that ignore prompts are not in the pool", () => {
+  assert.equal(useThrowaway({ throwaway: true }, true, false, true), true);
+  assert.equal(useThrowaway({ throwaway: true }, true, false, false), false); // not a git repo: run in place
+  assert.equal(useThrowaway({ throwaway: true }, false, false, true), false);
+  assert.equal(useThrowaway({ throwaway: true }, true, true, true), false);
+  assert.equal(usesPrompt({ run: "tool --markdown [-b {base}]" }), false);
+  assert.equal(usesPrompt({ run: "chat -p {prompt_text}" }), true);
+  assert.equal(usesPrompt({ run: "chat", stdin: true }), true);
+  const ag = { tool: { vendor: "v2", roles: ["watchdog"], run: "tool --markdown" }, chat: { vendor: "v3", roles: ["watchdog"], run: "chat {prompt_text}" } };
+  const r = pickAgent({ cfg: { agents: ag }, role: "watchdog", level: "simple", implVendor: "v1", exclude: new Set(), stats: [], quota: {}, blocks: new Set(), recent: [] });
+  assert.deepEqual(r.cands.map((c) => c.agent), ["chat"]);
+});
+
+test("gate and orq rounds count rounds the same way (all .rounds-* files and fix-<n>)", async () => {
+  const { gateFor } = await import("./diagnose.js");
+  const { root, env } = sandbox(), d = join(root, ".orquestra", "ABC-3");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, ".rounds-S1"), "1"); writeFileSync(join(d, ".rounds-S2"), "3"); writeFileSync(join(d, "fix-2.md"), "x");
+  writeFileSync(join(d, "review-app.out.md"), "x");
+  const j = JSON.parse(spawnSync(process.execPath, [CLI, "rounds", "ABC-3", "-w", root, "--json"], { env, encoding: "utf8" }).stdout);
+  assert.equal(j.rounds, 3);
+  assert.deepEqual(gateFor(d), { verdict: "missing", rounds: 3 });
+});
+
+test("orq wait --timeout returns 124 while the agent has not finished", () => {
+  const { root, env } = sandbox();
+  const r = spawnSync(process.execPath, [CLI, "wait", "--timeout", "1", join(root, "watchdog-1")], { env, encoding: "utf8" });
+  assert.equal(r.status, 124);
 });

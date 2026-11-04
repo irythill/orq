@@ -15,7 +15,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "../accounts.js";
 import { gateFor } from "../diagnose.js";
-import { agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
+import { useThrowaway, agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
 import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
@@ -93,7 +93,7 @@ export async function agent(argv: string[]): Promise<number> {
     // -F past the limit also needs the watchdog's diagnosis of this round count (-F -F skips it: the user's own call).
     // The issue folder is the prefix's folder, .orquestra/<ID>/ (where the .rounds-<session> counter lives).
     if (n >= max && force === 1 && basename(dirname(dirname(O))) === ".orquestra") {
-      const g = gateFor(dirname(O), n), id = basename(dirname(O));
+      const g = gateFor(dirname(O)), id = basename(dirname(O));
       if (g.verdict !== "ok") {
         console.error(m(`no current diagnosis: ${g.verdict === "stale" ? `diagnosis-${g.rounds}.md is older than the latest fix/review` : `diagnosis-${g.rounds}.md does not exist`}. Run \`orq rounds ${id} --diagnose\` first, read it, and ask the user. -F -F skips this check.`,
           `sem diagnóstico atual: ${g.verdict === "stale" ? `diagnosis-${g.rounds}.md é mais antigo que o último fix/revisão` : `diagnosis-${g.rounds}.md não existe`}. Rode \`orq rounds ${id} --diagnose\` antes, leia e consulte o usuário. -F -F pula esta checagem.`));
@@ -130,7 +130,7 @@ export async function agent(argv: string[]): Promise<number> {
     return 0;
   }
   for (const s of [".done", ".out.md", ".pid"]) rmSync(O + s, { force: true });
-  const throwaway = Boolean(def.throwaway && ro && !resume);
+  const throwaway = useThrowaway(def, ro, Boolean(resume), git(repo, "rev-parse", "--git-dir") !== undefined);
   const dir = throwaway ? `${repo}.review-${process.pid}` : repo;
   const gd = git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir");
   const wg = git(repo, "rev-parse", "--absolute-git-dir");

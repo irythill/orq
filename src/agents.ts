@@ -52,6 +52,14 @@ export interface AgentDef {
   no_review?: string; // regex: matched on the answer's first line (or all of a short one) = "nothing was reviewed" → status=fail, not a verdict
 }
 
+/** Does the agent's command take the prompt (stdin, a file in its folder or a {prompt*} placeholder)? A review tool like corvus does not. */
+export const usesPrompt = (a: Pick<AgentDef, "run" | "stdin" | "prompt_in_dir">) =>
+  Boolean(a.stdin || a.prompt_in_dir || /\{prompt(_text|_hint)?\}/.test(a.run ?? ""));
+
+/** Read only runs of a `throwaway` agent get a worktree copy of HEAD, but only where there is a git repo to copy. */
+export const useThrowaway = (def: Pick<AgentDef, "throwaway">, ro: boolean, resume: boolean, inGit: boolean) =>
+  Boolean(def.throwaway && ro && !resume && inGit);
+
 const NOMCP_CODEX = "-c mcp_servers.plane.enabled=false -c mcp_servers.shadcn.enabled=false";
 const CLAUDE = "claude -p --strict-mcp-config --output-format stream-json --verbose [--model {model}] --effort {effort:low}";
 const CLAUDE_TUI = "claude --strict-mcp-config [--model {model}] --effort {effort:low}";
