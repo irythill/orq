@@ -5,6 +5,8 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
+
+## [0.6.0] — 2026-11-05
 ### Added
 - `orq conductor [account|-] [model] [-r <session>]` opens the conductor (Claude) in any terminal and OS: finds the workspace
   (`.orquestra-conductor.md` in the folder, else `CONDUCTOR_WS`), maps `sonnet|opus|haiku`, resolves the account from the
@@ -17,6 +19,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   `[HERDR-AGENT DONE]` in herdr and `orq wait` elsewhere. The permission allowlist gains the `orq ...` patterns and keeps
   the `herdr-*` ones for old installs.
 - README: daily use is `orq conductor` in any terminal.
+- `orq board` folds finished and dead agents older than `ui.board_hide_hours` (default 6) into a count line; `--json`
+  keeps all of them. `orq gc` also prunes the stale agent state that no longer shows on the board.
+- `orq board` shows an agent with no CPU for `ui.board_idle_min` minutes (default 30) as `idle`.
 
 ### Fixed
 - Notices no longer go to a closed pane after a handoff: `orq handoff` redirects are followed only to a pane herdr still
@@ -35,6 +40,13 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   "Denied commands" section (each command and message, plus how to retry or extend `~/.config/orq/agy-impl.json`), and
   a write run whose worktree has changes is `ok` with the diff stat attached (the session id is kept, so `-R` works).
   Without changes (or read only) it stays `fail`, now with the denied list as the answer instead of an empty one.
+- A run that ends with rc=128+signal (SIGKILL, memory cap, ...) is `killed`, never `ok`, even with an `ok_exit` list or a
+  leftover answer; the `.done` file and the notice to the conductor say `status=killed`.
+- The Antigravity `.out.md` of a denied run names the denied command (taken from the last `CommandLine`).
+- `orq agent` refuses a prefix that still has a live run (exit 3, nothing started); a dead run's stale results are
+  cleared. A `-T -R` follow-up typed into that run's own open screen still works.
+- `orq gc` path containment resolves a missing prefix through its real ancestor and works on macOS (`/var` →
+  `/private/var`) and Windows, where it ignores case.
 
 ## [0.5.0] — 2026-11-04
 ### Fixed
