@@ -1099,6 +1099,17 @@ test("agent --turn: each agent's end-of-turn payload becomes .out.md, .id and .d
   writeFileSync(`${O}.done`, "old"); // other codex events are ignored
   turn(undefined, "codex", JSON.stringify({ type: "something-else" }));
   assert.equal(readFileSync(`${O}.done`, "utf8"), "old");
+  // Codex's title turn also notifies: ignored, a real turn after it completes normally.
+  rmSync(`${O}.done`, { force: true }); rmSync(`${O}.id`, { force: true }); rmSync(`${O}.out.md`, { force: true });
+  turn(undefined, "codex", JSON.stringify({ type: "agent-turn-complete", "thread-id": "th9", "last-assistant-message": '{"title":"Ajustar API"}' }));
+  for (const f of [".done", ".id", ".out.md"]) assert.equal(existsSync(`${O}${f}`), false);
+  turn(undefined, "codex", JSON.stringify({ type: "agent-turn-complete", "thread-id": "th1", "last-assistant-message": "real A" }));
+  check("real A", "th1");
+  const stamp = readFileSync(`${O}.done`, "utf8");
+  turn(undefined, "codex", JSON.stringify({ type: "agent-turn-complete", "thread-id": "other", "last-assistant-message": "side thread" }));
+  turn(undefined, "codex", JSON.stringify({ type: "agent-turn-complete", "thread-id": "th1", "last-assistant-message": '{"title":"x"}' }));
+  assert.equal(readFileSync(`${O}.out.md`, "utf8"), "real A");
+  assert.equal(readFileSync(`${O}.done`, "utf8"), stamp);
   // Claude: the Stop hook's JSON on stdin; without last_assistant_message, the transcript's last text.
   const tr = join(root, "tr.jsonl");
   writeFileSync(tr, [{ type: "assistant", message: { content: [{ type: "text", text: "first" }] } }, { type: "user" },
