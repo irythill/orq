@@ -75,6 +75,8 @@ async function diagnoseIssue(ws: string, id: string, x: Metrics): Promise<number
   // A failed watchdog (e.g. a model catalog timeout) gets one retry with the next candidate, never the same agent.
   const excluded: string[] = [];
   let first: { rc: number; agent?: string } | undefined;
+  const scratches: string[] = [];
+  try {
   for (let attempt = 0; attempt < 2; attempt++) {
     const p = orq("pick", "watchdog", "--level", "simple", "-w", ws, ...(implPick ? ["--impl-agent", implPick] : []), ...excluded.flatMap((e) => ["--exclude-agent", e]));
     if (p.status !== 0) {
@@ -84,8 +86,9 @@ async function diagnoseIssue(ws: string, id: string, x: Metrics): Promise<number
     const picked = p.stdout.trim().split(/\s+/), agent = /(?:^|\s)-a (\S+)/.exec(p.stdout)?.[1];
     // The agent runs in a scratch folder (everything it needs is in the prompt): it can't touch the issue files, even write sandboxed.
     const scratch = mkdtempSync(join(tmpdir(), "orq-watchdog-"));
+    scratches.push(scratch);
     const run = `${prefix}-${attempt}`;
-    try {
+    {
       writeFileSync(`${run}.md`, readFileSync(`${prefix}.md`));
       const a = orq("agent", ...picked, "-r", "-t", `${id} watchdog`, "-d", scratch, "-g", "watchdog", "-o", run, "--", `${run}.md`);
       process.stderr.write(a.stderr); process.stdout.write(a.stdout);
@@ -93,9 +96,13 @@ async function diagnoseIssue(ws: string, id: string, x: Metrics): Promise<number
       if (rc === 0 || rc === 124 || !agent) return rc;
       if (attempt === 0) console.error(m(`watchdog ${agent} failed; retrying with another agent`, `watchdog ${agent} falhou; tentando com outro agente`));
       first = { rc }; excluded.push(agent);
-    } finally { rmSync(scratch, { recursive: true, force: true }); }
+    }
   }
   return first?.rc ?? 1;
+  // Removed only after every attempt, and best-effort: on Windows a just-finished agent can still hold its cwd (EPERM/EBUSY).
+  } finally {
+    for (const s of scratches) { try { rmSync(s, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* temp dir: the OS cleans it */ } }
+  }
 }
 
 async function finish(rc: number, prefix: string, out: string, agent?: string, final = true): Promise<number> {
