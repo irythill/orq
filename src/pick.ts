@@ -3,7 +3,8 @@
 //               for an agent the user didn't list.
 //   auto role:  every pool agent that passes is scored:
 //     quality * delivery + tokens * economy + speed * quickness − rotation * (picks in the last `window`)
-//     − reserve (agents with reserve = true) + explore (fewer than `min_samples` runs)
+//     − reserve (agents with reserve = true) + explore (fewer than `min_samples` runs, fading with n, none after
+//     `explore_streak` picks in a row). Each axis is (prior·k + observed·n)/(k + n), k = min_samples.
 // Filters: --exclude-agent, orq block, nobody reviews their own code (unless no other agent can), cross-vendor rule, a model for the role/level,
 // quota under the limits: policy.quota_week (95) on the weekly window, and on the 5h one policy.quota_5h per level
 // (simple 90, medium 85, heavy 80): a heavy task needs more room left to finish.
@@ -131,7 +132,7 @@ export function lighterModels(a: Obj, role: PickRole, level: string, tried: stri
   return out;
 }
 
-const WEIGHTS = { quality: 0.4, tokens: 0.45, speed: 0.15, rotation: 0.2, reserve: 0.3, explore: 0.1, min_samples: 8, window: 6 };
+const WEIGHTS = { quality: 0.4, tokens: 0.45, speed: 0.15, rotation: 0.2, reserve: 0.3, explore: 0.1, explore_streak: 2, min_samples: 8, window: 6 };
 export const weights = (cfg: Obj) =>
   ({ ...WEIGHTS, ...((((cfg.policy ?? {}) as Obj).weights ?? {}) as Partial<typeof WEIGHTS>) });
 
@@ -259,24 +260,46 @@ export function pick(inp: PickInput): PickResult {
     return { mode: "fixed", best, cands: best ? [best] : [], notes };
   }
 
-  const few = (st?: Row) => (st?.n ?? 0) < w.min_samples;
-  const toks = pass.filter((c) => c.st?.new && !few(c.st)).map((c) => c.st!.new!);
-  const mins = pass.filter((c) => c.st?.min && !few(c.st)).map((c) => c.st!.min);
+  // Each axis blends the agent's prior with what was measured, (prior·k + observed·n) / (k + n) with k = min_samples,
+  // so a couple of runs already move the score instead of being ignored until the threshold.
+  const k = Math.max(0, w.min_samples);
+  const few = (st?: Row) => (st?.n ?? 0) < k;
+  const blend = (prior: number, obs: number | undefined, n: number) =>
+    obs === undefined || k + n <= 0 ? prior : (prior * k + obs * n) / (k + n);
+  // The reference cost/time is the best of the well-sampled agents, or of everyone measured when none is.
+  const best = (vals: { v: number; solid: boolean }[]) => {
+    const solid = vals.filter((x) => x.solid);
+    const use = solid.length ? solid : vals;
+    return use.length ? Math.min(...use.map((x) => x.v)) : undefined;
+  };
+  const refTok = best(pass.filter((c) => c.st?.new).map((c) => ({ v: c.st!.new!, solid: !few(c.st) })));
+  const refMin = best(pass.filter((c) => c.st?.min).map((c) => ({ v: Math.max(c.st!.min, 0.1), solid: !few(c.st) })));
+  const axis = (label: string, prior: number, obs: number | undefined, n: number) => {
+    const v = blend(prior, obs, n);
+    return { v, txt: `${label}=${v.toFixed(2)}` + (obs === undefined ? "" : `(${prior.toFixed(2)}→${obs.toFixed(2)})`) };
+  };
   const cands: Candidate[] = pass.map((c) => {
     const prior = Number(c.a.prior ?? 0.6), n = c.st?.n ?? 0, reserve = Boolean(c.a.reserve);
-    const deliv = role === "impl" && c.st?.approved != null && c.st.n_appr >= 3 ? c.st.approved / 100
-      : c.st ? c.st.ok / 100 : undefined;
-    const d = few(c.st) || deliv === undefined ? prior : deliv;
-    const t = few(c.st) || !c.st?.new || !toks.length ? prior : Math.min(...toks) / c.st.new;
-    const s = few(c.st) || !c.st?.min || !mins.length ? prior : Math.min(...mins) / Math.max(c.st.min, 0.1);
+    const appr = role === "impl" && c.st?.approved != null && c.st.n_appr >= 3;
+    const deliv = appr ? c.st!.approved! / 100 : c.st ? c.st.ok / 100 : undefined;
+    const d = axis(m("delivery", "entrega"), prior, deliv, appr ? c.st!.n_appr : n);
+    const t = axis(m("economy", "economia"), prior, c.st?.new && refTok ? Math.min(1, refTok / c.st.new) : undefined, n);
+    const s = axis(m("speed", "rapidez"), prior, c.st?.min && refMin ? Math.min(1, refMin / Math.max(c.st.min, 0.1)) : undefined, n);
     const used = inp.recent.filter((p) => p.agent === c.agent).length;
+    // Exploration fades as samples come in and stops after explore_streak picks of the agent in a row.
+    let streak = 0;
+    for (let i = inp.recent.length - 1; i >= 0 && inp.recent[i].agent === c.agent; i--) streak++;
+    const capped = few(c.st) && streak >= w.explore_streak;
+    const explore = few(c.st) && !capped ? w.explore * (k - n) / k : 0;
     const hot = Boolean(c.hot) && penalty > 0;
-    const score = w.quality * d + w.tokens * t + w.speed * s - w.rotation * used
-      - (reserve ? w.reserve : 0) + (few(c.st) ? w.explore : 0) - (hot ? penalty : 0);
-    const why = `${m("delivery", "entrega")}=${d.toFixed(2)} ${m("economy", "economia")}=${t.toFixed(2)} `
-      + `${m("speed", "rapidez")}=${s.toFixed(2)} ${m("rotation", "rodízio")}=-${used} `
+    const score = w.quality * d.v + w.tokens * t.v + w.speed * s.v - w.rotation * used
+      - (reserve ? w.reserve : 0) + explore - (hot ? penalty : 0);
+    const why = `${d.txt} ${t.txt} ${s.txt} ${m("rotation", "rodízio")}=-${used} `
       + (reserve ? m("reserve ", "reserva ") : "")
-      + (hot ? `${m("pace", "ritmo")}=${Math.round(c.pace!)}%→-${penalty} ` : "") + (few(c.st) ? `${m("few samples", "poucos dados")}(n=${n})` : `n=${n}`);
+      + (hot ? `${m("pace", "ritmo")}=${Math.round(c.pace!)}%→-${penalty} ` : "")
+      + (explore ? `${m("explore", "explorar")}=+${explore.toFixed(2)} ` : "")
+      + (capped ? `${m("explore capped", "exploração limitada")}(${streak}x) ` : "")
+      + (few(c.st) ? `${m("few samples", "poucos dados")}(n=${n})` : `n=${n}`);
     return { agent: c.agent, model: c.model, effort: c.effort, acct: c.acct, score, why };
   }).sort((x, y) => y.score - x.score);
   return { mode: "auto", best: cands[0], cands, notes };

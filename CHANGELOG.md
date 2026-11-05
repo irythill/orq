@@ -6,6 +6,10 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Fixed
+- `orq pick` blends each agent's prior with its measured delivery/economy/speed, `(prior·k + observed·n)/(k + n)`
+  with k = `min_samples`, instead of a flat prior below `min_samples` runs: an under-sampled agent that costs far more
+  no longer wins on economy. The `explore` bonus fades with n and stops after `policy.weights.explore_streak` (2)
+  consecutive picks; `--explain` shows `prior→observed` per axis (#54).
 - Antigravity quota is tracked per model: `orq quota` lists `antigravity/<model>` lines, an exhausted bucket (no
   `remainingFraction`, only a `resetTime`) reads as 100% used, and `orq pick` checks the model it is about to choose,
   falling back to a lighter configured model of the same agent instead of picking an exhausted one (#60).

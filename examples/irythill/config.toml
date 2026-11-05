@@ -98,7 +98,9 @@ default = "auto"          # "auto" = the plan's default model
 #   delivery  = impl: approved on the first review; review/opinion: answered (status ok with text)
 #   economy   = the lowest median of new tokens among candidates ÷ this candidate's (1 = the cheapest)
 #   quickness = the same, with the median duration
-# With fewer than `min_samples` runs, delivery/economy/quickness use `prior` and the candidate gets the `explore` bonus.
+# Each axis blends `prior` with the measured value: (prior·min_samples + measured·n) / (min_samples + n).
+# Below `min_samples` runs the candidate also gets the `explore` bonus, shrinking as n grows and dropped after
+# `explore_streak` consecutive picks of it.
 # ---------------------------------------------------------------------------------------------------------------
 [conductor]
 handoff_at = 85            # % of the 5h window (or policy.quota_week) → orq handoff moves the conductor
@@ -121,5 +123,6 @@ speed    = 0.15
 rotation = 0.20
 reserve  = 0.30           # penalty for agents with reserve = true
 explore  = 0.10
+explore_streak = 2        # consecutive picks of an under-sampled agent before its explore bonus stops
 min_samples = 8
 window      = 6

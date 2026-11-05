@@ -723,6 +723,28 @@ test("pick: fixed role takes the first usable agent in order, never one outside 
   assert.equal(auto.best?.agent, "opencode"); // claude: same vendor (built-in vendor)
 });
 
+test("pick: priors blend with few observations and exploration is bounded", async () => {
+  const { pick } = await import("./pick.js");
+  const agents = { a: { models: { impl: { default: "ma" } } }, b: { models: { impl: { default: "mb" } } },
+    c: { models: { impl: { default: "mc" } } } };
+  const cfg = { agents, roles: { primary: { pool: ["a", "b", "c"] } } };
+  const row = (agent: string, model: string, n: number, tok: number) =>
+    ({ role: "impl", agent, model, n, ok: 90, approved: null, n_appr: 0, min: 10, new: tok, tot: tok });
+  const stats = [row("a", "ma", 20, 2_000_000), row("b", "mb", 20, 3_000_000), row("c", "mc", 2, 14_000_000)];
+  const base = { level: "medium", exclude: new Set<string>(), stats, blocks: new Set<string>(), quota: {} };
+  const r = pick({ ...base, cfg, role: "impl", recent: [] });
+  const econ = (ag: string) => Number(/economy=([\d.]+)/.exec(r.cands.find((x) => x.agent === ag)!.why)![1]);
+  assert.ok(econ("c") < econ("b") && econ("c") < econ("a"), r.cands.map((x) => x.why).join(" | "));
+  assert.ok(Math.abs(econ("c") - (0.6 * 8 + (2 / 14) * 2) / 10) < 0.01);
+  assert.match(r.cands.find((x) => x.agent === "c")!.why, /economy=0\.51\(0\.60→0\.14\).*few samples\(n=2\)/);
+  assert.notEqual(r.best?.agent, "c");
+  // A new agent with no data still gets the faded-in exploration bonus, until it was picked explore_streak times in a row.
+  const fresh = pick({ ...base, stats: stats.slice(0, 2), cfg, role: "impl", recent: [] });
+  assert.match(fresh.cands.find((x) => x.agent === "c")!.why, /explore=\+0\.10/);
+  const streak = pick({ ...base, stats: stats.slice(0, 2), cfg, role: "impl", recent: [{ agent: "c" }, { agent: "c" }] });
+  assert.match(streak.cands.find((x) => x.agent === "c")!.why, /explore capped\(2x\)/);
+});
+
 test("pick: an out-of-quota account's note says when it comes back", async () => {
   const { pick, parseQuota, parseWindows } = await import("./pick.js");
   const agents = { codex: { quota: ["codex"], models: { impl: { default: "gpt-6-sol@low" } } } };

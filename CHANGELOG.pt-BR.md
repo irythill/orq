@@ -5,6 +5,11 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
+### Corrigido
+- `orq pick` mistura o prior de cada agente com a entrega/economia/rapidez medidas, `(prior·k + medido·n)/(k + n)`
+  com k = `min_samples`, em vez de um prior fixo abaixo de `min_samples` execuções: um agente com poucos dados e custo
+  muito maior não ganha mais em economia. O bônus `explore` diminui com n e para depois de
+  `policy.weights.explore_streak` (2) escolhas seguidas; `--explain` mostra `prior→medido` por eixo (#54).
 
 ## [0.6.0] — 2026-11-05
 ### Adicionado
