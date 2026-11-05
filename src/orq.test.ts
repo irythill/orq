@@ -15,6 +15,7 @@ import { buildPrompt, diagnosisGate, recommendation, trim } from "./diagnose.js"
 import { resolveRole } from "./roles.js";
 import { metrics, parseFindings, repeats, similar, slowRounds, mark } from "./rounds.js";
 import { agyNote, antigravityFromModels, copilotFromUser, fromCache, humanReset, minimaxFromRemains } from "./quota.js";
+import { writeAtomic } from "./fsutil.js";
 
 process.env.ORQ_LANG = "en"; // messages checked below are the English ones
 const CLI = fileURLToPath(new URL("./cli.js", import.meta.url));
@@ -2220,4 +2221,19 @@ test("antigravity: denied_actions alone still produce a denied section; a clean 
   assert.equal(ok.answer, "all good");
   assert.equal(ok.denied, undefined);
   assert.equal(ok.rc, undefined);
+});
+
+test("writeAtomic: creates parent directories, writes UTF-8, overwrites existing file, and leaves no .tmp file", () => {
+  const root = mkdtempSync(join(tmpdir(), "orq-atomic-"));
+  const dir = join(root, "nested", "sub");
+  const file = join(dir, "data.txt");
+  try {
+    writeAtomic(file, "ação ✓\n");
+    assert.equal(readFileSync(file, "utf8"), "ação ✓\n");
+    assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith(".tmp")), []);
+
+    writeAtomic(file, "overwritten\n");
+    assert.equal(readFileSync(file, "utf8"), "overwritten\n");
+    assert.deepEqual(readdirSync(dir), ["data.txt"]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
