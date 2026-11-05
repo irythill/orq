@@ -245,11 +245,14 @@ export const FORMATS: Record<string, Format> = {
       const errs = log.split(/\r?\n/).filter((l) => l.startsWith("jetski: "));
       // Denied commands: ERROR steps with the command line, plus denied_actions on the result.
       const denied: string[] = [];
-      let text = "", textId: unknown;
+      let text = "", textId: unknown, lastCmd = "", sawResult = false; // lastCmd: last CommandLine streamed before the result
       const hinted = res.some((r) => Array.isArray(r.denied_actions) && r.denied_actions.length) || errs.some((l) => /permission/.test(l));
       for (const e of evs) {
+        if (e.event === "result") sawResult = true;
         const s = e.event === "step_update" ? e.step_update : undefined;
         if (!s) continue;
+        const seen = (s.tool_info ?? e.tool_info)?.parameters?.CommandLine;
+        if (!sawResult && typeof seen === "string" && seen.trim()) lastCmd = seen.trim();
         if (s.step_type === "agent_response") {
           const id = s.step_id ?? s.step_index ?? s.id;
           if (id !== textId) { textId = id; if (s.text_delta) text = ""; }
@@ -265,6 +268,8 @@ export const FORMATS: Record<string, Format> = {
       }
       const acts = res.flatMap((r) => (Array.isArray(r.denied_actions) ? r.denied_actions : []));
       const wasDenied = denied.length > 0 || acts.length > 0 || errs.some((l) => /permission/.test(l));
+      // denied_actions only says "RunCommand": the command is the last one the stream showed before the result.
+      if (!denied.length && lastCmd && acts.length && acts.every((a: Obj) => a.display_name === "RunCommand")) denied.push(`denied: ${lastCmd}`);
       if (wasDenied && !answer.trim()) answer = text.trim();
       if (wasDenied) {
         answer += `${answer ? "\n\n" : ""}## Denied commands\n` +

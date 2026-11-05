@@ -21,7 +21,7 @@ import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
 import { alive } from "../lock.js";
 import { stateDir } from "../paths.js";
-import { killTree, type MemMode, parseSize, resolveMode, runCapped } from "../process.js";
+import { killedRc, killTree, type MemMode, parseSize, resolveMode, runCapped } from "../process.js";
 import { closeOwnTab, detectHost, type Host, launch, screenOpen, shq, typeInto } from "../terminal.js";
 import { ackPrefix } from "../notice.js";
 import { dropWorktree, notify } from "../testrun.js";
@@ -82,6 +82,17 @@ export async function agent(argv: string[]): Promise<number> {
     return 2;
   }
   const repo = resolve(d), O = resolve(o);
+  // A live run on this prefix owns its files: a second agent on the same files (and its .done) is how a false DONE happens.
+  // Only a -T -R follow-up typed into that run's own open screen may reuse it.
+  let open = "", pid = 0;
+  try { open = readFileSync(`${O}.pane`, "utf8").trim(); } catch { /* first run */ }
+  try { pid = Number(readFileSync(`${O}.pid`, "utf8")); } catch { /* none or ended */ }
+  const typed = tui && resume && alive(pid) && screenOpen(open);
+  if (!typed && runLive(O, pid)) {
+    console.error(m(`${basename(O)} still has a live run (${pid ? `pid ${pid}` : "unit active"}): wait for it (orq wait ${O}) or stop it, or use another prefix. Nothing started.`,
+      `${basename(O)} ainda tem uma execução viva (${pid ? `pid ${pid}` : "unit ativa"}): espere (orq wait ${O}) ou pare, ou use outro prefixo. Nada foi iniciado.`));
+    return 3;
+  }
   // Fix rounds: every -R on the same session counts, whatever the prefix is called. policy.max_rounds is enforced here,
   // not left to the conductor to remember (a 7-round fix loop is what burns the tokens). -F = the user said go on.
   if (resume) {
@@ -124,9 +135,7 @@ export async function agent(argv: string[]): Promise<number> {
   // Follow-ups (-R) reuse the prefix: remove the previous round's result so ".done exists" means "this one finished".
   // -T -R with the screen still open: the follow-up is typed into it (its runner, and .pid, carry on). Open = the agent
   // is still running there, not just the pane: after it exits the pane may hold a shell, which must never get the text.
-  let open = "", pid = 0;
-  try { open = readFileSync(`${O}.pane`, "utf8").trim(); pid = Number(readFileSync(`${O}.pid`, "utf8")); } catch { /* first run or ended */ }
-  if (tui && resume && alive(pid) && screenOpen(open)) {
+  if (typed) {
     ackPrefix(O); // a follow-up on the issue: its failure notices were seen
     for (const s of [".done", ".out.md"]) rmSync(O + s, { force: true });
     typeInto(open, readFileSync(P, "utf8"));
@@ -200,6 +209,16 @@ export async function agent(argv: string[]): Promise<number> {
   writeFileSync(`${O}.pane`, `${where}\n`);
   console.log(`[orq agent] ${t} → ${where}${tui ? " (TUI)" : ""}`);
   return 0;
+}
+
+/** The previous run on prefix `O` is still going: its runner pid is alive, or (no pid file yet / runner gone) its systemd scope is. */
+function runLive(O: string, pid: number): boolean {
+  if (alive(pid)) return true;
+  if (existsSync(`${O}.done`) || process.platform !== "linux") return false; // finished (or no systemd): the pid said it all
+  try {
+    const unit = (JSON.parse(readFileSync(`${O}.job.json`, "utf8")) as Job).unit;
+    return Boolean(unit) && spawnSync("systemctl", ["--user", "is-active", "--quiet", `${unit}.scope`], { timeout: 5_000 }).status === 0;
+  } catch { return false; }
 }
 
 /** OpenCode (v2) plugin for -T: when the main session's run ends, its last answer goes to `orq agent --turn`. */
@@ -356,18 +375,22 @@ async function runJob(file: string): Promise<number> {
   if (j.tui) {
     // The agent's own screen: the terminal is its; answers come from the end-of-turn hook (`--turn`).
     let ended = false;
-    const end = (code: number): string => {
+    const end = (code: number, killed = false): string => {
       if (ended) return "fail";
       ended = true;
       post();
       // Closed before any turn ended (or mid follow-up): a failure, so `orq wait` doesn't hang.
-      const ok = /\bstatus=ok\b/.test(existsSync(`${O}.done`) ? readFileSync(`${O}.done`, "utf8") : "");
-      if (!existsSync(`${O}.done`)) {
+      const ok = !killed && /\bstatus=ok\b/.test(existsSync(`${O}.done`) ? readFileSync(`${O}.done`, "utf8") : "");
+      if (killed) {
+        // SIGKILL & co: whatever an earlier turn wrote, the screen did not end normally.
+        writeAtomic(`${O}.done`, `status=killed rc=${code} at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
+        if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=killed rc=${code} answer: ${O}.out.md`);
+      } else if (!existsSync(`${O}.done`)) {
         writeAtomic(`${O}.done`, `status=fail rc=${code} at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
         if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=fail rc=${code} answer: ${O}.out.md`);
       }
       rmSync(`${O}.pid`, { force: true });
-      return ok ? "ok" : "fail";
+      return killed ? "killed" : ok ? "ok" : "fail";
     };
     if (!pre()) rc = 2;
     else {
@@ -375,7 +398,7 @@ async function runJob(file: string): Promise<number> {
       for (const k of j.unset) delete env[k];
       // Ctrl+C belongs to the agent (it reaches us too, as part of the terminal's foreground group). The screen going
       // away (tab or tmux server closed) still ends the agent and cleans up.
-      let child: number | undefined, idleT: NodeJS.Timeout | undefined;
+      let child: number | undefined, idleT: NodeJS.Timeout | undefined, idleClosed = false;
       process.on("SIGINT", () => { /* the agent's */ });
       // The screen going away or being killed from outside: end the agent, and close the tab too (a dead tab stayed open).
       const gone = () => { if (child) killTree(child, false); end(129); closeOwnTab(j.host); process.exit(0); };
@@ -399,14 +422,16 @@ async function runJob(file: string): Promise<number> {
               if (!idleExpired(`${O}.done`, idleMs, Date.now(), busyAt)) return;
               clearInterval(idleT);
               console.log(m(`[orq agent] no follow-up for ${j.idleCloseMin} min: closing the finished agent`, `[orq agent] sem follow-up há ${j.idleCloseMin} min: fechando o agente que terminou`));
+              idleClosed = true;
               if (child) killTree(child, false);
             }, Math.min(30_000, Math.max(1_000, idleMs / 2)));
             idleT.unref();
           }
         } });
       clearInterval(idleT);
+      if (idleClosed) rc = 0; // closed on purpose after a finished turn: not a kill
     }
-    const st = end(rc);
+    const st = end(rc, killedRc(rc));
     state({ status: st, rc, end: new Date().toISOString() });
     console.log(`\n[${j.agent} (TUI) ${m("exited", "encerrado")}] ${m("answer", "resposta")}: ${O}.out.md`);
     if (!j.keep) { await sleep(j.closeAfter * 1000); closeOwnTab(j.host); }
@@ -472,7 +497,8 @@ async function runJob(file: string): Promise<number> {
   // A reviewer whose answer says nothing was reviewed (agents.<name>.no_review) is not a verdict either: pick's
   // fallback and the conductor must see it as not run, same as a whitespace-only answer.
   const noReview = noReviewMatch(j.noReview, answer);
-  const st = verdict && !noReview && /\S/.test(answer) ? "ok" : "fail"; // whitespace-only answer = failure
+  // killed (SIGKILL, memory cap...) is its own status: never ok, even if an ok_exit list or a leftover answer says otherwise.
+  const st = killedRc(rc) ? "killed" : verdict && !noReview && /\S/.test(answer) ? "ok" : "fail"; // whitespace-only answer = failure
   writeAtomic(`${O}.done`, `status=${st} rc=${rc} at=${new Date().toISOString()} agent=${j.agent}\n`);
   rmSync(`${O}.pid`, { force: true });
   state({ status: st, rc, end: new Date().toISOString() });

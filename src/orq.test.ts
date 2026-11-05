@@ -172,6 +172,23 @@ console.log(/--head work\\/plane-merged .*--state merged/.test(a) ? '[{"number":
   assert.equal(existsSync(dirty.path), true); assert.equal(existsSync(unpushed.path), true); assert.equal(existsSync(stale.path), true);
 });
 
+test("gc: prunes agent state files of finished/dead runs older than --days, keeps live and recent ones", () => {
+  const { root, run } = sandbox(), ws = join(root, "ws"), st = join(root, "state", "orq", "agents"), now = Date.now();
+  const iso = (ms: number) => new Date(ms).toISOString(), dead = spawnSync(process.execPath, ["-e", ""]).pid!, day = 86400_000;
+  mkdirSync(ws, { recursive: true }); mkdirSync(st, { recursive: true });
+  const put = (unit: string, o: object) => writeFileSync(join(st, `${unit}.json`), JSON.stringify({ prefix: join(ws, ".orquestra", "A-1", "impl"), ...o }));
+  put("old-ok", { pid: dead, status: "ok", at: iso(now - 20 * day), end: iso(now - 20 * day) });
+  put("old-dead", { pid: dead, at: iso(now - 20 * day) });
+  put("old-live", { pid: process.pid, at: iso(now - 20 * day) });
+  put("recent-ok", { pid: dead, status: "ok", at: iso(now - day), end: iso(now - day) });
+  put("elsewhere", { pid: dead, status: "ok", prefix: join(root, "other", "x"), at: iso(now - 20 * day), end: iso(now - 20 * day) });
+  const dry = run("gc", "-w", ws, "--days", "14");
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.equal(existsSync(join(st, "old-ok.json")), true, "dry run removes nothing");
+  assert.equal(run("gc", "-w", ws, "--days", "14", "--yes").status, 0);
+  assert.deepEqual(readdirSync(st).sort(), ["elsewhere.json", "old-live.json", "recent-ok.json"]);
+});
+
 test("ci: aggregateChecks and parsePrStatus are pure (no gh, no PR, or a failure all read as none)", async () => {
   const { aggregateChecks, parsePrStatus } = await import("./ci.js");
   assert.equal(aggregateChecks([]), "none"); // no checks registered yet: not a false "passed"
@@ -1176,7 +1193,7 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
   const r = run("board", "--json", "-w", ws);
   assert.equal(r.status, 0, r.stderr);
   const j = JSON.parse(r.stdout);
-  assert.deepEqual(j.agents.map((a: { unit: string; state: string }) => [a.unit, a.state]), [["u-run", "running"], ["u-dead", "died"], ["u-done", "fail"]]);
+  assert.deepEqual(j.agents.map((a: { unit: string; state: string }) => [a.unit, a.state]), [["u-run", "running"], ["u-dead", "died"], ["u-done", "fail"], ["u-old", "ok"]]); // --json keeps old rows
   const a = j.agents[0];
   assert.deepEqual([a.issue, a.label, a.model, a.activity, a.cap], ["ABC-1", "impl-api", "claude-opus-5", "· Edit", 2 ** 32]);
   assert.ok(a.secs >= 89 && a.mem > 0, `secs=${a.secs} mem=${a.mem}`);
@@ -1193,6 +1210,18 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
     "no quota collector: opencode", "copilot", "CHARTS", "MONITOR", "ABC-1 r0/2", "failed"]) assert.ok(o.stdout.includes(s), `missing ${s}\n${o.stdout}`);
   const pt = spawnSync(process.execPath, [CLI, "board", "--once", "-w", ws], { env: { ...env, ORQ_LANG: "pt" }, encoding: "utf8" });
   assert.ok(pt.stdout.includes("fila de testes"), pt.stdout);
+});
+
+test("board: finished/dead rows older than the threshold fold into a count in the render, --json keeps them", async () => {
+  const { render } = await import("./commands/board.js");
+  const base = { unit: "u", title: "t", agent: "claude", pid: 1, issue: "ABC-1", label: "impl-api", secs: 60 };
+  const snap = { at: new Date().toISOString(), mem: { used: 1, total: 2 }, workspaces: ["/w"], queue: { holders: [], waiters: [] },
+    agents: [{ ...base, state: "ok", rc: 0, age: 60 }, { ...base, state: "died", age: 7 * 3600 }, { ...base, state: "fail", rc: 1, age: 8 * 3600 }, { ...base, state: "running", age: 0 }],
+    conductors: [], quota: { lines: [] }, ci: { entries: [] }, blocks: {}, scoreboard: [], notices: [] };
+  const text = render(snap as never, "gunmetal", 100, "none").join("\n");
+  assert.match(text, /\+2 older finished hidden/);
+  assert.equal((text.match(/runner gone/g) ?? []).length, 0);
+  assert.ok(!/older finished hidden/.test(render(snap as never, "gunmetal", 100, "none", 9).join("\n")));
 });
 
 test("board: a conductor shows the herdr workspace's live label, falling back to the stored name when dead", { skip: process.platform === "win32" }, () => {
@@ -2192,6 +2221,87 @@ process.stdin.resume().on("data", () => {}).on("end", () => process.exit(0));\n`
   assert.match(c.out, /status=fail/);
 });
 
+test("board idle: an agent tree with ~no CPU for 30+ min reads idle; real work resets it", async () => {
+  const { idleFor, cpuTicks, render } = await import("./commands/board.js");
+  const base: Record<string, { ticks: number; at: number }> = {}, min = 60_000, t0 = 1_000_000;
+  assert.equal(idleFor(base, "u", 5000, t0), 0); // first sight: baseline
+  assert.equal(idleFor(base, "u", 5010, t0 + 29 * min), 0); // quiet, but not long enough
+  assert.equal(idleFor(base, "u", 5020, t0 + 31 * min), 31 * 60); // ~no CPU for 31 min
+  assert.equal(idleFor(base, "u", 5400, t0 + 32 * min), 0); // 3.8 s of CPU: working again, baseline moves
+  assert.equal(idleFor(base, "u", 5400, t0 + 40 * min), 0);
+  assert.equal(idleFor(base, "u", 100, t0 + 80 * min), 0); // ticks went down: a new tree
+  if (process.platform === "linux") assert.ok((cpuTicks([process.pid]) ?? -1) >= 0);
+  const a = { unit: "u", title: "t", agent: "claude", pid: 1, issue: "A-1", label: "impl", secs: 57600, age: 57600, mem: 2 ** 30 };
+  const snap = { at: new Date().toISOString(), mem: { used: 1, total: 2 }, workspaces: ["/w"], queue: { holders: [], waiters: [] },
+    agents: [{ ...a, state: "idle", idleSecs: 3600 }], conductors: [], quota: { lines: [] }, ci: { entries: [] }, blocks: {}, scoreboard: [], notices: [] };
+  const text = render(snap as never, "gunmetal", 100, "none").join("\n");
+  assert.match(text, /◌.*idle 1h00m/);
+  assert.ok(!/older finished hidden/.test(text), "an idle row is never folded away");
+});
+
+test("killed: 128+signal is never ok (done status, wait, board state, stats)", async () => {
+  const { killedRc, doneStatus } = await import("./process.js");
+  assert.deepEqual([killedRc(137), killedRc(143), killedRc(129), killedRc(1), killedRc(0), killedRc(undefined), killedRc(255)], [true, true, true, false, false, false, false]);
+  assert.equal(doneStatus("status=ok rc=137 at=x"), "killed");
+  assert.equal(doneStatus("status=ok rc=0 at=x"), "ok");
+  assert.equal(doneStatus("status=fail rc=1"), "fail");
+  const { root, run } = sandbox(), pre = join(root, "ws", ".orquestra", "A-1", "impl-x");
+  mkdirSync(dirname(pre), { recursive: true });
+  writeFileSync(`${pre}.done`, "status=ok rc=137 at=2026-01-01T00:00:00Z agent=claude mode=tui\n");
+  const w = run("wait", "--timeout", "5", pre);
+  assert.equal(w.status, 1);
+  assert.match(w.stdout, /status=killed rc=137/);
+  const st = join(root, "state", "orq", "agents");
+  mkdirSync(st, { recursive: true });
+  writeFileSync(join(st, "u1.json"), JSON.stringify({ pid: 1, prefix: pre, title: "t", agent: "claude", at: new Date().toISOString(), status: "ok", rc: 137, end: new Date().toISOString() }));
+  const b = JSON.parse(run("board", "--json", "-w", join(root, "ws")).stdout);
+  assert.equal(b.agents.find((a: { unit: string }) => a.unit === "u1").state, "killed");
+});
+
+test("agent: a run killed by SIGKILL is status=killed rc=137, not ok", { skip: process.platform === "win32" }, () => { // no POSIX signals on Windows
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  (env as Record<string, string>).ORQ_TERMINAL = "plain";
+  const repo = join(root, "repo"), fake = join(root, "kill.mjs");
+  mkdirSync(repo);
+  writeFileSync(fake, 'console.log("partial answer"); process.kill(process.pid, "SIGKILL");\n');
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { fake: { run: `'${process.execPath}' '${fake}'`, readonly: "ro", write: "w", mem_max: "off" } } }));
+  writeFileSync(join(root, "p.md"), "hi\n");
+  const O = join(root, "out", "k");
+  assert.equal(run("agent", "-a", "fake", "-t", "k", "-d", repo, "-o", O, "--", join(root, "p.md")).status, 0);
+  const w = run("wait", "--timeout", "60", O);
+  assert.equal(w.status, 1);
+  assert.match(w.stdout, /status=killed rc=137/);
+});
+
+test("agent: refuses a prefix whose previous run is alive; a dead one has its stale .done/.out.md cleared", async () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  (env as Record<string, string>).ORQ_TERMINAL = "plain";
+  const repo = join(root, "repo"), fake = join(root, "ok.mjs"), O = join(root, "out", "p");
+  mkdirSync(repo); mkdirSync(dirname(O), { recursive: true });
+  writeFileSync(fake, 'console.log("fresh answer");\n');
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { fake: { run: `'${process.execPath}' '${fake}'`, readonly: "ro", write: "w", mem_max: "off" } } }));
+  writeFileSync(join(root, "p.md"), "hi\n");
+  const args = ["agent", "-a", "fake", "-t", "p", "-d", repo, "-o", O, "--", join(root, "p.md")];
+  // Live: this test's own pid stands in for the runner.
+  writeFileSync(`${O}.pid`, String(process.pid));
+  const refused = run(...args);
+  assert.equal(refused.status, 3);
+  assert.match(refused.stderr, /live run/);
+  assert.ok(!existsSync(`${O}.job.json`), "nothing started");
+  // Dead: old results must not be mistaken for the new run's.
+  const dead = spawnSync(process.execPath, ["-e", ""]).pid!;
+  writeFileSync(`${O}.pid`, String(dead)); writeFileSync(`${O}.done`, "status=ok rc=0 at=old\n"); writeFileSync(`${O}.out.md`, "OLD ANSWER");
+  assert.equal(run(...args).status, 0);
+  const w = run("wait", "--timeout", "60", O);
+  assert.equal(w.status, 0, w.stdout + w.stderr);
+  assert.ok(!w.stdout.includes("at=old"));
+  assert.match(readFileSync(`${O}.out.md`, "utf8"), /fresh answer/);
+});
+
 const agyStream = (events: object[], stderr: string[] = []) => [...events.map((e) => JSON.stringify(e)), ...stderr].join("\n");
 
 test("antigravity: denied commands with an empty response keep the partial text, list the denied commands and the session", () => {
@@ -2217,6 +2327,14 @@ test("antigravity: denied_actions alone still produce a denied section; a clean 
     { event: "result", result: { response: "", denied_actions: [{ action: "command", display_name: "RunCommand" }] } }]), "");
   assert.match(d.answer ?? "", /## Denied commands[\s\S]*- command \(RunCommand\)/);
   assert.ok(d.denied?.length);
+  // With a RunCommand-only denial the command is the last CommandLine streamed before the result.
+  const named = FORMATS.antigravity.finish(agyStream([
+    { event: "step_update", step_update: { step_type: "tool", state: "RUNNING", tool_info: { parameters: { CommandLine: "ls src" } } } },
+    { event: "step_update", step_update: { step_type: "tool", state: "RUNNING", tool_info: { parameters: { CommandLine: "find src/referral -type f" } } } },
+    { event: "result", result: { response: "", denied_actions: [{ action: "command", display_name: "RunCommand" }] } },
+    { event: "step_update", step_update: { step_type: "tool", tool_info: { parameters: { CommandLine: "after result" } } } }]), "");
+  assert.match(named.answer ?? "", /- denied: find src\/referral -type f\n/);
+  assert.deepEqual(named.denied, ["denied: find src/referral -type f"]);
   const ok = FORMATS.antigravity.finish(agyStream([{ event: "result", result: { response: "all good", conversation_id: "c2" } }]), "");
   assert.equal(ok.answer, "all good");
   assert.equal(ok.denied, undefined);

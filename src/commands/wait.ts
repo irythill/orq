@@ -7,6 +7,7 @@ import { basename } from "node:path";
 import { m } from "../i18n.js";
 import { alive } from "../lock.js";
 import { ackPrefix } from "../notice.js";
+import { doneStatus } from "../process.js";
 
 export const USAGE = "orq wait [--any] [--timeout <s>] [--answer] <prefix>...   block until child agents finish (exit 1 = one failed)";
 
@@ -23,7 +24,9 @@ export function doneLine(prefix: string): { line: string; ok: boolean } | undefi
   let title = basename(prefix);
   try { title = JSON.parse(read(`${prefix}.job.json`) ?? "").title || title; } catch { /* verify/baseline: no job */ }
   const answer = [`${prefix}.out.md`, `${prefix}.txt`].find(existsSync) ?? prefix;
-  return { line: `[ORQ AGENT DONE] ${title} ${done} answer: ${answer}`, ok: /\bstatus=ok\b/.test(done) };
+  const status = doneStatus(done);
+  if (status === "killed") done = done.replace(/\bstatus=\S+/, "status=killed"); // legacy "status=ok rc=137"
+  return { line: `[ORQ AGENT DONE] ${title} ${done} answer: ${answer}`, ok: status === "ok" };
 }
 
 export async function wait(argv: string[]): Promise<number> {
