@@ -82,6 +82,17 @@ export async function agent(argv: string[]): Promise<number> {
     return 2;
   }
   const repo = resolve(d), O = resolve(o);
+  // A live run on this prefix owns its files: a second agent on the same files (and its .done) is how a false DONE happens.
+  // Only a -T -R follow-up typed into that run's own open screen may reuse it.
+  let open = "", pid = 0;
+  try { open = readFileSync(`${O}.pane`, "utf8").trim(); } catch { /* first run */ }
+  try { pid = Number(readFileSync(`${O}.pid`, "utf8")); } catch { /* none or ended */ }
+  const typed = tui && resume && alive(pid) && screenOpen(open);
+  if (!typed && runLive(O, pid)) {
+    console.error(m(`${basename(O)} still has a live run (${pid ? `pid ${pid}` : "unit active"}): wait for it (orq wait ${O}) or stop it, or use another prefix. Nothing started.`,
+      `${basename(O)} ainda tem uma execução viva (${pid ? `pid ${pid}` : "unit ativa"}): espere (orq wait ${O}) ou pare, ou use outro prefixo. Nada foi iniciado.`));
+    return 3;
+  }
   // Fix rounds: every -R on the same session counts, whatever the prefix is called. policy.max_rounds is enforced here,
   // not left to the conductor to remember (a 7-round fix loop is what burns the tokens). -F = the user said go on.
   if (resume) {
@@ -124,9 +135,7 @@ export async function agent(argv: string[]): Promise<number> {
   // Follow-ups (-R) reuse the prefix: remove the previous round's result so ".done exists" means "this one finished".
   // -T -R with the screen still open: the follow-up is typed into it (its runner, and .pid, carry on). Open = the agent
   // is still running there, not just the pane: after it exits the pane may hold a shell, which must never get the text.
-  let open = "", pid = 0;
-  try { open = readFileSync(`${O}.pane`, "utf8").trim(); pid = Number(readFileSync(`${O}.pid`, "utf8")); } catch { /* first run or ended */ }
-  if (tui && resume && alive(pid) && screenOpen(open)) {
+  if (typed) {
     ackPrefix(O); // a follow-up on the issue: its failure notices were seen
     for (const s of [".done", ".out.md"]) rmSync(O + s, { force: true });
     typeInto(open, readFileSync(P, "utf8"));
@@ -200,6 +209,16 @@ export async function agent(argv: string[]): Promise<number> {
   writeFileSync(`${O}.pane`, `${where}\n`);
   console.log(`[orq agent] ${t} → ${where}${tui ? " (TUI)" : ""}`);
   return 0;
+}
+
+/** The previous run on prefix `O` is still going: its runner pid is alive, or (no pid file yet / runner gone) its systemd scope is. */
+function runLive(O: string, pid: number): boolean {
+  if (alive(pid)) return true;
+  if (existsSync(`${O}.done`) || process.platform !== "linux") return false; // finished (or no systemd): the pid said it all
+  try {
+    const unit = (JSON.parse(readFileSync(`${O}.job.json`, "utf8")) as Job).unit;
+    return Boolean(unit) && spawnSync("systemctl", ["--user", "is-active", "--quiet", `${unit}.scope`], { timeout: 5_000 }).status === 0;
+  } catch { return false; }
 }
 
 /** OpenCode (v2) plugin for -T: when the main session's run ends, its last answer goes to `orq agent --turn`. */

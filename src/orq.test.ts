@@ -2256,6 +2256,33 @@ test("agent: a run killed by SIGKILL is status=killed rc=137, not ok", () => {
   assert.match(w.stdout, /status=killed rc=137/);
 });
 
+test("agent: refuses a prefix whose previous run is alive; a dead one has its stale .done/.out.md cleared", async () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  (env as Record<string, string>).ORQ_TERMINAL = "plain";
+  const repo = join(root, "repo"), fake = join(root, "ok.mjs"), O = join(root, "out", "p");
+  mkdirSync(repo); mkdirSync(dirname(O), { recursive: true });
+  writeFileSync(fake, 'console.log("fresh answer");\n');
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { fake: { run: `'${process.execPath}' '${fake}'`, readonly: "ro", write: "w", mem_max: "off" } } }));
+  writeFileSync(join(root, "p.md"), "hi\n");
+  const args = ["agent", "-a", "fake", "-t", "p", "-d", repo, "-o", O, "--", join(root, "p.md")];
+  // Live: this test's own pid stands in for the runner.
+  writeFileSync(`${O}.pid`, String(process.pid));
+  const refused = run(...args);
+  assert.equal(refused.status, 3);
+  assert.match(refused.stderr, /live run/);
+  assert.ok(!existsSync(`${O}.job.json`), "nothing started");
+  // Dead: old results must not be mistaken for the new run's.
+  const dead = spawnSync(process.execPath, ["-e", ""]).pid!;
+  writeFileSync(`${O}.pid`, String(dead)); writeFileSync(`${O}.done`, "status=ok rc=0 at=old\n"); writeFileSync(`${O}.out.md`, "OLD ANSWER");
+  assert.equal(run(...args).status, 0);
+  const w = run("wait", "--timeout", "60", O);
+  assert.equal(w.status, 0, w.stdout + w.stderr);
+  assert.ok(!w.stdout.includes("at=old"));
+  assert.match(readFileSync(`${O}.out.md`, "utf8"), /fresh answer/);
+});
+
 const agyStream = (events: object[], stderr: string[] = []) => [...events.map((e) => JSON.stringify(e)), ...stderr].join("\n");
 
 test("antigravity: denied commands with an empty response keep the partial text, list the denied commands and the session", () => {
