@@ -5,6 +5,8 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
+
+## [0.6.0] — 2026-11-05
 ### Adicionado
 - `orq conductor [conta|-] [modelo] [-r <sessão>]` abre o conductor (Claude) em qualquer terminal e SO: acha o workspace
   (`.orquestra-conductor.md` na pasta, senão `CONDUCTOR_WS`), mapeia `sonnet|opus|haiku`, resolve a conta pelo arquivo
@@ -17,6 +19,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
   `[HERDR-AGENT DONE]` no herdr e `orq wait` fora dele. A allowlist de permissões ganha os padrões `orq ...` e mantém os
   `herdr-*` para instalações antigas.
 - README: o uso diário é `orq conductor` em qualquer terminal.
+- O `orq board` dobra agentes terminados e mortos com mais de `ui.board_hide_hours` (padrão 6) numa linha de contagem; o
+  `--json` mantém todos. O `orq gc` também apaga o estado velho de agentes que já não aparece no board.
+- O `orq board` mostra como `idle` o agente sem CPU por `ui.board_idle_min` minutos (padrão 30).
 
 ### Corrigido
 - Os avisos não vão mais para um pane fechado depois de um handoff: os redirecionamentos do `orq handoff` só são seguidos
@@ -36,6 +41,13 @@ English: [CHANGELOG.md](CHANGELOG.md).
   `~/.config/orq/agy-impl.json`), e uma execução de escrita com mudanças no worktree fica `ok` com o diff stat anexado
   (o id da sessão é mantido, então `-R` funciona). Sem mudanças (ou só leitura) continua `fail`, agora com a lista de
   negados como resposta em vez de vazia.
+- Uma execução que termina com rc=128+sinal (SIGKILL, limite de memória, ...) é `killed`, nunca `ok`, mesmo com lista
+  `ok_exit` ou uma resposta antiga; o `.done` e o aviso ao conductor dizem `status=killed`.
+- O `.out.md` do Antigravity numa execução negada nomeia o comando negado (o último `CommandLine`).
+- O `orq agent` recusa um prefixo que ainda tem execução viva (saída 3, nada é iniciado); resultados velhos de uma
+  execução morta são limpos. Um follow-up `-T -R` digitado na tela aberta da própria execução continua funcionando.
+- A contenção de caminhos do `orq gc` resolve um prefixo ausente pelo ancestral real e funciona no macOS (`/var` →
+  `/private/var`) e no Windows, onde ignora maiúsculas.
 
 ## [0.5.0] — 2026-11-04
 ### Corrigido
