@@ -101,6 +101,36 @@ export function modelFor(a: Obj, role: PickRole, level: string): [string, string
   return [model, effort || undefined];
 }
 
+// --- per-model quota ---------------------------------------------------------------------------------------------------
+// A collector may add lines "<account>/<model> 5h=.. week=.." (antigravity: one bucket per model group). The model a pick is about
+// to choose is checked against its own line, and an exhausted one gives way to a lighter model the agent has configured.
+const LEVEL_RANK: Record<string, number> = { simple: 0, medium: 1, default: 1, heavy: 2 };
+
+/** The quota line key for a configured model: the exact id, else the id without its -low/-medium/-high suffix, plain or
+ *  as "<base>-tiered" (one bucket serves all three efforts of a tiered model). */
+export function modelKey(model: string, keys: string[]): string | undefined {
+  const id = model.split("/").pop() ?? model;
+  const base = id.replace(/-(low|medium|high)$/, "");
+  return [id, base, `${base}-tiered`].find((k) => keys.includes(k));
+}
+
+/** The models of an agent's role section lighter than `level`, the closest first, without repeats of `tried`. */
+export function lighterModels(a: Obj, role: PickRole, level: string, tried: string[]): [string, string | undefined][] {
+  const models = a.models as Record<string, Record<string, string>> | undefined;
+  if (!models) return [];
+  const lr = legacyRole(role);
+  const ms = models[lr] ?? (lr === "fix" ? models.impl : lr === "watchdog" ? models.opinion ?? models.review : undefined) ?? {};
+  const rank = LEVEL_RANK[level] ?? 1, seen = new Set(tried);
+  const out: [string, string | undefined][] = [];
+  for (const [, spec] of Object.entries(ms).filter(([lv]) => (LEVEL_RANK[lv] ?? 1) < rank)
+      .sort((x, y) => (LEVEL_RANK[y[0]] ?? 1) - (LEVEL_RANK[x[0]] ?? 1))) {
+    const [model, effort] = spec.split("@");
+    if (seen.has(model)) continue;
+    seen.add(model); out.push([model, effort || undefined]);
+  }
+  return out;
+}
+
 const WEIGHTS = { quality: 0.4, tokens: 0.45, speed: 0.15, rotation: 0.2, reserve: 0.3, explore: 0.1, min_samples: 8, window: 6 };
 export const weights = (cfg: Obj) =>
   ({ ...WEIGHTS, ...((((cfg.policy ?? {}) as Obj).weights ?? {}) as Partial<typeof WEIGHTS>) });
@@ -186,14 +216,39 @@ export function pick(inp: PickInput): PickResult {
       return { pace: paces.length ? Math.max(...paces) : undefined,
         hot: penalty > 0 && ((p5 !== undefined && p5 > limit5) || (pw !== undefined && pw > limitWeek)) };
     };
+    // The chosen account's per-model buckets: an exhausted model gives way to a lighter one of the same agent.
+    let mfx = mf;
+    const acc0 = usable.length ? [...usable].sort((x, y) => x[1]! - y[1]!)[0][0] : undefined;
+    const mkeys = acc0 ? Object.keys(inp.windows ?? {}).filter((k) => k.startsWith(`${acc0}/`)).map((k) => k.slice(acc0.length + 1)) : [];
+    if (acc0 && mkeys.length) {
+      const over = (model: string) => {
+        const k = modelKey(model, mkeys), q = k ? inp.windows?.[`${acc0}/${k}`] : undefined;
+        if (!q) return undefined;
+        const five = (q.five ?? -1) >= limit5, week = (q.week ?? -1) >= limitWeek;
+        if (!five && !week) return undefined;
+        const at = [five ? q.resetFive : undefined, week ? q.resetWeek : undefined].filter((t): t is number => t !== undefined);
+        return `${model} ${five ? `5h ${q.five}%` : `${m("week", "semana")} ${q.week}%`}`
+          + (at.length ? ` (${m("back", "volta")} ${humanReset(Math.max(...at))})` : "");
+      };
+      const tried: string[] = [], skipped: string[] = [];
+      let found: [string, string | undefined] | undefined;
+      for (const cand of [mf, ...lighterModels(a, role, level, [mf[0]])]) {
+        const why = over(cand[0]);
+        if (!why) { found = cand; break; }
+        tried.push(cand[0]); skipped.push(why);
+      }
+      if (!found) { out(name, `${m("every model over its quota", "todo modelo acima da cota")}: ${skipped.join(", ")}`); continue; }
+      if (skipped.length) out(name, `${m("quota exhausted", "cota esgotada")}: ${skipped.join(", ")}; ${m("using", "usando")} ${found[0]}`);
+      mfx = found;
+    }
     const ranked = usable.map(([n, v]) => ({ n, v: v!, ...paceOf(n) }))
       .sort((x, y) => Number(x.hot) - Number(y.hot) || x.v - y.v);
     const chosen = ranked[0];
     const acct = qn.length > 1 ? chosen?.n : undefined;
     const statRole = role === "fix" || role === "worker" ? "impl" : role;
-    const stOf = (sr: string) => inp.stats.find((r) => r.role === sr && r.agent === name && r.model === (mf[0].split("/").pop() || "default"));
+    const stOf = (sr: string) => inp.stats.find((r) => r.role === sr && r.agent === name && r.model === (mfx[0].split("/").pop() || "default"));
     const st = stOf(statRole) ?? (role === "watchdog" ? stOf("review") : undefined); // no watchdog runs yet: its review record
-    pass.push({ agent: name, model: mf[0], effort: mf[1], acct, a, st, pace: chosen?.pace, hot: Boolean(chosen?.hot) });
+    pass.push({ agent: name, model: mfx[0], effort: mfx[1], acct, a, st, pace: chosen?.pace, hot: Boolean(chosen?.hot) });
     if (res.mode === "fixed") break; // the first that passes wins
   }
 

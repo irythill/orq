@@ -11,11 +11,11 @@ import { limitsFor, parseWindows, pick as pickAgent } from "./pick.js";
 import { parseLocal, quotaUntil } from "./commands/block.js";
 import { handoffPrompt, owners, plan, tighter, trimHandoffContext } from "./commands/handoff.js";
 import { setTomlString } from "./toml-set.js";
-import { FORMATS, usesPrompt, useThrowaway } from "./agents.js";
+import { FORMATS, parseResetIn, usesPrompt, useThrowaway } from "./agents.js";
 import { buildPrompt, diagnosisGate, recommendation, trim } from "./diagnose.js";
 import { resolveRole } from "./roles.js";
 import { metrics, parseFindings, repeats, similar, slowRounds, mark } from "./rounds.js";
-import { agyNote, antigravityFromModels, copilotFromUser, fromCache, humanReset, minimaxFromRemains } from "./quota.js";
+import { agyNote, antigravityFromModels, copilotFromUser, format, fromCache, humanReset, learnExhausted, mergeLearned, minimaxFromRemains, modelLines } from "./quota.js";
 import { writeAtomic } from "./fsutil.js";
 
 process.env.ORQ_LANG = "en"; // messages checked below are the English ones
@@ -621,16 +621,64 @@ test("quota: copilot's bare reset date reads as local midnight, matching the day
   assert.deepEqual([d.getFullYear(), d.getMonth(), d.getDate(), d.getHours()], [2026, 10, 1, 0]);
 });
 
-test("quota: antigravity takes the worst model per window (reset within 6 h = 5h window, later = week)", () => {
-  const now = Date.parse("2026-10-12T17:00:00Z");
-  const q = antigravityFromModels({
-    a: { quotaInfo: { remainingFraction: 0.75, resetTime: "2026-10-12T22:00:00Z" } },
-    b: { quotaInfo: { remainingFraction: 0.4, resetTime: "2026-10-19T17:00:00Z" } },
-    c: { quotaInfo: { remainingFraction: 0.9, resetTime: "2026-10-19T17:00:00Z" } },
-    d: { quotaInfo: { remainingFraction: 1 } },
-  }, now);
-  assert.equal(q.five.pct, 25); assert.equal(q.week.pct, 60); assert.equal(q.week.resetsAt, "2026-10-19T17:00:00Z");
-  assert.equal(antigravityFromModels({}, now).five.pct, "-");
+// Shapes captured from fetchAvailableModels (ids and times kept, everything else dropped). An exhausted bucket has no
+// remainingFraction (proto default 0 is not serialized) but keeps its resetTime; internal models carry neither a reset.
+const AGY_NOW = Date.parse("2026-11-05T15:00:00Z");
+const AGY_MODELS = {
+  "gemini-3.8-flash-tiered": { quotaInfo: { remainingFraction: 0.95047426, resetTime: "2026-11-05T16:53:48Z" } },
+  "gemini-3.5-flash-lite": { quotaInfo: { remainingFraction: 0.95047426, resetTime: "2026-11-05T16:53:48Z" } },
+  "claude-sonnet-5-5-high": { quotaInfo: { remainingFraction: 1, resetTime: "2026-11-05T20:45:32Z" } },
+  "gemini-4-argon-high": { quotaInfo: { resetTime: "2026-11-10T18:00:00Z" } },
+  "tab_flash_lite_preview": { quotaInfo: { remainingFraction: 1 } },
+  "chat_20706": { quotaInfo: { remainingFraction: 1 } },
+};
+
+test("quota: antigravity keeps a bucket per model; a missing remainingFraction with a resetTime is 100% used", () => {
+  const q = antigravityFromModels(AGY_MODELS, AGY_NOW);
+  assert.deepEqual(Object.keys(q.buckets).sort(), ["claude-sonnet-5-5-high", "gemini-3.5-flash-lite", "gemini-3.8-flash-tiered", "gemini-4-argon-high"]);
+  assert.equal(q.buckets["gemini-4-argon-high"].used, 100);
+  assert.equal(q.buckets["gemini-4-argon-high"].week, true);
+  assert.equal(q.buckets["gemini-3.8-flash-tiered"].used, 5);
+  assert.equal(q.buckets["gemini-3.8-flash-tiered"].week, false);
+  // the agent's own pair is its least used bucket per window: one exhausted model must not block the agent
+  assert.equal(q.five.pct, 0); assert.equal(q.week.pct, "-");
+  assert.equal(antigravityFromModels({}, AGY_NOW).five.pct, "-");
+});
+
+test("quota: antigravity lists one line per model, in the window its bucket belongs to", () => {
+  const lines = modelLines("antigravity", antigravityFromModels(AGY_MODELS, AGY_NOW).buckets, AGY_NOW).map(format);
+  assert.ok(lines.includes("antigravity/gemini-4-argon-high 5h=- week=100% resetweek=" + Date.parse("2026-11-10T18:00:00Z") / 1000));
+  assert.ok(lines.some((l) => l.startsWith("antigravity/gemini-3.8-flash-tiered 5h=5% week=- reset5h=")));
+  assert.equal(modelLines("antigravity", antigravityFromModels(AGY_MODELS, AGY_NOW).buckets, Date.parse("2026-11-11T00:00:00Z")).length, 0);
+});
+
+test("pick: antigravity skips an exhausted model and falls back to a lighter one of the same agent", async () => {
+  const { pick: choose, parseWindows, parseQuota, modelKey } = await import("./pick.js");
+  const cfg = { agents: { antigravity: { quota: ["antigravity"], models: { impl: {
+    simple: "gemini-3.8-flash-medium", default: "gemini-3.8-flash-high", heavy: "gemini-4-argon-high" } } } },
+    roles: { primary: { agent: "antigravity" } } };
+  const text = [
+    "antigravity 5h=0% week=-",
+    "antigravity/gemini-3.8-flash-tiered 5h=5% week=-",
+    "antigravity/gemini-4-argon-high 5h=- week=100% resetweek=" + (Math.floor(Date.now() / 1000) + 123 * 3600),
+  ].join("\n");
+  const run = (level: string, t = text) => choose({ cfg, role: "impl", level, exclude: new Set(), stats: [], quota: parseQuota(t),
+    windows: parseWindows(t), blocks: new Set(), recent: [] });
+  assert.equal(run("heavy").best?.model, "gemini-3.8-flash-high");   // Argon exhausted → the next lighter model
+  assert.match(run("heavy").notes.join("\n"), /quota exhausted: gemini-4-argon-high week 100%/);
+  assert.equal(run("medium").best?.model, "gemini-3.8-flash-high");
+  assert.equal(run("simple").best?.model, "gemini-3.8-flash-medium");
+  // with Argon available it is chosen for heavy work
+  const ok = text.replace("week=100% resetweek", "week=10% resetweek");
+  assert.equal(run("heavy", ok).best?.model, "gemini-4-argon-high");
+  // every model over its limit → the agent is passed over, naming them
+  const all = text.replace("5h=5% week=-", "5h=95% week=-");
+  const r = run("heavy", all);
+  assert.equal(r.best, undefined);
+  assert.match(r.notes.join("\n"), /every model over its quota/);
+  assert.equal(modelKey("gemini-3.8-flash-high", ["gemini-3.8-flash-tiered"]), "gemini-3.8-flash-tiered");
+  assert.equal(modelKey("claude-opus-5-5-high", ["claude-opus-5-5-high"]), "claude-opus-5-5-high");
+  assert.equal(modelKey("gemini-4-argon-low", ["gemini-3.8-flash-tiered"]), undefined);
 });
 
 test("roles: legacy agents.roles become an auto pool; [roles] fixed and pool win", async () => {
@@ -984,6 +1032,9 @@ test("agents: templates expand with optional groups, defaults, lists and quotes"
   const v = { model: "", effort: "high", roots: ["/a", "/b"], mode: ["--x", "y"], p: "my file" };
   assert.deepEqual(expandTemplate("run [-m {model}] -e {effort} -M {model:def} [--add {roots}] {mode} 'q a' {p}", v),
     ["run", "-e", "high", "-M", "def", "--add", "/a", "--add", "/b", "--x", "y", "q a", "my file"]);
+  // an empty path placeholder takes its preceding flag with it
+  assert.deepEqual(expandTemplate("a --add-dir {gd} --settings {s} -p x", { gd: "", s: "/s.json" }), ["a", "--settings", "/s.json", "-p", "x"]);
+  assert.deepEqual(expandTemplate("a -c k={gd} --add-dir {gd}", { gd: "" }), ["a", "-c", "k="]);
   assert.throws(() => expandTemplate("x {nope}", v), /unknown placeholder/);
   assert.equal(agentDef({ agents: { codex: { mem_max: "6G" } } }, "codex").run, BUILTIN_AGENTS.codex.run);
   assert.equal(agentDef({ agents: { acme: { run: "acme" } } }, "acme").run, "acme");
@@ -2412,6 +2463,42 @@ test("antigravity: denied_actions alone still produce a denied section; a clean 
   assert.equal(ok.answer, "all good");
   assert.equal(ok.denied, undefined);
   assert.equal(ok.rc, undefined);
+});
+
+const AGY_QUOTA_LOG = [
+  '{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"error_message"}}',
+  "error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 123h12m32s.",
+  'AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 123h12m32s.","status":"RESOURCE_EXHAUSTED","error_code":429,"code_kind":"http","retryable":true,"error_id":"x"}',
+  '{"event":"result","result":{"conversation_id":"c3","status":"ERROR","response":"","error":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 123h12m32s.","duration_seconds":0,"num_turns":1,"usage":{"input_tokens":0,"total_tokens":0},"finished_reason":"error"}}',
+].join("\n");
+
+test("antigravity: a quota-reached run is reported as exhausted with the reset time parsed", () => {
+  const r = FORMATS.antigravity.finish(AGY_QUOTA_LOG, "");
+  assert.equal(r.exhausted?.secs, 123 * 3600 + 12 * 60 + 32);
+  assert.match(r.exhausted?.message ?? "", /^Individual quota reached/);
+  assert.equal(FORMATS.antigravity.finish(agyStream([{ event: "result", result: { response: "ok" } }]), "").exhausted, undefined);
+  assert.equal(parseResetIn("Resets in 5m"), 300);
+  assert.equal(parseResetIn("nothing"), undefined);
+});
+
+test("quota: a learned exhausted bucket survives API readings until reset, unless the API shows the model with quota left", () => {
+  const root = mkdtempSync(join(tmpdir(), "orq-learn-"));
+  const old = process.env.XDG_STATE_HOME; process.env.XDG_STATE_HOME = root;
+  try {
+    const now = Date.parse("2026-11-05T15:00:00Z");
+    const b = learnExhausted("antigravity", "gemini-4-argon-high", 123 * 3600 + 12 * 60 + 32, "acct1", now);
+    assert.equal(b.used, 100); assert.equal(b.week, true);
+    assert.equal(b.resetsAt, new Date(now + (123 * 3600 + 12 * 60 + 32) * 1000).toISOString());
+    const learned = { "gemini-4-argon-high": b };
+    const api = antigravityFromModels({ "gemini-3.8-flash-tiered": { quotaInfo: { remainingFraction: 0.9, resetTime: "2026-11-05T16:00:00Z" } } }, now).buckets;
+    const merged = mergeLearned(api, learned, now + 1000);
+    assert.equal(merged["gemini-4-argon-high"].used, 100);   // API has no bucket for it: kept
+    assert.ok(modelLines("antigravity", merged, now + 1000).some((l) => l.name === "antigravity/gemini-4-argon-high" && l.week === 100));
+    const back = antigravityFromModels({ "gemini-4-argon-high": { quotaInfo: { remainingFraction: 0.5, resetTime: "2026-11-12T00:00:00Z" } } }, now).buckets;
+    assert.equal(mergeLearned(back, learned, now + 1000)["gemini-4-argon-high"].used, 50); // API has quota again
+    assert.equal(mergeLearned(api, learned, Date.parse(b.resetsAt) + 1)["gemini-4-argon-high"], undefined); // reset passed
+    assert.equal(JSON.parse(readFileSync(join(root, "orq", "quota", "antigravity.json"), "utf8")).buckets["gemini-4-argon-high"].learned, true);
+  } finally { if (old === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = old; rmSync(root, { recursive: true, force: true }); }
 });
 
 test("writeAtomic: creates parent directories, writes UTF-8, overwrites existing file, and leaves no .tmp file", () => {

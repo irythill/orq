@@ -5,6 +5,13 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
+### Fixed
+- Antigravity quota is tracked per model: `orq quota` lists `antigravity/<model>` lines, an exhausted bucket (no
+  `remainingFraction`, only a `resetTime`) reads as 100% used, and `orq pick` checks the model it is about to choose,
+  falling back to a lighter configured model of the same agent instead of picking an exhausted one (#60).
+- An antigravity run that ends with `RESOURCE_EXHAUSTED` / "quota reached ... Resets in 5h3m" is recorded as an exhausted
+  bucket for the model it used (kept until its reset unless the API shows that model with quota left). The run is
+  `status=fail` and its `.out.md` says `quota exhausted: <model> until <time>`, so the conductor re-picks (#60).
 
 ## [0.6.0] — 2026-11-05
 ### Added

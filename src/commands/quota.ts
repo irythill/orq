@@ -35,7 +35,7 @@ export function humanizeQuotaLine(line: string, now = Date.now()): string {
  *  `policy.quota_week`) — the same thresholds `orq pick` applies for an unspecified task level; ⊘ blocked
  *  (orq block), ? no data; sources with no window at all ("-" and "-") are left out. */
 export function quotaLine(lines: Quota[], limit5: number, limitWeek: number, blocked: Set<string>, age?: number): string {
-  const parts = lines.filter((q) => q.five !== "-" || q.week !== "-").map((q) => {
+  const parts = lines.filter((q) => !q.name.includes("/") && (q.five !== "-" || q.week !== "-")).map((q) => {
     if (blocked.has(q.name)) return `${q.name} ⊘`;
     const five = pct(q.five), week = pct(q.week);
     const ns = [five, week].filter((n): n is number => n !== undefined);
