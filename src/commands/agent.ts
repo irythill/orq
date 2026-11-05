@@ -261,6 +261,10 @@ function turn(file: string, kind: string, rest: string[]): number {
       const e = JSON.parse(rest[rest.length - 1] ?? "{}") as Obj;
       if (e.type !== "agent-turn-complete") return 0;
       answer = String(e["last-assistant-message"] ?? ""); sid = e["thread-id"] as string | undefined;
+      // Codex also runs internal turns (e.g. generating the tab title) and notifies for them: only the main thread counts.
+      const known = existsSync(`${O}.id`) ? readFileSync(`${O}.id`, "utf8").trim() : "";
+      if (known && sid && sid !== known) return 0;
+      if (isTitleOnly(answer)) return 0;
     } else if (kind === "claude") {
       const e = JSON.parse(readFileSync(0, "utf8")) as Obj;
       if (e.stop_hook_active) return 0;
@@ -278,6 +282,14 @@ function turn(file: string, kind: string, rest: string[]): number {
     if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=0 answer: ${O}.out.md`);
   } catch (e) { console.error(`orq agent --turn: ${(e as Error).message}`); }
   return 0;
+}
+
+/** The `{"title": "..."}` answer of Codex's session-title turn (a JSON object whose only key is `title`). */
+function isTitleOnly(answer: string): boolean {
+  try {
+    const o = JSON.parse(answer) as unknown;
+    return typeof o === "object" && o !== null && !Array.isArray(o) && Object.keys(o).length === 1 && "title" in o;
+  } catch { return false; }
 }
 
 /** The last text Claude wrote, from its transcript (older Stop hooks have no last_assistant_message). */
