@@ -1,3 +1,4 @@
+import { issueFromName } from "./issue.js";
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -151,8 +152,16 @@ test("gc classifies issue worktrees and removes only removable ones", () => {
   // Committed after its PR was merged: the PR's head is an older commit, so it must stay.
   const moved = add("moved"); writeFileSync(join(moved.path, "later"), "x"); git(moved.path, "add", "."); git(moved.path, "commit", "-qm", "after merge");
   // Nothing of its own (content is in base), but its claim is alive; .orquestra/ keeps the ID uppercase.
-  add("owned"); mkdirSync(join(ws, ".orquestra", "OWNED"), { recursive: true });
-  writeFileSync(join(ws, ".orquestra", "OWNED", "owner"), `pane=c1 kind=id account=a at=${new Date().toISOString()}\n`);
+  add("own-1"); mkdirSync(join(ws, ".orquestra", "OWN-1"), { recursive: true });
+  writeFileSync(join(ws, ".orquestra", "OWN-1", "owner"), `pane=c1 kind=id account=a at=${new Date().toISOString()}\n`);
+  add("own-1-api-2"); // suffixed worktree of the same issue inherits the live owner
+  // A live agent (this process) keeps RUN-2's suffixed worktree; GONE-3's agent state is a dead pid.
+  add("run-2-x"); add("gone-3");
+  const agentsDir = join(env.XDG_STATE_HOME as string, "orq", "agents"); mkdirSync(agentsDir, { recursive: true });
+  writeFileSync(join(agentsDir, "a.json"), JSON.stringify({ prefix: join(ws, ".orquestra", "RUN-2", "impl"), pid: process.pid, status: "running", at: new Date().toISOString() }));
+  writeFileSync(join(agentsDir, "b.json"), JSON.stringify({ prefix: join(ws, ".orquestra", "GONE-3", "impl"), pid: 2 ** 22 + 12345, status: "running", at: new Date().toISOString() }));
+  mkdirSync(join(ws, ".orquestra", "RUN-2"), { recursive: true }); mkdirSync(join(ws, ".orquestra", "GONE-3"), { recursive: true });
+  writeFileSync(join(ws, ".orquestra", "GONE-3", "impl.pane"), "p");
   const gh = join(root, "fake-gh.js"); writeFileSync(gh, `const a = process.argv.slice(2).join(" ");
 console.log(/--head work\\/plane-merged .*--state merged/.test(a) ? '[{"number":1}]'
   : /--head work\\/plane-moved .*--state merged/.test(a) ? '[{"number":2,"headRefOid":"0000000"}]' : "[]");
@@ -165,11 +174,22 @@ console.log(/--head work\\/plane-merged .*--state merged/.test(a) ? '[{"number":
   assert.equal(byId("squash").verdict, "REMOVABLE"); assert.match(byId("squash").reason, /base/);
   assert.equal(byId("merged").verdict, "REMOVABLE"); assert.match(byId("merged").reason, /PR merged/);
   assert.equal(byId("stale").verdict, "STALE");
-  assert.equal(byId("moved").verdict, "KEEP"); assert.equal(byId("owned").verdict, "KEEP");
+  assert.equal(byId("moved").verdict, "KEEP"); assert.equal(byId("own-1").verdict, "KEEP");
+  assert.equal(byId("own-1-api-2").verdict, "KEEP"); assert.match(byId("own-1-api-2").reason, /live owner/);
+  assert.equal(byId("run-2-x").verdict, "KEEP"); assert.match(byId("run-2-x").reason, /child agent/);
+  assert.notEqual(byId("gone-3").verdict, "KEEP");
   const removed = run("gc", "-w", ws, "--yes", "--json"); assert.equal(removed.status, 0, removed.stderr);
   assert.equal(existsSync(squash.path), false); assert.equal(existsSync(merged.path), false);
   assert.equal(git(repo, "branch", "--list", squash.branch), ""); assert.equal(git(repo, "branch", "--list", merged.branch), "");
   assert.equal(existsSync(dirty.path), true); assert.equal(existsSync(unpushed.path), true); assert.equal(existsSync(stale.path), true);
+});
+
+test("issueFromName: <PROJ>-<N> with any trailing suffix ignored", () => {
+  assert.equal(issueFromName("me/plane-proj-68-api-2"), "proj-68");
+  assert.equal(issueFromName("api-newapp-plane-proj-68-backfill"), "proj-68");
+  assert.equal(issueFromName("x/plane-app-565-mirrorid"), "app-565");
+  assert.equal(issueFromName("x/plane-ABC-1"), "ABC-1");
+  assert.equal(issueFromName("x/plane-dirty"), undefined);
 });
 
 test("gc: prunes agent state files of finished/dead runs older than --days, keeps live and recent ones", () => {
@@ -2036,6 +2056,33 @@ test("orq rounds --diagnose refuses while a previous watchdog run is alive", () 
   const r = spawnSync(process.execPath, [CLI, "rounds", "ABC-4", "--diagnose", "-w", root], { env, encoding: "utf8" });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /still running/);
+});
+
+test("orq rounds --diagnose: a failed watchdog is retried once with another agent, which is named", () => {
+  const { root, env, run } = sandbox(), d = join(root, ".orquestra", "ABC-5");
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  (env as Record<string, string>).ORQ_TERMINAL = "plain";
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, "review-app.out.md"), "- [blocker] src/a.ts:1 missing null check on input\n");
+  writeFileSync(join(d, "fix-1.md"), "x"); writeFileSync(join(d, "fix-2.md"), "x");
+  // Whichever agent runs first fails (like a model catalog timeout); the other answers. Each run is logged by name.
+  const fake = join(root, "fake.mjs"), seen = join(root, "seen");
+  writeFileSync(fake, `import { appendFileSync, existsSync } from "node:fs";
+process.stdin.resume(); process.stdin.on("end", () => {
+  const first = !existsSync(${JSON.stringify(seen)}); appendFileSync(${JSON.stringify(seen)}, process.argv[2] + "\\n");
+  if (first) { console.error("Failed to load models"); process.exit(1); }
+  console.log("RECOMMENDATION: continue"); });\n`);
+  const mk = (name: string, vendor: string) => ({ vendor, roles: ["watchdog"], run: `'${process.execPath}' '${fake}' ${name}`, stdin: true, write: false,
+    models: { watchdog: { default: "m@low" } }, mem_max: "off" });
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { one: mk("one", "v1"), two: mk("two", "v2") } }));
+  const r = run("rounds", "ABC-5", "--diagnose", "-w", root);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const ran = readFileSync(seen, "utf8").trim().split(/\r?\n/);
+  assert.equal(ran.length, 2); assert.notEqual(ran[0], ran[1]);
+  assert.match(r.stderr, /retrying with another agent/);
+  assert.match(r.stdout, new RegExp(`\\(by ${ran[1]}\\)`));
+  assert.match(readFileSync(join(d, "diagnosis-2.md"), "utf8"), /RECOMMENDATION/);
 });
 
 test("block --quota: the used-up week, else the 5h window; none known → nothing", () => {

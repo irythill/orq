@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { aliveOwner } from "./commands/claim.js";
 import { writeAtomic } from "./fsutil.js";
 import { m } from "./i18n.js";
+import { issueFromName } from "./issue.js";
 import { alive } from "./lock.js";
 import { stateDir } from "./paths.js";
 import { notify } from "./testrun.js";
@@ -89,11 +90,10 @@ export function listWorktrees(ws: string): { repo: string; branch: string }[] {
 }
 
 /** The repo + branch an issue's worktree carries, the same match `orq gc` uses: a worktree branch ending in
- *  "plane-<id, lowercase>" under <ws>/.worktrees. An issue can have one per repo (several repos in play).
+ *  "plane-<id, lowercase>[-suffix]" under <ws>/.worktrees. An issue can have one per repo (several repos in play).
  *  `all` lets a caller looping over several issues pass its own listWorktrees(ws) once instead of one per issue. */
 export function issueBranches(ws: string, issue: string, all = listWorktrees(ws)): { repo: string; branch: string }[] {
-  const suffix = `plane-${issue.toLowerCase()}`;
-  return all.filter((b) => b.branch.toLowerCase().endsWith(suffix));
+  return all.filter((b) => issueFromName(b.branch)?.toLowerCase() === issue.toLowerCase());
 }
 
 export interface RollupItem { __typename?: string; status?: string; conclusion?: string; state?: string }
