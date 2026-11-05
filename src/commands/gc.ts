@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from "nod
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { getPath, loadConfig } from "../config.js";
 import { m } from "../i18n.js";
-import { issueFromName, issuesWithLiveAgent } from "../issue.js";
+import { issueFromName, issuePattern, issuesWithLiveAgent } from "../issue.js";
 import { alive } from "../lock.js";
 import { stateDir } from "../paths.js";
 import { aliveOwner } from "./claim.js";
@@ -57,7 +57,7 @@ export async function gc(argv: string[], clock: () => number = Date.now): Promis
     else if (argv[i] === "--days" && argv[i + 1] && /^\d+$/.test(argv[i + 1])) days = Number(argv[++i]);
     else { console.error(USAGE); return 2; }
   }
-  const { cfg } = loadConfig(ws), rows: Row[] = [];
+  const { cfg } = loadConfig(ws), rows: Row[] = [], issuePat = issuePattern(ws);
   let ghUnavailable = false, fetchWarned = false;
   const root = join(ws, ".worktrees");
   const orq = join(ws, ".orquestra");
@@ -85,8 +85,8 @@ export async function gc(argv: string[], clock: () => number = Date.now): Promis
       if (!wt.worktree || path === main || !inside(real(root), path)) continue;
       const branch = wt.branch?.replace(/^refs\/heads\//, "") ?? "";
       if (!branch) continue;
-      // The branch carries the ID in lowercase (plane-abc-123, maybe with a -suffix); .orquestra/ keeps it as written (ABC-123).
-      const id = issueFromName(branch);
+      // The branch carries the ID in lowercase (abc-123, maybe with a prefix or -suffix); .orquestra/ keeps it as written (ABC-123).
+      const id = issueFromName(branch, issuePat);
       const issue = id && issues.find((d) => d.toLowerCase() === id.toLowerCase());
       const status = output(path, "status", "--porcelain");
       const unpushed = output(repo, "rev-list", branch, "--not", "--remotes");

@@ -156,6 +156,9 @@ handoff_at = 85                          # % da janela → o orq handoff move o 
 max_per_account = 2                      # conta que já tem esse tanto de conductors nunca é alvo do handoff
 reset_grace_min = 15                     # toda janela acima do gatilho renova dentro desses minutos → pula a mudança
 
+[git]
+issue_pattern = "(?<![a-z0-9])(?<issue>[a-z][a-z0-9]*-\\d+)(?![a-z0-9])"   # Nome de branch/worktree → ID da issue, para `orq gc` e `orq ci` — padrão mostrado; regex, grupo nomeado `issue` (senão o grupo 1)
+
 [policy]
 quota_limit = 90                         # caps the 5h pick limit; also sets ! in `orq quota --line`
 pacing_penalty = 0.3                     # score penalty when usage at the current pace would pass the pick limit (5h by level, week: quota_week) by the reset (0 = off)
