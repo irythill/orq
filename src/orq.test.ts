@@ -2281,6 +2281,14 @@ test("antigravity: denied_actions alone still produce a denied section; a clean 
     { event: "result", result: { response: "", denied_actions: [{ action: "command", display_name: "RunCommand" }] } }]), "");
   assert.match(d.answer ?? "", /## Denied commands[\s\S]*- command \(RunCommand\)/);
   assert.ok(d.denied?.length);
+  // With a RunCommand-only denial the command is the last CommandLine streamed before the result.
+  const named = FORMATS.antigravity.finish(agyStream([
+    { event: "step_update", step_update: { step_type: "tool", state: "RUNNING", tool_info: { parameters: { CommandLine: "ls src" } } } },
+    { event: "step_update", step_update: { step_type: "tool", state: "RUNNING", tool_info: { parameters: { CommandLine: "find src/referral -type f" } } } },
+    { event: "result", result: { response: "", denied_actions: [{ action: "command", display_name: "RunCommand" }] } },
+    { event: "step_update", step_update: { step_type: "tool", tool_info: { parameters: { CommandLine: "after result" } } } }]), "");
+  assert.match(named.answer ?? "", /- denied: find src\/referral -type f\n/);
+  assert.deepEqual(named.denied, ["denied: find src/referral -type f"]);
   const ok = FORMATS.antigravity.finish(agyStream([{ event: "result", result: { response: "all good", conversation_id: "c2" } }]), "");
   assert.equal(ok.answer, "all good");
   assert.equal(ok.denied, undefined);
