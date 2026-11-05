@@ -1,12 +1,14 @@
 // orq gc — find issue worktrees whose branch is already safe to remove.
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { getPath, loadConfig } from "../config.js";
 import { m } from "../i18n.js";
+import { alive } from "../lock.js";
+import { stateDir } from "../paths.js";
 import { aliveOwner } from "./claim.js";
 
-export const USAGE = "orq gc [-w <workspace>] [--yes] [--days N] [--json]   remove merged issue worktrees";
+export const USAGE = "orq gc [-w <workspace>] [--yes] [--days N] [--json]   remove merged issue worktrees and stale agent state";
 type Row = { repo: string; worktree: string; branch: string; verdict: "KEEP" | "REMOVABLE" | "STALE"; reason: string; path: string };
 const git = (cwd: string, ...args: string[]) => spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
 // Paths as git prints them can differ from ours (macOS /var → /private/var, Windows C:/ vs C:\): compare real paths.
@@ -19,6 +21,24 @@ const gh = (cwd: string, args: string[]) => {
     : spawnSync(bin, args, { cwd, encoding: "utf8" });
 };
 const output = (cwd: string, ...args: string[]) => { const r = git(cwd, ...args); return r.status === 0 ? r.stdout.trim() : undefined; };
+
+/** Per-agent state files (<state>/agents/<unit>.json) of runs under `ws` that are finished or dead and older than `days`. */
+function staleAgentStates(ws: string, days: number, now: number): string[] {
+  const dir = join(stateDir(), "agents"), out: string[] = [];
+  let files: string[] = [];
+  try { files = readdirSync(dir).filter((f) => f.endsWith(".json")); } catch { /* no runs yet */ }
+  for (const f of files) {
+    try {
+      const s = JSON.parse(readFileSync(join(dir, f), "utf8")) as Record<string, unknown>;
+      if (!inside(real(ws), real(String(s.prefix ?? "")))) continue;
+      const finished = s.status === "ok" || s.status === "fail" || s.status === "killed";
+      if (!finished && alive(Number(s.pid))) continue;
+      const since = Date.parse(String(s.end ?? s.at));
+      if (now - since > days * 86400_000) out.push(join(dir, f));
+    } catch { /* unreadable state: leave it */ }
+  }
+  return out;
+}
 
 export async function gc(argv: string[], clock: () => number = Date.now): Promise<number> {
   let ws = process.cwd(), yes = false, json = false, days = 14;
@@ -102,11 +122,15 @@ export async function gc(argv: string[], clock: () => number = Date.now): Promis
     if (git(join(ws, row.repo), "branch", "-D", row.branch).status !== 0) { failed = true; row.reason += `; ${m("branch deletion failed", "falha ao excluir branch")}`; }
     git(join(ws, row.repo), "worktree", "prune");
   }
+  const stale = staleAgentStates(ws, days, clock());
+  if (yes) for (const f of stale) rmSync(f, { force: true });
   if (json) console.log(JSON.stringify(rows));
   else {
     const table = [["REPO", "WORKTREE", "BRANCH", "VERDICT", "REASON"], ...rows.map((r) => [r.repo, r.worktree, r.branch, r.verdict, r.reason])];
     const w = table[0].map((_, i) => Math.max(...table.map((t) => t[i].length)));
     console.log(table.map((t) => t.map((c, i) => i < t.length - 1 ? c.padEnd(w[i]) : c).join("  ")).join("\n"));
   }
+  if (stale.length && !json) console.log(yes ? m(`pruned ${stale.length} stale agent state file(s)`, `${stale.length} arquivo(s) de estado de agente antigo(s) removido(s)`)
+    : m(`${stale.length} stale agent state file(s) (finished/dead, older than ${days} days): --yes removes them`, `${stale.length} arquivo(s) de estado de agente antigo(s) (terminados/mortos, mais de ${days} dias): --yes remove`));
   return failed ? 1 : 0;
 }

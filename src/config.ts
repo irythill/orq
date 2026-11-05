@@ -31,7 +31,7 @@ export const DEFAULTS: Obj = {
     max_rounds: 2, // fix rounds before stopping and calling the user
     review: "other-vendor", // other-vendor | any
   },
-  ui: { lang: "auto", theme: "gunmetal", desktop_notify: true }, // lang: auto | en | pt · theme: gunmetal | chrome | lcd | terminal · desktop_notify: desktop popup for failures (Linux, notify-send)
+  ui: { lang: "auto", theme: "gunmetal", desktop_notify: true, board_hide_hours: 6 }, // board_hide_hours: finished/dead agents older than this leave `orq board` (still in --json) · lang: auto | en | pt · theme: gunmetal | chrome | lcd | terminal · desktop_notify: desktop popup for failures (Linux, notify-send)
   // Where quota comes from, per agent: "builtin" | "none" | false | { command = "..." } (see src/quota.ts).
   // "claude" covers every account in claude-accounts.
   quota: { claude: "builtin", codex: "builtin", opencode: "builtin", antigravity: "builtin", copilot: "builtin" },

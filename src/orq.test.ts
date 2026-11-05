@@ -171,6 +171,23 @@ console.log(/--head work\\/plane-merged .*--state merged/.test(a) ? '[{"number":
   assert.equal(existsSync(dirty.path), true); assert.equal(existsSync(unpushed.path), true); assert.equal(existsSync(stale.path), true);
 });
 
+test("gc: prunes agent state files of finished/dead runs older than --days, keeps live and recent ones", () => {
+  const { root, run } = sandbox(), ws = join(root, "ws"), st = join(root, "state", "orq", "agents"), now = Date.now();
+  const iso = (ms: number) => new Date(ms).toISOString(), dead = spawnSync(process.execPath, ["-e", ""]).pid!, day = 86400_000;
+  mkdirSync(ws, { recursive: true }); mkdirSync(st, { recursive: true });
+  const put = (unit: string, o: object) => writeFileSync(join(st, `${unit}.json`), JSON.stringify({ prefix: join(ws, ".orquestra", "A-1", "impl"), ...o }));
+  put("old-ok", { pid: dead, status: "ok", at: iso(now - 20 * day), end: iso(now - 20 * day) });
+  put("old-dead", { pid: dead, at: iso(now - 20 * day) });
+  put("old-live", { pid: process.pid, at: iso(now - 20 * day) });
+  put("recent-ok", { pid: dead, status: "ok", at: iso(now - day), end: iso(now - day) });
+  put("elsewhere", { pid: dead, status: "ok", prefix: join(root, "other", "x"), at: iso(now - 20 * day), end: iso(now - 20 * day) });
+  const dry = run("gc", "-w", ws, "--days", "14");
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.equal(existsSync(join(st, "old-ok.json")), true, "dry run removes nothing");
+  assert.equal(run("gc", "-w", ws, "--days", "14", "--yes").status, 0);
+  assert.deepEqual(readdirSync(st).sort(), ["elsewhere.json", "old-live.json", "recent-ok.json"]);
+});
+
 test("ci: aggregateChecks and parsePrStatus are pure (no gh, no PR, or a failure all read as none)", async () => {
   const { aggregateChecks, parsePrStatus } = await import("./ci.js");
   assert.equal(aggregateChecks([]), "none"); // no checks registered yet: not a false "passed"
@@ -1175,7 +1192,7 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
   const r = run("board", "--json", "-w", ws);
   assert.equal(r.status, 0, r.stderr);
   const j = JSON.parse(r.stdout);
-  assert.deepEqual(j.agents.map((a: { unit: string; state: string }) => [a.unit, a.state]), [["u-run", "running"], ["u-dead", "died"], ["u-done", "fail"]]);
+  assert.deepEqual(j.agents.map((a: { unit: string; state: string }) => [a.unit, a.state]), [["u-run", "running"], ["u-dead", "died"], ["u-done", "fail"], ["u-old", "ok"]]); // --json keeps old rows
   const a = j.agents[0];
   assert.deepEqual([a.issue, a.label, a.model, a.activity, a.cap], ["ABC-1", "impl-api", "claude-opus-5", "· Edit", 2 ** 32]);
   assert.ok(a.secs >= 89 && a.mem > 0, `secs=${a.secs} mem=${a.mem}`);
@@ -1192,6 +1209,18 @@ test("board: agents, queue, claims, quota and blocks from fake state files, plai
     "no quota collector: opencode", "copilot", "CHARTS", "MONITOR", "ABC-1 r0/2", "failed"]) assert.ok(o.stdout.includes(s), `missing ${s}\n${o.stdout}`);
   const pt = spawnSync(process.execPath, [CLI, "board", "--once", "-w", ws], { env: { ...env, ORQ_LANG: "pt" }, encoding: "utf8" });
   assert.ok(pt.stdout.includes("fila de testes"), pt.stdout);
+});
+
+test("board: finished/dead rows older than the threshold fold into a count in the render, --json keeps them", async () => {
+  const { render } = await import("./commands/board.js");
+  const base = { unit: "u", title: "t", agent: "claude", pid: 1, issue: "ABC-1", label: "impl-api", secs: 60 };
+  const snap = { at: new Date().toISOString(), mem: { used: 1, total: 2 }, workspaces: ["/w"], queue: { holders: [], waiters: [] },
+    agents: [{ ...base, state: "ok", rc: 0, age: 60 }, { ...base, state: "died", age: 7 * 3600 }, { ...base, state: "fail", rc: 1, age: 8 * 3600 }, { ...base, state: "running", age: 0 }],
+    conductors: [], quota: { lines: [] }, ci: { entries: [] }, blocks: {}, scoreboard: [], notices: [] };
+  const text = render(snap as never, "gunmetal", 100, "none").join("\n");
+  assert.match(text, /\+2 older finished hidden/);
+  assert.equal((text.match(/runner gone/g) ?? []).length, 0);
+  assert.ok(!/older finished hidden/.test(render(snap as never, "gunmetal", 100, "none", 9).join("\n")));
 });
 
 test("board: a conductor shows the herdr workspace's live label, falling back to the stored name when dead", { skip: process.platform === "win32" }, () => {

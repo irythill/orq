@@ -31,13 +31,13 @@ import { setValue } from "./set.js";
 export const USAGE = "orq board [-w <workspace>]... [--once] [--json] [--interval S]   live board: queue, agents, conductors, quota";
 
 const CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
-const QTTL = 300_000, RECENT_MS = 30 * 60_000, ORPHAN_MS = 24 * 3600_000;
+const QTTL = 300_000, HIDE_H = 6; // finished/dead rows older than ui.board_hide_hours (default 6) are folded into a count
 type Table = Map<number, [number, number]>;
 
 // --- snapshot ---------------------------------------------------------------------------------------------------
 export interface Agent {
   unit: string; title: string; agent: string; model?: string; host?: string; pid: number; issue: string; label: string;
-  state: "running" | "died" | "ok" | "fail"; rc?: number; secs: number; mem?: number; cap?: number; activity?: string;
+  state: "running" | "died" | "ok" | "fail"; rc?: number; secs: number; age: number; mem?: number; cap?: number; activity?: string;
 }
 export interface QItem { label: string; pid: number; secs: number; mem?: number }
 export interface Conductor { id: string; kind: string; account: string; alive: boolean; issues: string[]; name: string; rounds?: Record<string, Pick<Metrics, "rounds" | "max" | "level">> }
@@ -105,11 +105,9 @@ function agents(table: Table | undefined, now: number): Agent[] {
     const pid = Number(s.pid), at = Date.parse(String(s.at)), end = s.end ? Date.parse(String(s.end)) : undefined;
     const prefix = String(s.prefix ?? "");
     const st: Agent["state"] = s.status === "ok" || s.status === "fail" ? s.status : alive(pid) ? "running" : "died";
-    if (st === "died" && now - at > ORPHAN_MS) continue;
-    if ((st === "ok" || st === "fail") && now - (end ?? at) > RECENT_MS) continue;
     const a: Agent = { unit: f.slice(0, -5), title: String(s.title ?? ""), agent: String(s.agent ?? "?"), model: typeof s.model === "string" ? s.model : modelOf(prefix, f.slice(0, -5)),
       host: s.host as string | undefined, pid, issue: basename(dirname(prefix)), label: basename(prefix), state: st,
-      secs: Math.max(0, Math.round(((end ?? now) - at) / 1000)), cap: typeof s.cap === "number" ? s.cap : undefined };
+      secs: Math.max(0, Math.round(((end ?? now) - at) / 1000)), age: Math.max(0, Math.round((now - (end ?? at)) / 1000)), cap: typeof s.cap === "number" ? s.cap : undefined };
     if (s.rc !== undefined) a.rc = Number(s.rc);
     if (st === "running") {
       if (table) a.mem = treeMem(pid, table);
@@ -291,7 +289,13 @@ const when = (sec: number) => { const d = new Date(sec * 1000), p = (n: number) 
 const gb = (b?: number) => (b ? `${(b / 2 ** 30).toFixed(1)} GB` : "-");
 const fit = (s: string, n: number) => (s.length > n ? s.slice(0, Math.max(0, n - 1)) + "…" : s.padEnd(n));
 
-export function render(s: Snapshot, theme: string, cols: number, mode = colorMode()): string[] {
+/** Hours after which finished/dead agents leave the board (they stay in --json). */
+export function hideHours(): number {
+  const v = Number(getPath(loadConfig().cfg, "ui.board_hide_hours") ?? HIDE_H);
+  return v > 0 ? v : HIDE_H;
+}
+
+export function render(s: Snapshot, theme: string, cols: number, mode = colorMode(), hideH = HIDE_H): string[] {
   const c = inks(theme, mode), W = Math.max(60, cols), out: string[] = [];
   const meter = (pct: number, n: number) => {
     const f = Math.min(n, Math.round(Math.max(0, pct) * n / 100)), k = pct >= 90 ? c.err : pct >= 70 ? c.wrn : c.ok;
@@ -325,7 +329,11 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
   if (!s.queue.holders.length && !s.queue.waiters.length) out.push(` ${c.mut}${m("empty", "vazia")}${c.r}`);
 
   section("TRACKS", m("agents", "agentes"));
-  s.agents.forEach((a, i) => {
+  // A finished or dead agent stops being news after a while; running ones always show. age = since its end (a
+  // died row's end is unknown: since its start).
+  const old = (a: Agent) => a.state !== "running" && a.age > hideH * 3600;
+  const shownAgents = s.agents.filter((a) => !old(a)), hidden = s.agents.length - shownAgents.length;
+  shownAgents.forEach((a, i) => {
     const n = `${c.mut}${String(i + 1).padStart(2, "0")}${c.r}`, who = `${c.ink}${fit(a.issue, 9)}${c.r} ${c.ink2}${fit(a.label, 22)}${c.r} `
       + `${c.ink}${fit(a.agent, 11)}${c.r}${c.mut}${fit(a.model ?? m("default", "padrão"), 17)}${c.r} ${c.ink}${(a.state === "died" ? "?" : dur(a.secs)).padEnd(7)}${c.r}`; // died: when it stopped is unknown
     if (a.state === "running") {
@@ -336,7 +344,8 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
       out.push(` ${c.err}●${c.r} ${n}  ${who} ${c.err}${m("runner gone without finishing", "runner sumiu sem terminar")}${c.r}`);
     else out.push(` ${a.state === "ok" ? c.ok : c.err}${a.state === "ok" ? "✓" : "✗"}${c.r} ${n}  ${c.mut}${a.issue.padEnd(9).slice(0, 9)} ${fit(a.label, 22)} ${fit(a.agent, 11)}${fit(a.model ?? "", 17)} ${dur(a.secs).padEnd(7)} ${a.state} rc=${a.rc ?? "?"}${c.r}`);
   });
-  if (!s.agents.length) out.push(` ${c.mut}${m("none", "nenhum")}${c.r}`);
+  if (!shownAgents.length) out.push(` ${c.mut}${m("none", "nenhum")}${c.r}`);
+  if (hidden) out.push(` ${c.mut}${m(`+${hidden} older finished hidden`, `+${hidden} antigos finalizados ocultos`)}${c.r}`);
 
   section("MASTER", m("conductors", "conductors"));
   for (const k of s.conductors)
@@ -404,7 +413,7 @@ export async function board(argv: string[]): Promise<number> {
   if (json) { console.log(JSON.stringify(await snapshot(wss, await processTableAsync()), null, 2)); return 0; }
   const tty = Boolean(process.stdout.isTTY);
   if (once || !tty) {
-    const lines = render(await snapshot(wss, await processTableAsync()), theme, process.stdout.columns ?? 100);
+    const lines = render(await snapshot(wss, await processTableAsync()), theme, process.stdout.columns ?? 100, colorMode(), hideHours());
     const c = inks(theme);
     process.stdout.write(lines.map((l) => c.base + l + (c.base ? "\x1b[K" : "")).join("\n") + (c.base ? "\x1b[0m" : "") + "\n");
     return 0;
@@ -418,7 +427,7 @@ export async function board(argv: string[]): Promise<number> {
     if (drawing) { again = true; return; }
     drawing = true;
     try {
-      const c = inks(theme), lines = render(await snapshot(wss, table), theme, out.columns ?? 100);
+      const c = inks(theme), lines = render(await snapshot(wss, table), theme, out.columns ?? 100, colorMode(), hideHours());
       out.write(`${c.base}\x1b[H` + lines.map((l) => c.base + l + "\x1b[K").join("\n") + `${c.base}\x1b[J`);
     } finally { drawing = false; }
     if (again) { again = false; void draw(); }
