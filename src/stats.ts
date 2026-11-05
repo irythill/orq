@@ -6,6 +6,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { doneStatus } from "./process.js";
 
 export interface Run {
   issue: string; name: string; agent: string; model: string; role: string; ok: boolean;
@@ -99,7 +100,7 @@ export function collectRuns(ws: string, days: number): Run[] {
           : name.startsWith("impl") ? "impl" : "other";
       const out = read(`${pre}.out.md`);
       const [neu, tot] = tokens(agent, log, read(`${pre}.id`).trim());
-      runs.push({ issue, name, agent, model, role, ok: read(done).includes("status=ok") && out.trim() !== "",
+      runs.push({ issue, name, agent, model, role, ok: doneStatus(read(done)) === "ok" && out.trim() !== "",
         secs: Math.max(0, Math.floor((statSync(done).mtimeMs - rs.mtimeMs) / 1000)), new: neu, tot,
         repo: name.includes("-") ? name.slice(name.indexOf("-") + 1) : "" });
     }

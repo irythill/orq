@@ -2220,6 +2220,42 @@ process.stdin.resume().on("data", () => {}).on("end", () => process.exit(0));\n`
   assert.match(c.out, /status=fail/);
 });
 
+test("killed: 128+signal is never ok (done status, wait, board state, stats)", async () => {
+  const { killedRc, doneStatus } = await import("./process.js");
+  assert.deepEqual([killedRc(137), killedRc(143), killedRc(129), killedRc(1), killedRc(0), killedRc(undefined), killedRc(255)], [true, true, true, false, false, false, false]);
+  assert.equal(doneStatus("status=ok rc=137 at=x"), "killed");
+  assert.equal(doneStatus("status=ok rc=0 at=x"), "ok");
+  assert.equal(doneStatus("status=fail rc=1"), "fail");
+  const { root, run } = sandbox(), pre = join(root, "ws", ".orquestra", "A-1", "impl-x");
+  mkdirSync(dirname(pre), { recursive: true });
+  writeFileSync(`${pre}.done`, "status=ok rc=137 at=2026-01-01T00:00:00Z agent=claude mode=tui\n");
+  const w = run("wait", "--timeout", "5", pre);
+  assert.equal(w.status, 1);
+  assert.match(w.stdout, /status=killed rc=137/);
+  const st = join(root, "state", "orq", "agents");
+  mkdirSync(st, { recursive: true });
+  writeFileSync(join(st, "u1.json"), JSON.stringify({ pid: 1, prefix: pre, title: "t", agent: "claude", at: new Date().toISOString(), status: "ok", rc: 137, end: new Date().toISOString() }));
+  const b = JSON.parse(run("board", "--json", "-w", join(root, "ws")).stdout);
+  assert.equal(b.agents.find((a: { unit: string }) => a.unit === "u1").state, "killed");
+});
+
+test("agent: a run killed by SIGKILL is status=killed rc=137, not ok", () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  (env as Record<string, string>).ORQ_TERMINAL = "plain";
+  const repo = join(root, "repo"), fake = join(root, "kill.mjs");
+  mkdirSync(repo);
+  writeFileSync(fake, 'console.log("partial answer"); process.kill(process.pid, "SIGKILL");\n');
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { fake: { run: `'${process.execPath}' '${fake}'`, readonly: "ro", write: "w", mem_max: "off" } } }));
+  writeFileSync(join(root, "p.md"), "hi\n");
+  const O = join(root, "out", "k");
+  assert.equal(run("agent", "-a", "fake", "-t", "k", "-d", repo, "-o", O, "--", join(root, "p.md")).status, 0);
+  const w = run("wait", "--timeout", "60", O);
+  assert.equal(w.status, 1);
+  assert.match(w.stdout, /status=killed rc=137/);
+});
+
 const agyStream = (events: object[], stderr: string[] = []) => [...events.map((e) => JSON.stringify(e)), ...stderr].join("\n");
 
 test("antigravity: denied commands with an empty response keep the partial text, list the denied commands and the session", () => {

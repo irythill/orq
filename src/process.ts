@@ -82,6 +82,15 @@ export function treeMem(root: number, table = processTable()): number {
   return treePids(root, table).reduce((t, p) => t + (table.get(p)?.[1] ?? 0), 0);
 }
 
+/** An exit code of 128+signal (137 = SIGKILL): the process was killed, it did not finish. */
+export const killedRc = (rc: number | undefined) => rc !== undefined && rc > 128 && rc <= 128 + 64;
+
+/** "status=ok rc=137" (written before `killed` existed) is a kill, not a success: the status a done line really means. */
+export function doneStatus(line: string): string | undefined {
+  const st = /\bstatus=(\S+)/.exec(line)?.[1], rc = /\brc=(\d+)/.exec(line)?.[1];
+  return st === "ok" && killedRc(rc === undefined ? undefined : Number(rc)) ? "killed" : st;
+}
+
 export function killTree(pid: number, group = true): void {
   if (process.platform === "win32") spawnSync("taskkill", ["/T", "/F", "/PID", String(pid)], { stdio: "ignore" });
   else if (group) try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }

@@ -21,7 +21,7 @@ import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
 import { alive } from "../lock.js";
 import { stateDir } from "../paths.js";
-import { killTree, type MemMode, parseSize, resolveMode, runCapped } from "../process.js";
+import { killedRc, killTree, type MemMode, parseSize, resolveMode, runCapped } from "../process.js";
 import { closeOwnTab, detectHost, type Host, launch, screenOpen, shq, typeInto } from "../terminal.js";
 import { ackPrefix } from "../notice.js";
 import { dropWorktree, notify } from "../testrun.js";
@@ -356,18 +356,22 @@ async function runJob(file: string): Promise<number> {
   if (j.tui) {
     // The agent's own screen: the terminal is its; answers come from the end-of-turn hook (`--turn`).
     let ended = false;
-    const end = (code: number): string => {
+    const end = (code: number, killed = false): string => {
       if (ended) return "fail";
       ended = true;
       post();
       // Closed before any turn ended (or mid follow-up): a failure, so `orq wait` doesn't hang.
-      const ok = /\bstatus=ok\b/.test(existsSync(`${O}.done`) ? readFileSync(`${O}.done`, "utf8") : "");
-      if (!existsSync(`${O}.done`)) {
+      const ok = !killed && /\bstatus=ok\b/.test(existsSync(`${O}.done`) ? readFileSync(`${O}.done`, "utf8") : "");
+      if (killed) {
+        // SIGKILL & co: whatever an earlier turn wrote, the screen did not end normally.
+        writeAtomic(`${O}.done`, `status=killed rc=${code} at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
+        if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=killed rc=${code} answer: ${O}.out.md`);
+      } else if (!existsSync(`${O}.done`)) {
         writeAtomic(`${O}.done`, `status=fail rc=${code} at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
         if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=fail rc=${code} answer: ${O}.out.md`);
       }
       rmSync(`${O}.pid`, { force: true });
-      return ok ? "ok" : "fail";
+      return killed ? "killed" : ok ? "ok" : "fail";
     };
     if (!pre()) rc = 2;
     else {
@@ -375,7 +379,7 @@ async function runJob(file: string): Promise<number> {
       for (const k of j.unset) delete env[k];
       // Ctrl+C belongs to the agent (it reaches us too, as part of the terminal's foreground group). The screen going
       // away (tab or tmux server closed) still ends the agent and cleans up.
-      let child: number | undefined, idleT: NodeJS.Timeout | undefined;
+      let child: number | undefined, idleT: NodeJS.Timeout | undefined, idleClosed = false;
       process.on("SIGINT", () => { /* the agent's */ });
       // The screen going away or being killed from outside: end the agent, and close the tab too (a dead tab stayed open).
       const gone = () => { if (child) killTree(child, false); end(129); closeOwnTab(j.host); process.exit(0); };
@@ -399,14 +403,16 @@ async function runJob(file: string): Promise<number> {
               if (!idleExpired(`${O}.done`, idleMs, Date.now(), busyAt)) return;
               clearInterval(idleT);
               console.log(m(`[orq agent] no follow-up for ${j.idleCloseMin} min: closing the finished agent`, `[orq agent] sem follow-up há ${j.idleCloseMin} min: fechando o agente que terminou`));
+              idleClosed = true;
               if (child) killTree(child, false);
             }, Math.min(30_000, Math.max(1_000, idleMs / 2)));
             idleT.unref();
           }
         } });
       clearInterval(idleT);
+      if (idleClosed) rc = 0; // closed on purpose after a finished turn: not a kill
     }
-    const st = end(rc);
+    const st = end(rc, killedRc(rc));
     state({ status: st, rc, end: new Date().toISOString() });
     console.log(`\n[${j.agent} (TUI) ${m("exited", "encerrado")}] ${m("answer", "resposta")}: ${O}.out.md`);
     if (!j.keep) { await sleep(j.closeAfter * 1000); closeOwnTab(j.host); }
@@ -472,7 +478,8 @@ async function runJob(file: string): Promise<number> {
   // A reviewer whose answer says nothing was reviewed (agents.<name>.no_review) is not a verdict either: pick's
   // fallback and the conductor must see it as not run, same as a whitespace-only answer.
   const noReview = noReviewMatch(j.noReview, answer);
-  const st = verdict && !noReview && /\S/.test(answer) ? "ok" : "fail"; // whitespace-only answer = failure
+  // killed (SIGKILL, memory cap...) is its own status: never ok, even if an ok_exit list or a leftover answer says otherwise.
+  const st = killedRc(rc) ? "killed" : verdict && !noReview && /\S/.test(answer) ? "ok" : "fail"; // whitespace-only answer = failure
   writeAtomic(`${O}.done`, `status=${st} rc=${rc} at=${new Date().toISOString()} agent=${j.agent}\n`);
   rmSync(`${O}.pid`, { force: true });
   state({ status: st, rc, end: new Date().toISOString() });

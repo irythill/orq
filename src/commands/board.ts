@@ -19,7 +19,7 @@ import { m, setLang } from "../i18n.js";
 import { argvModel } from "../agents.js";
 import { alive, status as lockStatus } from "../lock.js";
 import { expand, stateDir } from "../paths.js";
-import { processTableAsync, treeMem } from "../process.js";
+import { killedRc, processTableAsync, treeMem } from "../process.js";
 import { collect, type Source } from "../quota.js";
 import { collectRounds, mark, roundsSig, type Metrics } from "../rounds.js";
 import { collectRuns, type Row, rows } from "../stats.js";
@@ -37,7 +37,7 @@ type Table = Map<number, [number, number]>;
 // --- snapshot ---------------------------------------------------------------------------------------------------
 export interface Agent {
   unit: string; title: string; agent: string; model?: string; host?: string; pid: number; issue: string; label: string;
-  state: "running" | "died" | "ok" | "fail"; rc?: number; secs: number; age: number; mem?: number; cap?: number; activity?: string;
+  state: "running" | "died" | "ok" | "fail" | "killed"; rc?: number; secs: number; age: number; mem?: number; cap?: number; activity?: string;
 }
 export interface QItem { label: string; pid: number; secs: number; mem?: number }
 export interface Conductor { id: string; kind: string; account: string; alive: boolean; issues: string[]; name: string; rounds?: Record<string, Pick<Metrics, "rounds" | "max" | "level">> }
@@ -104,7 +104,7 @@ function agents(table: Table | undefined, now: number): Agent[] {
     try { s = JSON.parse(read(join(d, f))); } catch { continue; }
     const pid = Number(s.pid), at = Date.parse(String(s.at)), end = s.end ? Date.parse(String(s.end)) : undefined;
     const prefix = String(s.prefix ?? "");
-    const st: Agent["state"] = s.status === "ok" || s.status === "fail" ? s.status : alive(pid) ? "running" : "died";
+    const st: Agent["state"] = s.status === "ok" && killedRc(Number(s.rc)) ? "killed" : s.status === "ok" || s.status === "fail" || s.status === "killed" ? s.status : alive(pid) ? "running" : "died";
     const a: Agent = { unit: f.slice(0, -5), title: String(s.title ?? ""), agent: String(s.agent ?? "?"), model: typeof s.model === "string" ? s.model : modelOf(prefix, f.slice(0, -5)),
       host: s.host as string | undefined, pid, issue: basename(dirname(prefix)), label: basename(prefix), state: st,
       secs: Math.max(0, Math.round(((end ?? now) - at) / 1000)), age: Math.max(0, Math.round((now - (end ?? at)) / 1000)), cap: typeof s.cap === "number" ? s.cap : undefined };
@@ -115,7 +115,7 @@ function agents(table: Table | undefined, now: number): Agent[] {
     }
     out.push(a);
   }
-  const rank = { running: 0, died: 1, fail: 2, ok: 3 };
+  const rank = { running: 0, died: 1, killed: 2, fail: 2, ok: 3 };
   return out.sort((x, y) => rank[x.state] - rank[y.state] || y.secs - x.secs);
 }
 
