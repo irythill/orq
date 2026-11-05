@@ -184,7 +184,12 @@ export function expandTemplate(t: string, vars: Vars): string[] {
     const g = words[i].group;
     let j = i + 1;
     if (g >= 0) while (j < words.length && words[j].group === g) j++;
-    out.push(...expandWords(words.slice(i, j).map((w) => w.text), vars, g >= 0));
+    const got = expandWords(words.slice(i, j).map((w) => w.text), vars, g >= 0);
+    // `--flag {placeholder}` with the placeholder empty: drop the flag too, or it would swallow the next argument.
+    const ph = g < 0 ? /^\{(\w+)(?::[^}]*)?\}$/.exec(words[i].text) : null, prev = words[i - 1];
+    if (!got.length && ph && !Array.isArray(vars[ph[1]]) && prev && prev.group < 0 && /^-[^\s{]/.test(prev.text)
+        && out[out.length - 1] === prev.text) out.pop();
+    else out.push(...got);
     i = j;
   }
   return out;

@@ -1017,6 +1017,9 @@ test("agents: templates expand with optional groups, defaults, lists and quotes"
   const v = { model: "", effort: "high", roots: ["/a", "/b"], mode: ["--x", "y"], p: "my file" };
   assert.deepEqual(expandTemplate("run [-m {model}] -e {effort} -M {model:def} [--add {roots}] {mode} 'q a' {p}", v),
     ["run", "-e", "high", "-M", "def", "--add", "/a", "--add", "/b", "--x", "y", "q a", "my file"]);
+  // an empty path placeholder takes its preceding flag with it
+  assert.deepEqual(expandTemplate("a --add-dir {gd} --settings {s} -p x", { gd: "", s: "/s.json" }), ["a", "--settings", "/s.json", "-p", "x"]);
+  assert.deepEqual(expandTemplate("a -c k={gd} --add-dir {gd}", { gd: "" }), ["a", "-c", "k="]);
   assert.throws(() => expandTemplate("x {nope}", v), /unknown placeholder/);
   assert.equal(agentDef({ agents: { codex: { mem_max: "6G" } } }, "codex").run, BUILTIN_AGENTS.codex.run);
   assert.equal(agentDef({ agents: { acme: { run: "acme" } } }, "acme").run, "acme");
