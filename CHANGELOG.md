@@ -5,6 +5,10 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
+### Fixed
+- Antigravity quota is tracked per model: `orq quota` lists `antigravity/<model>` lines, an exhausted bucket (no
+  `remainingFraction`, only a `resetTime`) reads as 100% used, and `orq pick` checks the model it is about to choose,
+  falling back to a lighter configured model of the same agent instead of picking an exhausted one (#60).
 
 ## [0.6.0] — 2026-11-05
 ### Added
