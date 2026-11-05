@@ -24,6 +24,7 @@ import { writeAtomic } from "./fsutil.js";
 import { readSecret } from "./keyring.js";
 import { stateDir } from "./paths.js";
 import { m } from "./i18n.js";
+import { modelKey } from "./pick.js";
 
 export type Pct = number | "-" | "?";
 /** span5h/spanWeek: the window's length in minutes when it is not the usual 5 h / 7 days (Codex free's 30 days, Copilot's month). */
@@ -197,7 +198,7 @@ export function codexQuota(): QuotaLine {
 // fraction next to a resetTime means 0 left. Models with no resetTime (tab_*, chat_*) have no window and are skipped.
 interface ModelQuota { quotaInfo?: { remainingFraction?: number; resetTime?: string } }
 /** One model's bucket: % used, when it resets, and whether that is the weekly window (reset more than 6 h away). */
-export interface ModelBucket { used: number; resetsAt: string; week: boolean }
+export interface ModelBucket { used: number; resetsAt: string; week: boolean; learned?: boolean }
 
 /** Per-model buckets, and the agent's own pair: its least used bucket (the agent still has quota while any
  *  model does; `orq pick` checks the model it is about to choose against that model's own bucket). */
@@ -231,6 +232,33 @@ export function modelLines(name: string, buckets: Record<string, ModelBucket>, n
       ...(b.week ? { resetWeek: reset } : { reset5h: reset }), ...(note ? { note } : {}) });
   }
   return out;
+}
+
+/** Learned exhausted buckets (from a run that hit the limit) outlive API readings until their reset, unless the API
+ *  returns that model with something left. The API's own bucket for the model stands in when it also says exhausted. */
+export function mergeLearned(api: Record<string, ModelBucket>, learned: Record<string, ModelBucket>, now = Date.now()): Record<string, ModelBucket> {
+  const out = { ...api };
+  for (const [id, b] of Object.entries(learned)) {
+    if (!b.learned || Date.parse(b.resetsAt) <= now) continue;
+    const key = modelKey(id, Object.keys(api));
+    if (key && api[key].used < 100) continue; // the API says it has quota again
+    out[id] = b;
+  }
+  return out;
+}
+
+/** Record that a run found `model` out of quota for `secs` more seconds (best effort; keeps the cached reading). */
+export function learnExhausted(name: string, model: string, secs: number, acct?: string, now = Date.now()): ModelBucket {
+  const at = now + secs * 1000;
+  const b: ModelBucket = { used: 100, resetsAt: new Date(at).toISOString(), week: at - now > 6 * 3600_000, learned: true };
+  try {
+    let c: { five: Cached; week: Cached; at: number; acct?: string; buckets?: Record<string, ModelBucket> } = { five: { pct: "-" }, week: { pct: "-" }, at: now };
+    try { c = JSON.parse(readFileSync(cacheFile(name), "utf8")); } catch { /* none yet */ }
+    if (acct !== undefined && c.acct !== undefined && c.acct !== acct) c = { five: { pct: "-" }, week: { pct: "-" }, at: now };
+    const buckets = { ...(c.buckets ?? {}), [model]: b };
+    writeAtomic(cacheFile(name), JSON.stringify({ ...c, ...(acct ? { acct } : {}), buckets }));
+  } catch { /* best effort */ }
+  return b;
 }
 
 /** The per-model buckets of the last good reading, when it was this login's. */
@@ -286,7 +314,8 @@ export async function antigravityQuota(): Promise<QuotaLine[]> {
     if (r.status === 401) return stale(expired);
     if (!r.ok) return stale(`HTTP ${r.status}`);
     const j = await r.json() as { models?: Record<string, ModelQuota> };
-    const { five, week, buckets } = antigravityFromModels(j.models ?? {});
+    const { five, week, buckets: api } = antigravityFromModels(j.models ?? {});
+    const buckets = mergeLearned(api, cachedBuckets(name, t.acct));
     return [remember(name, five, week, t.acct, buckets), ...modelLines(name, buckets)];
   } catch (e) {
     return stale(m("collector failed", "coletor falhou") + `: ${(e as Error).message}`);

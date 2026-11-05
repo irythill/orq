@@ -197,7 +197,9 @@ export const expandString = (s: string, vars: Vars) =>
 // Output formats: what to show live from each line of output, and how to read the answer and session at the end.
 export interface Format {
   show(line: string): string | undefined;
-  finish(log: string, stdout: string): { answer?: string; session?: string; rc?: number; denied?: string[] };
+  finish(log: string, stdout: string): { answer?: string; session?: string; rc?: number; denied?: string[];
+    /** The run ended because the model's quota is gone: `secs` until it resets, when the agent said. */
+    exhausted?: { secs?: number; message: string } };
   /** True when the agent has finished but may not exit (OpenCode): the runner stops it after a quiet period. */
   idle?(last: string): boolean;
 }
@@ -277,11 +279,32 @@ export const FORMATS: Record<string, Format> = {
           (denied.length ? denied.map((d) => `- ${d}`).join("\n") : acts.map((a: Obj) => `- ${a.action ?? "command"} (${a.display_name ?? "?"})`).join("\n")) + "\n";
       }
       if (errs.length) answer += (answer ? "\n" : "") + errs.join("\n") + "\n";
-      return { session: lastOf(res.map((r) => r.conversation_id).filter(Boolean)), answer, rc: errs.length || wasDenied ? 3 : undefined,
+      const exhausted = agyExhausted(log, res);
+      return { exhausted, session: lastOf(res.map((r) => r.conversation_id).filter(Boolean)), answer, rc: errs.length || wasDenied ? 3 : undefined,
         denied: wasDenied ? (denied.length ? denied : ["(command)"]) : undefined };
     },
   },
 };
+
+/** "Resets in 123h12m32s" → seconds (undefined without such a duration). */
+export function parseResetIn(text: string): number | undefined {
+  const r = /Resets in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?/i.exec(text);
+  if (!r || !(r[1] || r[2] || r[3])) return undefined;
+  return Number(r[1] ?? 0) * 3600 + Number(r[2] ?? 0) * 60 + Number(r[3] ?? 0);
+}
+
+/** agy's quota failure (RESOURCE_EXHAUSTED / "quota reached"), from the result's error or the AGY_ERROR line. */
+function agyExhausted(log: string, res: Obj[]): { secs?: number; message: string } | undefined {
+  const msgs = res.filter((r) => r.status === "ERROR" || r.error).map((r) => String(r.error ?? ""));
+  for (const l of log.split(/\r?\n/)) {
+    if (!l.startsWith("AGY_ERROR:")) continue;
+    const j = json(l.slice(10).trim());
+    if (j) msgs.push(`${j.status ?? ""} ${j.short_error ?? ""}`);
+  }
+  const text = msgs.find((t) => /RESOURCE_EXHAUSTED|quota reached/i.test(t));
+  if (!text) return undefined;
+  return { secs: parseResetIn(text), message: text.replace(/^.*?(?:\(code 429\):\s*)/, "").trim() };
+}
 
 /** The model in an agent's argv (-m / --model / --model=x), without the provider prefix. */
 export function argvModel(a: string[]): string | undefined {

@@ -11,11 +11,11 @@ import { limitsFor, parseWindows, pick as pickAgent } from "./pick.js";
 import { parseLocal, quotaUntil } from "./commands/block.js";
 import { handoffPrompt, owners, plan, tighter, trimHandoffContext } from "./commands/handoff.js";
 import { setTomlString } from "./toml-set.js";
-import { FORMATS, usesPrompt, useThrowaway } from "./agents.js";
+import { FORMATS, parseResetIn, usesPrompt, useThrowaway } from "./agents.js";
 import { buildPrompt, diagnosisGate, recommendation, trim } from "./diagnose.js";
 import { resolveRole } from "./roles.js";
 import { metrics, parseFindings, repeats, similar, slowRounds, mark } from "./rounds.js";
-import { agyNote, antigravityFromModels, copilotFromUser, format, fromCache, humanReset, minimaxFromRemains, modelLines } from "./quota.js";
+import { agyNote, antigravityFromModels, copilotFromUser, format, fromCache, humanReset, learnExhausted, mergeLearned, minimaxFromRemains, modelLines } from "./quota.js";
 import { writeAtomic } from "./fsutil.js";
 
 process.env.ORQ_LANG = "en"; // messages checked below are the English ones
@@ -2445,6 +2445,42 @@ test("antigravity: denied_actions alone still produce a denied section; a clean 
   assert.equal(ok.answer, "all good");
   assert.equal(ok.denied, undefined);
   assert.equal(ok.rc, undefined);
+});
+
+const AGY_QUOTA_LOG = [
+  '{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"error_message"}}',
+  "error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 123h12m32s.",
+  'AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 123h12m32s.","status":"RESOURCE_EXHAUSTED","error_code":429,"code_kind":"http","retryable":true,"error_id":"x"}',
+  '{"event":"result","result":{"conversation_id":"c3","status":"ERROR","response":"","error":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 123h12m32s.","duration_seconds":0,"num_turns":1,"usage":{"input_tokens":0,"total_tokens":0},"finished_reason":"error"}}',
+].join("\n");
+
+test("antigravity: a quota-reached run is reported as exhausted with the reset time parsed", () => {
+  const r = FORMATS.antigravity.finish(AGY_QUOTA_LOG, "");
+  assert.equal(r.exhausted?.secs, 123 * 3600 + 12 * 60 + 32);
+  assert.match(r.exhausted?.message ?? "", /^Individual quota reached/);
+  assert.equal(FORMATS.antigravity.finish(agyStream([{ event: "result", result: { response: "ok" } }]), "").exhausted, undefined);
+  assert.equal(parseResetIn("Resets in 5m"), 300);
+  assert.equal(parseResetIn("nothing"), undefined);
+});
+
+test("quota: a learned exhausted bucket survives API readings until reset, unless the API shows the model with quota left", () => {
+  const root = mkdtempSync(join(tmpdir(), "orq-learn-"));
+  const old = process.env.XDG_STATE_HOME; process.env.XDG_STATE_HOME = root;
+  try {
+    const now = Date.parse("2026-11-05T15:00:00Z");
+    const b = learnExhausted("antigravity", "gemini-4-argon-high", 123 * 3600 + 12 * 60 + 32, "acct1", now);
+    assert.equal(b.used, 100); assert.equal(b.week, true);
+    assert.equal(b.resetsAt, new Date(now + (123 * 3600 + 12 * 60 + 32) * 1000).toISOString());
+    const learned = { "gemini-4-argon-high": b };
+    const api = antigravityFromModels({ "gemini-3.8-flash-tiered": { quotaInfo: { remainingFraction: 0.9, resetTime: "2026-11-05T16:00:00Z" } } }, now).buckets;
+    const merged = mergeLearned(api, learned, now + 1000);
+    assert.equal(merged["gemini-4-argon-high"].used, 100);   // API has no bucket for it: kept
+    assert.ok(modelLines("antigravity", merged, now + 1000).some((l) => l.name === "antigravity/gemini-4-argon-high" && l.week === 100));
+    const back = antigravityFromModels({ "gemini-4-argon-high": { quotaInfo: { remainingFraction: 0.5, resetTime: "2026-11-12T00:00:00Z" } } }, now).buckets;
+    assert.equal(mergeLearned(back, learned, now + 1000)["gemini-4-argon-high"].used, 50); // API has quota again
+    assert.equal(mergeLearned(api, learned, Date.parse(b.resetsAt) + 1)["gemini-4-argon-high"], undefined); // reset passed
+    assert.equal(JSON.parse(readFileSync(join(root, "orq", "quota", "antigravity.json"), "utf8")).buckets["gemini-4-argon-high"].learned, true);
+  } finally { if (old === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = old; rmSync(root, { recursive: true, force: true }); }
 });
 
 test("writeAtomic: creates parent directories, writes UTF-8, overwrites existing file, and leaves no .tmp file", () => {

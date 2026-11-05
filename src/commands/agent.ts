@@ -20,6 +20,7 @@ import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
 import { alive } from "../lock.js";
+import { agyToken, humanReset, learnExhausted } from "../quota.js";
 import { stateDir } from "../paths.js";
 import { killedRc, killTree, type MemMode, parseSize, resolveMode, runCapped } from "../process.js";
 import { closeOwnTab, detectHost, type Host, launch, screenOpen, shq, typeInto } from "../terminal.js";
@@ -493,6 +494,18 @@ async function runJob(file: string): Promise<number> {
       recovered = true;
       res.answer = `${res.answer ?? ""}\n## Worktree\nSome commands were denied, but the worktree changes are kept (review them before accepting):\n\`\`\`\n${stat}\n\`\`\`\n`;
     } else res.answer = `${res.answer ?? ""}\nNo changes were made in the worktree.\n`;
+  }
+  // Out of quota: not a code failure. Learn the model's bucket (orq quota / pick see it) and say why, so the conductor re-picks.
+  if (res.exhausted) {
+    const model = argvModel(j.argv);
+    let until = "";
+    if (res.exhausted.secs !== undefined) {
+      const at = Date.now() + res.exhausted.secs * 1000;
+      if (model) learnExhausted("antigravity", model, res.exhausted.secs, agyToken()?.acct);
+      until = ` ${m("until", "até")} ${humanReset(Math.floor(at / 1000))} (${new Date(at).toISOString()})`;
+    }
+    res.answer = `quota exhausted: ${model ?? j.agent}${until}\n\n${res.exhausted.message}\n`;
+    res.rc = res.rc || 3;
   }
   if (j.answer !== "file") writeFileSync(`${O}.out.md`, res.answer ?? "");
   const sid = j.fromLog ? new RegExp(j.fromLog, "m").exec(logText)?.[1] : res.session ?? j.session;
