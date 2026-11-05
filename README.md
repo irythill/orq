@@ -162,6 +162,9 @@ handoff_at = 85                          # % of the window → orq handoff moves
 max_per_account = 2                      # an account already holding this many conductors is never a handoff target
 reset_grace_min = 15                     # every window over the trigger resetting within this many minutes skips the move
 
+[git]
+issue_pattern = "(?<![a-z0-9])(?<issue>[a-z][a-z0-9]*-\\d+)(?![a-z0-9])"   # Branch/worktree name → issue ID, for `orq gc` and `orq ci` — default shown; regex, named group `issue` (else group 1)
+
 [policy]
 quota_week = 95                          # ≥ 95% of the week → agent out
 quota_5h = { simple = 90, medium = 85, heavy = 80 }  # same for the 5h window, by task level

@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { aliveOwner } from "./commands/claim.js";
 import { writeAtomic } from "./fsutil.js";
 import { m } from "./i18n.js";
-import { issueFromName } from "./issue.js";
+import { issueFromName, issuePattern } from "./issue.js";
 import { alive } from "./lock.js";
 import { stateDir } from "./paths.js";
 import { notify } from "./testrun.js";
@@ -90,10 +90,10 @@ export function listWorktrees(ws: string): { repo: string; branch: string }[] {
 }
 
 /** The repo + branch an issue's worktree carries, the same match `orq gc` uses: a worktree branch ending in
- *  "plane-<id, lowercase>[-suffix]" under <ws>/.worktrees. An issue can have one per repo (several repos in play).
+ *  the issue ID (git.issue_pattern; any "plane-" prefix or suffix is ignored) under <ws>/.worktrees. An issue can have one per repo (several repos in play).
  *  `all` lets a caller looping over several issues pass its own listWorktrees(ws) once instead of one per issue. */
-export function issueBranches(ws: string, issue: string, all = listWorktrees(ws)): { repo: string; branch: string }[] {
-  return all.filter((b) => issueFromName(b.branch)?.toLowerCase() === issue.toLowerCase());
+export function issueBranches(ws: string, issue: string, all = listWorktrees(ws), pattern?: string): { repo: string; branch: string }[] {
+  return all.filter((b) => issueFromName(b.branch, pattern)?.toLowerCase() === issue.toLowerCase());
 }
 
 export interface RollupItem { __typename?: string; status?: string; conclusion?: string; state?: string }
@@ -186,9 +186,9 @@ export function collectCi(ws: string, hooks: { desktop?: typeof notifyDesktop; o
   // Detached: collectCi() must never block on a conductor stuck in a dialog (herdr-notify waits up to 30 min).
   const desktop = hooks.desktop ?? notifyDesktop, toOwner = hooks.owner ?? ((pane: string, line: string) => notify(pane, line)),
     notice = hooks.notice ?? ((l: string) => console.log(l));
-  const now = Date.now(), worktrees = listWorktrees(ws);
+  const now = Date.now(), worktrees = listWorktrees(ws), pattern = issuePattern(ws);
   const found = claimedIssues(ws).flatMap(({ id, owner, kind }) =>
-    issueBranches(ws, id, worktrees).map(({ repo, branch }) => ({ id, owner, kind, repo, branch, ...prStatus(join(ws, repo), branch) })));
+    issueBranches(ws, id, worktrees, pattern).map(({ repo, branch }) => ({ id, owner, kind, repo, branch, ...prStatus(join(ws, repo), branch) })));
 
   const toNotify: { owner: string; kind: string; id: string; repo: string; state: CiState; sha: string }[] = [];
   const mine: CiEntry[] = withCacheLock(() => {

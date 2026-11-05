@@ -35,6 +35,9 @@ export const DEFAULTS: Obj = {
   // Where quota comes from, per agent: "builtin" | "none" | false | { command = "..." } (see src/quota.ts).
   // "claude" covers every account in claude-accounts.
   quota: { claude: "builtin", codex: "builtin", opencode: "builtin", antigravity: "builtin", copilot: "builtin" },
+  // Issue ID in a branch/worktree name (orq gc, orq ci): case-insensitive regex, the named group "issue" (else group 1) is the ID.
+  // The default finds <LETTERS>-<DIGITS> anywhere (feature/ABC-123, abc-123-fix, plane-abc-123-api-2); suffixes are ignored.
+  git: { issue_pattern: "(?<![a-z0-9])(?<issue>[a-z][a-z0-9]*-\\d+)(?![a-z0-9])" },
   tracker: { kind: "none" }, // plane | none
   repos: {}, // defined by the workspace
 };

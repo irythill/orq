@@ -192,6 +192,21 @@ test("issueFromName: <PROJ>-<N> with any trailing suffix ignored", () => {
   assert.equal(issueFromName("x/plane-dirty"), undefined);
 });
 
+test("issueFromName: default finds <LETTERS>-<DIGITS> anywhere", () => {
+  assert.equal(issueFromName("feature/ABC-123"), "ABC-123");
+  assert.equal(issueFromName("abc-123-fix"), "abc-123");
+  assert.equal(issueFromName("plane-abc-123-api-2"), "abc-123");
+  assert.equal(issueFromName("JIRA-42"), "JIRA-42");
+  assert.equal(issueFromName("main"), undefined);
+});
+
+test("issueFromName: a custom pattern overrides the default", () => {
+  assert.equal(issueFromName("fix/123-login", "(?<issue>\\d+)-"), "123");
+  assert.equal(issueFromName("t/gh-7-x", "gh-(\\d+)"), "7"); // no named group: group 1
+  assert.equal(issueFromName("t/abc-1", "^zzz"), undefined);
+  assert.throws(() => issueFromName("x", "("), /git\.issue_pattern/);
+});
+
 test("gc: prunes agent state files of finished/dead runs older than --days, keeps live and recent ones", () => {
   const { root, run } = sandbox(), ws = join(root, "ws"), st = join(root, "state", "orq", "agents"), now = Date.now();
   const iso = (ms: number) => new Date(ms).toISOString(), dead = spawnSync(process.execPath, ["-e", ""]).pid!, day = 86400_000;
