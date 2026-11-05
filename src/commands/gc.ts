@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from "nod
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { getPath, loadConfig } from "../config.js";
 import { m } from "../i18n.js";
+import { issueFromName, issuesWithLiveAgent } from "../issue.js";
 import { alive } from "../lock.js";
 import { stateDir } from "../paths.js";
 import { aliveOwner } from "./claim.js";
@@ -60,6 +61,7 @@ export async function gc(argv: string[], clock: () => number = Date.now): Promis
   let ghUnavailable = false, fetchWarned = false;
   const root = join(ws, ".worktrees");
   const orq = join(ws, ".orquestra");
+  const liveAgents = issuesWithLiveAgent();
   const issues = existsSync(orq) ? readdirSync(orq).filter((x) => !x.startsWith(".")) : [];
   for (const repoName of readdirSync(ws, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)) {
     const repo = join(ws, repoName);
@@ -83,8 +85,8 @@ export async function gc(argv: string[], clock: () => number = Date.now): Promis
       if (!wt.worktree || path === main || !inside(real(root), path)) continue;
       const branch = wt.branch?.replace(/^refs\/heads\//, "") ?? "";
       if (!branch) continue;
-      // The branch carries the ID in lowercase (plane-abc-123); .orquestra/ keeps it as written (ABC-123).
-      const id = /^.*?plane-(.+)$/.exec(branch)?.[1];
+      // The branch carries the ID in lowercase (plane-abc-123, maybe with a -suffix); .orquestra/ keeps it as written (ABC-123).
+      const id = issueFromName(branch);
       const issue = id && issues.find((d) => d.toLowerCase() === id.toLowerCase());
       const status = output(path, "status", "--porcelain");
       const unpushed = output(repo, "rev-list", branch, "--not", "--remotes");
@@ -94,12 +96,8 @@ export async function gc(argv: string[], clock: () => number = Date.now): Promis
       if (verdict !== "KEEP" && ownerFile && existsSync(ownerFile) && aliveOwner(readFileSync(ownerFile, "utf8"))) {
         verdict = "KEEP"; reason = m("issue has a live owner", "issue tem um responsável ativo");
       }
-      // A .pane/.id without a same-stem .done is treated as a running child.
-      const issueDir = issue && join(ws, ".orquestra", issue);
-      if (verdict !== "KEEP" && issueDir && existsSync(issueDir)) {
-        const files = readdirSync(issueDir), running = files.some((f) => /\.(pane|id)$/.test(f) && !existsSync(join(issueDir, `${f.replace(/\.(pane|id)$/, "")}.done`)));
-        if (running) { verdict = "KEEP"; reason = m("child agent may still be running", "um agente filho pode estar em execução"); }
-      }
+      // A child agent of the issue whose state says running and whose pid is alive (the board's rule).
+      if (verdict !== "KEEP" && issue && liveAgents.has(issue)) { verdict = "KEEP"; reason = m("child agent may still be running", "um agente filho pode estar em execução"); }
       let merged = false;
       if (verdict !== "KEEP") {
         // Merged counts only if the PR's head is the local head: a commit made after the merge must not be lost.
