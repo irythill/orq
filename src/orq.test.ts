@@ -2227,12 +2227,13 @@ test("writeAtomic: creates parent directories, writes UTF-8, overwrites existing
   const root = mkdtempSync(join(tmpdir(), "orq-atomic-"));
   const dir = join(root, "nested", "sub");
   const file = join(dir, "data.txt");
+  try {
+    writeAtomic(file, "ação ✓\n");
+    assert.equal(readFileSync(file, "utf8"), "ação ✓\n");
+    assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith(".tmp")), []);
 
-  writeAtomic(file, "ação ✓\n");
-  assert.equal(readFileSync(file, "utf8"), "ação ✓\n");
-  assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith(".tmp")), []);
-
-  writeAtomic(file, "overwritten\n");
-  assert.equal(readFileSync(file, "utf8"), "overwritten\n");
-  assert.deepEqual(readdirSync(dir), ["data.txt"]);
+    writeAtomic(file, "overwritten\n");
+    assert.equal(readFileSync(file, "utf8"), "overwritten\n");
+    assert.deepEqual(readdirSync(dir), ["data.txt"]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
