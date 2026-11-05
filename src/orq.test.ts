@@ -2220,6 +2220,24 @@ process.stdin.resume().on("data", () => {}).on("end", () => process.exit(0));\n`
   assert.match(c.out, /status=fail/);
 });
 
+test("board idle: an agent tree with ~no CPU for 30+ min reads idle; real work resets it", async () => {
+  const { idleFor, cpuTicks, render } = await import("./commands/board.js");
+  const base: Record<string, { ticks: number; at: number }> = {}, min = 60_000, t0 = 1_000_000;
+  assert.equal(idleFor(base, "u", 5000, t0), 0); // first sight: baseline
+  assert.equal(idleFor(base, "u", 5010, t0 + 29 * min), 0); // quiet, but not long enough
+  assert.equal(idleFor(base, "u", 5020, t0 + 31 * min), 31 * 60); // ~no CPU for 31 min
+  assert.equal(idleFor(base, "u", 5400, t0 + 32 * min), 0); // 3.8 s of CPU: working again, baseline moves
+  assert.equal(idleFor(base, "u", 5400, t0 + 40 * min), 0);
+  assert.equal(idleFor(base, "u", 100, t0 + 80 * min), 0); // ticks went down: a new tree
+  if (process.platform === "linux") assert.ok((cpuTicks([process.pid]) ?? -1) >= 0);
+  const a = { unit: "u", title: "t", agent: "claude", pid: 1, issue: "A-1", label: "impl", secs: 57600, age: 57600, mem: 2 ** 30 };
+  const snap = { at: new Date().toISOString(), mem: { used: 1, total: 2 }, workspaces: ["/w"], queue: { holders: [], waiters: [] },
+    agents: [{ ...a, state: "idle", idleSecs: 3600 }], conductors: [], quota: { lines: [] }, ci: { entries: [] }, blocks: {}, scoreboard: [], notices: [] };
+  const text = render(snap as never, "gunmetal", 100, "none").join("\n");
+  assert.match(text, /◌.*idle 1h00m/);
+  assert.ok(!/older finished hidden/.test(text), "an idle row is never folded away");
+});
+
 test("killed: 128+signal is never ok (done status, wait, board state, stats)", async () => {
   const { killedRc, doneStatus } = await import("./process.js");
   assert.deepEqual([killedRc(137), killedRc(143), killedRc(129), killedRc(1), killedRc(0), killedRc(undefined), killedRc(255)], [true, true, true, false, false, false, false]);

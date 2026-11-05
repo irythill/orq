@@ -19,7 +19,7 @@ import { m, setLang } from "../i18n.js";
 import { argvModel } from "../agents.js";
 import { alive, status as lockStatus } from "../lock.js";
 import { expand, stateDir } from "../paths.js";
-import { killedRc, processTableAsync, treeMem } from "../process.js";
+import { killedRc, processTableAsync, treeMem, treePids } from "../process.js";
 import { collect, type Source } from "../quota.js";
 import { collectRounds, mark, roundsSig, type Metrics } from "../rounds.js";
 import { collectRuns, type Row, rows } from "../stats.js";
@@ -37,7 +37,7 @@ type Table = Map<number, [number, number]>;
 // --- snapshot ---------------------------------------------------------------------------------------------------
 export interface Agent {
   unit: string; title: string; agent: string; model?: string; host?: string; pid: number; issue: string; label: string;
-  state: "running" | "died" | "ok" | "fail" | "killed"; rc?: number; secs: number; age: number; mem?: number; cap?: number; activity?: string;
+  state: "running" | "idle" | "died" | "ok" | "fail" | "killed"; rc?: number; secs: number; age: number; idleSecs?: number; mem?: number; cap?: number; activity?: string;
 }
 export interface QItem { label: string; pid: number; secs: number; mem?: number }
 export interface Conductor { id: string; kind: string; account: string; alive: boolean; issues: string[]; name: string; rounds?: Record<string, Pick<Metrics, "rounds" | "max" | "level">> }
@@ -95,9 +95,42 @@ function tail(file: string, bytes = 16_384): string {
   } catch { return ""; } finally { if (fd !== undefined) closeSync(fd); }
 }
 
+// --- idle detection -----------------------------------------------------------------------------------------------
+// An interactive (-T) agent that finished keeps its screen, and its pid, open: "running" for hours. Its tree's CPU time
+// (/proc/<pid>/stat, utime+stime) barely moves while it only waits. Samples persist in <state>/board/cpu.json so a
+// one-shot board and a restarted one see the same history: per unit, the CPU reading when it last did real work.
+const IDLE_MIN = 30, ACTIVE_TICKS = 200; // 2 s of CPU (at 100 ticks/s) since the baseline counts as work
+export type CpuBase = Record<string, { ticks: number; at: number }>;
+
+/** utime+stime, in clock ticks, summed over `pids` (Linux; undefined elsewhere or when nothing is readable). */
+export function cpuTicks(pids: number[]): number | undefined {
+  if (process.platform !== "linux") return undefined;
+  let sum: number | undefined;
+  for (const p of pids) {
+    // comm (field 2) may hold spaces and parens: fields resume after the last ")"; state is field 3, utime/stime 14/15.
+    const raw = read(`/proc/${p}/stat`), f = raw.slice(raw.lastIndexOf(")") + 2).split(" ");
+    const t = Number(f[11]) + Number(f[12]);
+    if (!Number.isNaN(t)) sum = (sum ?? 0) + t;
+  }
+  return sum;
+}
+
+/** Seconds `unit` has been idle (no real CPU work since its baseline), or 0 while it is not; updates `base` in place. */
+export function idleFor(base: CpuBase, unit: string, ticks: number, now: number, idleMin = IDLE_MIN): number {
+  const b = base[unit];
+  if (!b || ticks < b.ticks || ticks - b.ticks >= ACTIVE_TICKS) { base[unit] = { ticks, at: now }; return 0; } // new, restarted tree, or worked
+  return now - b.at >= idleMin * 60_000 ? Math.round((now - b.at) / 1000) : 0;
+}
+
+const cpuFile = () => join(qdir(), "cpu.json");
+function idleMinutes(): number {
+  const v = Number(getPath(loadConfig().cfg, "ui.board_idle_min") ?? IDLE_MIN);
+  return v > 0 ? v : IDLE_MIN;
+}
+
 function agents(table: Table | undefined, now: number): Agent[] {
-  const d = join(stateDir(), "agents"), out: Agent[] = [];
-  let files: string[] = [];
+  const d = join(stateDir(), "agents"), out: Agent[] = [], running = new Set<string>(), cpu: CpuBase = (() => { try { return JSON.parse(read(cpuFile())) as CpuBase; } catch { return {}; } })();
+  let idleMin: number | undefined, files: string[] = [];
   try { files = readdirSync(d).filter((f) => f.endsWith(".json")); } catch { /* no runs yet */ }
   for (const f of files) {
     let s: Record<string, unknown>;
@@ -110,12 +143,21 @@ function agents(table: Table | undefined, now: number): Agent[] {
       secs: Math.max(0, Math.round(((end ?? now) - at) / 1000)), age: Math.max(0, Math.round((now - (end ?? at)) / 1000)), cap: typeof s.cap === "number" ? s.cap : undefined };
     if (s.rc !== undefined) a.rc = Number(s.rc);
     if (st === "running") {
-      if (table) a.mem = treeMem(pid, table);
+      if (table) {
+        a.mem = treeMem(pid, table);
+        const t = cpuTicks(treePids(pid, table));
+        if (t !== undefined) { running.add(a.unit); const i = idleFor(cpu, a.unit, t, now, idleMin ??= idleMinutes()); if (i) { a.state = "idle"; a.idleSecs = i; } }
+      }
       a.activity = activity(tail(`${prefix}.log`))?.replace(/\s+/g, " ").replace(homedir(), "~").slice(0, 60);
     }
     out.push(a);
   }
-  const rank = { running: 0, died: 1, killed: 2, fail: 2, ok: 3 };
+  if (table) { // keep baselines of units still running; the rest are done or gone
+    for (const u of Object.keys(cpu)) if (!running.has(u)) delete cpu[u];
+    const text = JSON.stringify(cpu);
+    if (text !== read(cpuFile())) { try { mkdirSync(qdir(), { recursive: true }); writeAtomic(cpuFile(), text); } catch { /* best effort */ } }
+  }
+  const rank = { running: 0, idle: 1, died: 1, killed: 2, fail: 2, ok: 3 };
   return out.sort((x, y) => rank[x.state] - rank[y.state] || y.secs - x.secs);
 }
 
@@ -331,15 +373,17 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
   section("TRACKS", m("agents", "agentes"));
   // A finished or dead agent stops being news after a while; running ones always show. age = since its end (a
   // died row's end is unknown: since its start).
-  const old = (a: Agent) => a.state !== "running" && a.age > hideH * 3600;
+  const old = (a: Agent) => a.state !== "running" && a.state !== "idle" && a.age > hideH * 3600;
   const shownAgents = s.agents.filter((a) => !old(a)), hidden = s.agents.length - shownAgents.length;
   shownAgents.forEach((a, i) => {
     const n = `${c.mut}${String(i + 1).padStart(2, "0")}${c.r}`, who = `${c.ink}${fit(a.issue, 9)}${c.r} ${c.ink2}${fit(a.label, 22)}${c.r} `
       + `${c.ink}${fit(a.agent, 11)}${c.r}${c.mut}${fit(a.model ?? m("default", "padrão"), 17)}${c.r} ${c.ink}${(a.state === "died" ? "?" : dur(a.secs)).padEnd(7)}${c.r}`; // died: when it stopped is unknown
-    if (a.state === "running") {
+    if (a.state === "running" || a.state === "idle") {
       const pct = a.cap && a.mem ? Math.round(100 * a.mem / a.cap) : 0, used = 1 + 2 + 2 + 10 + 23 + 11 + 17 + 1 + 8 + 6 + 1 + 7 + 1;
-      const warn = a.secs > 3 * 3600 ? ` ${c.err}⚠ ${m("for", "há")} ${dur(a.secs)}${c.r}` : "";
-      out.push(` ${c.acc}●${c.r} ${n}  ${who} ${meter(pct, 4)} ${c.ink2}${gb(a.mem).padEnd(6)}${c.r} ${c.mut}${fit(a.activity ?? "", Math.max(0, W - used - 2)).trimEnd()}${c.r}${warn}`);
+      const idle = a.state === "idle", mark = idle ? `${c.wrn}◌` : `${c.acc}●`;
+      const warn = !idle && a.secs > 3 * 3600 ? ` ${c.err}⚠ ${m("for", "há")} ${dur(a.secs)}${c.r}` : "";
+      const what = idle ? `${c.wrn}${m("idle", "ocioso")} ${dur(a.idleSecs ?? 0)}` : fit(a.activity ?? "", Math.max(0, W - used - 2)).trimEnd();
+      out.push(` ${mark}${c.r} ${n}  ${who} ${meter(pct, 4)} ${c.ink2}${gb(a.mem).padEnd(6)}${c.r} ${c.mut}${what}${c.r}${warn}`);
     } else if (a.state === "died")
       out.push(` ${c.err}●${c.r} ${n}  ${who} ${c.err}${m("runner gone without finishing", "runner sumiu sem terminar")}${c.r}`);
     else out.push(` ${a.state === "ok" ? c.ok : c.err}${a.state === "ok" ? "✓" : "✗"}${c.r} ${n}  ${c.mut}${a.issue.padEnd(9).slice(0, 9)} ${fit(a.label, 22)} ${fit(a.agent, 11)}${fit(a.model ?? "", 17)} ${dur(a.secs).padEnd(7)} ${a.state} rc=${a.rc ?? "?"}${c.r}`);
