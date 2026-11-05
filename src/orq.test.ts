@@ -2257,7 +2257,7 @@ test("killed: 128+signal is never ok (done status, wait, board state, stats)", a
   assert.equal(b.agents.find((a: { unit: string }) => a.unit === "u1").state, "killed");
 });
 
-test("agent: a run killed by SIGKILL is status=killed rc=137, not ok", () => {
+test("agent: a run killed by SIGKILL is status=killed rc=137, not ok", { skip: process.platform === "win32" }, () => { // no POSIX signals on Windows
   const { root, env, run } = sandbox();
   for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
   (env as Record<string, string>).ORQ_TERMINAL = "plain";

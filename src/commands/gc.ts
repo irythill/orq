@@ -1,7 +1,7 @@
 // orq gc — find issue worktrees whose branch is already safe to remove.
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { getPath, loadConfig } from "../config.js";
 import { m } from "../i18n.js";
 import { alive } from "../lock.js";
@@ -12,8 +12,15 @@ export const USAGE = "orq gc [-w <workspace>] [--yes] [--days N] [--json]   remo
 type Row = { repo: string; worktree: string; branch: string; verdict: "KEEP" | "REMOVABLE" | "STALE"; reason: string; path: string };
 const git = (cwd: string, ...args: string[]) => spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
 // Paths as git prints them can differ from ours (macOS /var → /private/var, Windows C:/ vs C:\): compare real paths.
-const real = (p: string) => { try { return realpathSync.native(p); } catch { return resolve(p); } };
-const inside = (dir: string, p: string) => { const r = relative(dir, p); return !!r && !r.startsWith("..") && !isAbsolute(r); };
+// A path that does not exist (yet) is resolved through its deepest existing ancestor, so both sides get the same prefix.
+const real = (p: string): string => {
+  const abs = resolve(p);
+  try { return realpathSync.native(abs); } catch { /* missing: resolve the parent */ }
+  const up = dirname(abs);
+  return up === abs ? abs : join(real(up), basename(abs));
+};
+const fold = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p); // NTFS is case-insensitive
+const inside = (dir: string, p: string) => { const r = relative(fold(dir), fold(p)); return !!r && !r.startsWith("..") && !isAbsolute(r); };
 // ORQ_GH may be a .js file (tests: a fake gh that also runs on Windows).
 const gh = (cwd: string, args: string[]) => {
   const bin = process.env.ORQ_GH || "gh";
