@@ -72,24 +72,37 @@ async function diagnoseIssue(ws: string, id: string, x: Metrics): Promise<number
   }
   const ev = evidence(dir);
   writeFileSync(`${prefix}.md`, buildPrompt(x, ev.fixes, ev.reviews));
-  const p = orq("pick", "watchdog", "--level", "simple", "-w", ws, ...(implPick ? ["--impl-agent", implPick] : []));
-  if (p.status !== 0) { console.error(p.stderr.trim() || `orq pick watchdog: exit ${p.status}`); return p.status ?? 1; }
-  const picked = p.stdout.trim().split(/\s+/);
-  // The agent runs in a scratch folder (everything it needs is in the prompt): it can't touch the issue files, even write sandboxed.
-  const scratch = mkdtempSync(join(tmpdir(), "orq-watchdog-"));
-  try {
-    const a = orq("agent", ...picked, "-r", "-t", `${id} watchdog`, "-d", scratch, "-g", "watchdog", "-o", prefix, "--", `${prefix}.md`);
-    process.stderr.write(a.stderr); process.stdout.write(a.stdout);
-    if (a.status !== 0) return a.status ?? 1;
-    return await finish(await wait(["--timeout", String(WATCHDOG_TIMEOUT), prefix]), prefix, out);
-  } finally { rmSync(scratch, { recursive: true, force: true }); }
+  // A failed watchdog (e.g. a model catalog timeout) gets one retry with the next candidate, never the same agent.
+  const excluded: string[] = [];
+  let first: { rc: number; agent?: string } | undefined;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const p = orq("pick", "watchdog", "--level", "simple", "-w", ws, ...(implPick ? ["--impl-agent", implPick] : []), ...excluded.flatMap((e) => ["--exclude-agent", e]));
+    if (p.status !== 0) {
+      if (first) { console.error(m("the watchdog agent failed; no diagnosis written", "o agente watchdog falhou; diagnóstico não gravado")); return first.rc; }
+      console.error(p.stderr.trim() || `orq pick watchdog: exit ${p.status}`); return p.status ?? 1;
+    }
+    const picked = p.stdout.trim().split(/\s+/), agent = /(?:^|\s)-a (\S+)/.exec(p.stdout)?.[1];
+    // The agent runs in a scratch folder (everything it needs is in the prompt): it can't touch the issue files, even write sandboxed.
+    const scratch = mkdtempSync(join(tmpdir(), "orq-watchdog-"));
+    const run = `${prefix}-${attempt}`;
+    try {
+      writeFileSync(`${run}.md`, readFileSync(`${prefix}.md`));
+      const a = orq("agent", ...picked, "-r", "-t", `${id} watchdog`, "-d", scratch, "-g", "watchdog", "-o", run, "--", `${run}.md`);
+      process.stderr.write(a.stderr); process.stdout.write(a.stdout);
+      const rc = a.status !== 0 ? a.status ?? 1 : await finish(await wait(["--timeout", String(WATCHDOG_TIMEOUT), run]), run, out, agent, attempt === 1 || !agent);
+      if (rc === 0 || rc === 124 || !agent) return rc;
+      if (attempt === 0) console.error(m(`watchdog ${agent} failed; retrying with another agent`, `watchdog ${agent} falhou; tentando com outro agente`));
+      first = { rc }; excluded.push(agent);
+    } finally { rmSync(scratch, { recursive: true, force: true }); }
+  }
+  return first?.rc ?? 1;
 }
 
-async function finish(rc: number, prefix: string, out: string): Promise<number> {
+async function finish(rc: number, prefix: string, out: string, agent?: string, final = true): Promise<number> {
   if (rc === 124) { console.error(m(`diagnosis not written: the watchdog agent did not finish in ${WATCHDOG_TIMEOUT}s`, `diagnóstico não gravado: o agente watchdog não terminou em ${WATCHDOG_TIMEOUT}s`)); return 124; }
-  if (rc !== 0 || !existsSync(`${prefix}.out.md`)) { console.error(m("the watchdog agent failed; no diagnosis written", "o agente watchdog falhou; diagnóstico não gravado")); return 1; }
+  if (rc !== 0 || !existsSync(`${prefix}.out.md`)) { if (final) console.error(m("the watchdog agent failed; no diagnosis written", "o agente watchdog falhou; diagnóstico não gravado")); return 1; }
   copyFileSync(`${prefix}.out.md`, out);
-  console.log(m(`diagnosis saved to ${out}`, `diagnóstico gravado em ${out}`));
+  console.log(m(`diagnosis saved to ${out}${agent ? ` (by ${agent})` : ""}`, `diagnóstico gravado em ${out}${agent ? ` (por ${agent})` : ""}`));
   console.log(recommendation(readFileSync(out, "utf8")) ?? m("(no RECOMMENDATION line in the answer)", "(sem linha RECOMMENDATION na resposta)"));
   return 0;
 }

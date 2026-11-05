@@ -2058,6 +2058,33 @@ test("orq rounds --diagnose refuses while a previous watchdog run is alive", () 
   assert.match(r.stderr, /still running/);
 });
 
+test("orq rounds --diagnose: a failed watchdog is retried once with another agent, which is named", () => {
+  const { root, env, run } = sandbox(), d = join(root, ".orquestra", "ABC-5");
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  (env as Record<string, string>).ORQ_TERMINAL = "plain";
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, "review-app.out.md"), "- [blocker] src/a.ts:1 missing null check on input\n");
+  writeFileSync(join(d, "fix-1.md"), "x"); writeFileSync(join(d, "fix-2.md"), "x");
+  // Whichever agent runs first fails (like a model catalog timeout); the other answers. Each run is logged by name.
+  const fake = join(root, "fake.mjs"), seen = join(root, "seen");
+  writeFileSync(fake, `import { appendFileSync, existsSync } from "node:fs";
+process.stdin.resume(); process.stdin.on("end", () => {
+  const first = !existsSync(${JSON.stringify(seen)}); appendFileSync(${JSON.stringify(seen)}, process.argv[2] + "\\n");
+  if (first) { console.error("Failed to load models"); process.exit(1); }
+  console.log("RECOMMENDATION: continue"); });\n`);
+  const mk = (name: string, vendor: string) => ({ vendor, roles: ["watchdog"], run: `'${process.execPath}' '${fake}' ${name}`, stdin: true, write: false,
+    models: { watchdog: { default: "m@low" } }, mem_max: "off" });
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { one: mk("one", "v1"), two: mk("two", "v2") } }));
+  const r = run("rounds", "ABC-5", "--diagnose", "-w", root);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const ran = readFileSync(seen, "utf8").trim().split(/\r?\n/);
+  assert.equal(ran.length, 2); assert.notEqual(ran[0], ran[1]);
+  assert.match(r.stderr, /retrying with another agent/);
+  assert.match(r.stdout, new RegExp(`\\(by ${ran[1]}\\)`));
+  assert.match(readFileSync(join(d, "diagnosis-2.md"), "utf8"), /RECOMMENDATION/);
+});
+
 test("block --quota: the used-up week, else the 5h window; none known → nothing", () => {
   assert.equal(quotaUntil("codex 5h=89% reset5h=100 week=21% resetweek=900"), 100);
   assert.equal(quotaUntil("codex 5h=40% reset5h=100 week=100% resetweek=900"), 900);
