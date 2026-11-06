@@ -5,7 +5,11 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
+
+## [0.6.1] — 2026-11-06
 ### Fixed
+- `orq setup --workspace` writes `.orquestra-conductor.md` (and the package ships its template), so `orq conductor`
+  starts in a freshly prepared workspace instead of failing with "no .orquestra-conductor.md here" (#63).
 - `orq pick` blends each agent's prior with its measured delivery/economy/speed, `(prior·k + observed·n)/(k + n)`
   with k = `min_samples`, instead of a flat prior below `min_samples` runs: an under-sampled agent that costs far more
   no longer wins on economy. The `explore` bonus fades with n and stops after `policy.weights.explore_streak` (2)

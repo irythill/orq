@@ -5,7 +5,11 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
+
+## [0.6.1] — 2026-11-06
 ### Corrigido
+- `orq setup --workspace` grava o `.orquestra-conductor.md` (e o pacote leva o template dele), então o `orq conductor`
+  abre num workspace recém-preparado em vez de falhar com "no .orquestra-conductor.md here" (#63).
 - `orq pick` mistura o prior de cada agente com a entrega/economia/rapidez medidas, `(prior·k + medido·n)/(k + n)`
   com k = `min_samples`, em vez de um prior fixo abaixo de `min_samples` execuções: um agente com poucos dados e custo
   muito maior não ganha mais em economia. O bônus `explore` diminui com n e para depois de
