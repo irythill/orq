@@ -14,7 +14,7 @@ import { setTomlString } from "./toml-set.js";
 import { FORMATS, parseResetIn, usesPrompt, useThrowaway } from "./agents.js";
 import { buildPrompt, diagnosisGate, recommendation, trim } from "./diagnose.js";
 import { resolveRole } from "./roles.js";
-import { metrics, parseFindings, repeats, similar, slowRounds, mark } from "./rounds.js";
+import { metrics, parseFindings, repeats, similar, slowRounds, freshRounds, mark } from "./rounds.js";
 import { agyNote, antigravityFromModels, copilotFromUser, format, fromCache, humanReset, learnExhausted, mergeLearned, minimaxFromRemains, modelLines } from "./quota.js";
 import { writeAtomic } from "./fsutil.js";
 
@@ -1133,6 +1133,36 @@ test("agent: a review tool gets {base}, exits 1 on findings (ok_exit) and its ou
   assert.match(readFileSync(`${O}.log`, "utf8"), /filter failed \(exit 3\)/);
 });
 
+test("agent: -b <commit> attaches only that round's delta; -b <branch> the whole branch", () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  (env as Record<string, string>).ORQ_TERMINAL = "plain";
+  const repo = join(root, "r"), git = (...a: string[]) => spawnSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" });
+  mkdirSync(repo);
+  git("init", "-q"); git("commit", "-q", "--allow-empty", "-m", "base"); git("update-ref", "refs/remotes/origin/main", "HEAD");
+  writeFileSync(join(repo, "impl.txt"), "impl\n"); git("add", "."); git("commit", "-q", "-m", "impl");
+  const sha = git("rev-parse", "HEAD").stdout.trim();
+  writeFileSync(join(repo, "fix.txt"), "fix\n"); git("add", "."); git("commit", "-q", "-m", "fix");
+  const tool = join(root, "tool.mjs");
+  writeFileSync(tool, "console.log('APPROVED');\n");
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { tool: {
+    run: `'${process.execPath}' '${tool}' {prompt}`, write: false, mem_max: "off" } } }));
+  writeFileSync(join(root, "p.md"), "review\n");
+  const diff = (b: string, O: string) => {
+    assert.equal(run("agent", "-a", "tool", "-t", "T", "-d", repo, "-o", O, "-r", "-b", b, "--", join(root, "p.md")).status, 0);
+    run("wait", "--timeout", "60", O);
+    return readFileSync(`${O}.diff`, "utf8");
+  };
+  const delta = diff(sha, join(root, "out", "d"));
+  assert.match(delta, /fix\.txt/);
+  assert.doesNotMatch(delta, /impl\.txt/);
+  const whole = diff("main", join(root, "out", "w"));
+  assert.match(whole, /impl\.txt/);
+  assert.match(whole, /fix\.txt/);
+  assert.equal(run("agent", "-a", "tool", "-t", "T", "-d", repo, "-o", join(root, "out", "x"), "-r", "-b", "nope", "--", join(root, "p.md")).status, 2);
+});
+
 test("agent: no_review match on the answer ends status=fail, even with an ok exit and a non-blank answer", () => {
   const { root, env, run } = sandbox();
   for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
@@ -1998,6 +2028,13 @@ test("rounds: repeats, slow rounds and the alert level", () => {
   const three = [0, 1, 2].map((r) => f(r, "missing null check input"));
   assert.equal(metrics("X-1", { ...base, rounds: 1, findings: three }).level, "stop");
   assert.equal(mark({ rounds: 2, max: 2, level: "warn" }), "r2/2 ⚠");
+  // New heavy findings in two fix rounds: the reviewer keeps finding fresh things, not converging.
+  const fresh = [f(0, "missing null check input"), f(1, "personal id exposed in log"), f(2, "broken redirect after login")];
+  assert.deepEqual(freshRounds(fresh), [1, 2]);
+  assert.deepEqual(freshRounds([f(0, "missing null check input"), f(1, "missing null check input again")]), []);
+  const fm = metrics("X-1", { ...base, rounds: 1, findings: fresh });
+  assert.equal(fm.level, "warn");
+  assert.deepEqual(fm.reasons.find((r) => r.code === "fresh")?.rounds, [1, 2]);
 });
 
 test("orq rounds reads fix/review files of an issue", () => {

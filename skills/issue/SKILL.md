@@ -223,12 +223,17 @@ Then a new `orq verify` (4b) and the **round review** (step 5 with these changes
 - Same reviewer as the round before: `$(cat $O/review-<repo>.pick)`. Only if it is over quota, blocked or fails with
   no verdict → a new `orq pick review` (saved to the same file).
 - Extra attachments: `git -C $WT diff $(cat $O/round-<n>.sha)..HEAD > $O/fix-<n>.diff` → `-i $O/fix-<n>.md -i $O/fix-<n>.diff`
-  (the full `-b $BASE` diff stays, as context).
+  (the full `-b $BASE` diff stays, as context). **A review tool** gets `-b $(cat $O/round-<n>.sha)` instead of `-b $BASE`:
+  `{base}` becomes that commit, so it reviews only the round's delta, not the whole branch again.
 - The prompt asks a closed question: "for each item in fix-<n>.md: RESOLVED or NOT RESOLVED (why); then the fix diff:
   any regression it introduced, as `[blocker]`/`[suggestion]`. Outside the fix diff, report only a blocker you missed
-  before that would break production, and say why it wasn't in the first review". Anything else is a suggestion. A review tool can't answer that: it reviews the whole
-branch again, so you do the matching — a finding is a blocker this round only if it is inside `fix-<n>.diff` or is a
-NOT RESOLVED item of `fix-<n>.md`; one you already decided on (fixed, rejected or downgraded) stays decided. **Maximum: `orq config get policy.max_rounds` rounds** — `orq agent -R` refuses the next one (exit 4) and counts per session, so a renamed prefix doesn't reset it; on exit 4 stop and tell the user. With their OK run `orq rounds <ID> --diagnose` (a cheap independent agent, advisory: read its `RECOMMENDATION` — continue / split / change-implementer / ask-user — and tell the user), then `-F` (refused without a diagnosis newer than the last fix/review; `-F -F` skips that, only if the user says so); over it → `orq pick impl
+  before that would break production, and say why it wasn't in the first review". Anything else is a suggestion. If a review
+still names something outside `fix-<n>.diff`, you do the matching — a finding is a blocker this round only if it is inside
+`fix-<n>.diff` or is a NOT RESOLVED item of `fix-<n>.md`; one you already decided on (fixed, rejected or downgraded) stays decided.
+**A finding outside the fix diff never opens a round by itself**, however serious: it goes to a "deferred" list in the
+Plane comment (a follow-up issue). If it is a security or personal-data leak, stop and ask the user (fix in this branch
+or follow-up) instead of dispatching. `orq rounds <ID>` warns `fresh` when two fix rounds brought new heavy findings:
+the branch is too big — split, don't keep reviewing it whole. **Maximum: `orq config get policy.max_rounds` rounds** — `orq agent -R` refuses the next one (exit 4) and counts per session, so a renamed prefix doesn't reset it; on exit 4 stop and tell the user. With their OK run `orq rounds <ID> --diagnose` (a cheap independent agent, advisory: read its `RECOMMENDATION` — continue / split / change-implementer / ask-user — and tell the user), then `-F` (refused without a diagnosis newer than the last fix/review; `-F -F` skips that, only if the user says so); over it → `orq pick impl
 --exclude-agent <it> > $O/impl-<repo>.pick` only with the user's OK, or stop and report. Non-blocking suggestions go into the comment; they
 don't become a round.
 

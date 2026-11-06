@@ -123,9 +123,12 @@ export async function agent(argv: string[]): Promise<number> {
   if (!existsSync(P)) { console.error(m(`no prompt file ${P}`, `arquivo de prompt ${P} não existe`)); return 2; }
   mkdirSync(dirname(O), { recursive: true });
   // -b <base>: attaches `git diff origin/<base>...HEAD` (review without running git; required for Antigravity).
+  // A base with no origin/<base> but naming a commit (a fix round's round-<n>.sha) attaches `<base>..HEAD`: only that round's delta.
   if (base) {
-    const r = spawnSync("git", ["-C", repo, "diff", `origin/${base}...HEAD`], { encoding: "utf8", maxBuffer: 1 << 30 });
-    if (r.status !== 0) { console.error(m(`could not build the diff against origin/${base}`, `não consegui gerar o diff contra origin/${base}`)); return 2; }
+    const has = (ref: string) => spawnSync("git", ["-C", repo, "rev-parse", "--verify", "-q", `${ref}^{commit}`]).status === 0;
+    const range = !has(`origin/${base}`) && has(base) ? `${base}..HEAD` : `origin/${base}...HEAD`;
+    const r = spawnSync("git", ["-C", repo, "diff", range], { encoding: "utf8", maxBuffer: 1 << 30 });
+    if (r.status !== 0) { console.error(m(`could not build the diff ${range}`, `não consegui gerar o diff ${range}`)); return 2; }
     writeFileSync(`${O}.diff`, r.stdout); inc.push(`${O}.diff`);
   }
   if (inc.length) {

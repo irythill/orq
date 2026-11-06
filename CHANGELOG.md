@@ -5,6 +5,11 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
+### Fixed
+- Fix-round reviews converge on large branches: `orq agent -b <commit>` attaches only `<commit>..HEAD` (a review tool
+  gets the round's start as `{base}`, not the whole branch again); in `/issue` a finding outside the fix diff never
+  opens a round, it goes to a deferred list (security/personal-data leaks stop and ask the user); `orq rounds` warns
+  `fresh` when two fix rounds bring new heavy findings — split the issue (#72).
 
 ## [0.6.1] — 2026-11-06
 ### Fixed

@@ -27,6 +27,7 @@ const why = (r: Reason) => ({
   at_max: m(`rounds ${r.n} = max_rounds ${r.max}`, `rodadas ${r.n} = max_rounds ${r.max}`),
   same_finding: m(`same finding in ${r.n} reviews`, `mesmo achado em ${r.n} revisões`),
   repeated: m(`${r.n} repeated finding(s)`, `${r.n} achado(s) repetido(s)`),
+  fresh: m(`new heavy findings in fix rounds ${r.rounds?.join(", ")}: split the issue`, `achados graves novos nas rodadas ${r.rounds?.join(", ")}: divida a issue`),
   slow: m(`round ${r.rounds?.join(", ")} much slower than the others`, `rodada ${r.rounds?.join(", ")} bem mais lenta que as outras`),
 })[r.code];
 

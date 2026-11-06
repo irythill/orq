@@ -18,7 +18,7 @@ export interface Metrics {
   findings: number; repeats: Repeat[]; level: Level; reasons: Reason[];
 }
 /** Why the level is not ok: a code plus numbers, translated where it is shown (orq rounds), kept as is in --json. */
-export interface Reason { code: "over_max" | "at_max" | "same_finding" | "repeated" | "slow"; n: number; max?: number; rounds?: number[] }
+export interface Reason { code: "over_max" | "at_max" | "same_finding" | "repeated" | "fresh" | "slow"; n: number; max?: number; rounds?: number[] }
 export interface Facts { rounds: number; max: number; perRound: RoundTime[]; findings: Finding[]; secs: number }
 
 export const SIMILAR_FILE = 0.4; // token overlap needed when both findings name the same file
@@ -27,6 +27,7 @@ export const SLOW_FACTOR = 2; // a round this many times slower than the median 
 export const SLOW_MIN_SECS = 600; // ... but only if it also took at least this long
 export const REPEAT_WARN = 2; // a finding seen in this many reviews: warn
 export const REPEAT_STOP = 3; // ... in this many: stop (it came back after two fix rounds)
+export const FRESH_WARN = 2; // fix rounds whose review brings heavy findings never seen before: the branch is too big, split it
 export const HEAVY = new Set(["blocker", "major", "critical"]); // only these count towards repeats and the alert
 
 const read = (f: string) => { try { return readFileSync(f, "utf8"); } catch { return ""; } };
@@ -92,6 +93,13 @@ export function repeats(fs: Finding[]): Repeat[] {
     .filter((r) => r.rounds.length >= REPEAT_WARN);
 }
 
+/** Fix rounds (k ≥ 1) whose review raised a heavy finding not similar to any earlier one: a reviewer re-reading a big branch. */
+export function freshRounds(fs: Finding[]): number[] {
+  const out = new Set<number>();
+  for (const f of fs) if (f.round > 0 && !fs.some((e) => e.round < f.round && similar(e, f))) out.add(f.round);
+  return [...out].sort((a, b) => a - b);
+}
+
 const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b), h = s.length >> 1; return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2; };
 
 /** Fix rounds far above the median of the other fix rounds (round 0 is the implementation: never compared; needs 3 fix rounds). */
@@ -103,7 +111,7 @@ export function slowRounds(all: RoundTime[]): number[] {
 
 /** The pure part: facts from the files → numbers, alert level and why. */
 export function metrics(issue: string, f: Facts): Metrics {
-  const reps = repeats(f.findings.filter((x) => HEAVY.has(x.severity))), reasons: Reason[] = [];
+  const heavy = f.findings.filter((x) => HEAVY.has(x.severity)), reps = repeats(heavy), reasons: Reason[] = [];
   let level: Level = "ok";
   const raise = (l: Level, why: Reason) => { reasons.push(why); if (l === "stop" || level === "ok") level = l; };
   if (f.rounds > f.max) raise("stop", { code: "over_max", n: f.rounds, max: f.max });
@@ -111,6 +119,8 @@ export function metrics(issue: string, f: Facts): Metrics {
   const worst = Math.max(0, ...reps.map((r) => r.rounds.length));
   if (worst >= REPEAT_STOP) raise("stop", { code: "same_finding", n: worst });
   else if (reps.length) raise("warn", { code: "repeated", n: reps.length });
+  const fresh = freshRounds(heavy);
+  if (fresh.length >= FRESH_WARN) raise("warn", { code: "fresh", n: fresh.length, rounds: fresh });
   const slow = slowRounds(f.perRound);
   if (slow.length) raise("warn", { code: "slow", n: slow.length, rounds: slow });
   return { issue, rounds: f.rounds, max: f.max, secs: f.secs, perRound: f.perRound, findings: f.findings.length, repeats: reps, level, reasons };

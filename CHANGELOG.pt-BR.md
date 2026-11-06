@@ -5,6 +5,11 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
+### Corrigido
+- As revisões das rodadas de correção convergem em branches grandes: `orq agent -b <commit>` anexa só `<commit>..HEAD`
+  (uma ferramenta de revisão recebe o início da rodada como `{base}`, não a branch inteira de novo); no `/issue` um achado
+  fora do diff da correção nunca abre rodada, vai para uma lista de adiados (vazamento de segurança/dado pessoal para e
+  pergunta ao usuário); o `orq rounds` avisa `fresh` quando duas rodadas trazem achados graves novos — divida a issue (#72).
 
 ## [0.6.1] — 2026-11-06
 ### Corrigido
