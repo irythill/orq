@@ -11,7 +11,8 @@
     "dist",
     "!dist/**/*.test.js",
     "skills",
-    "templates/workspace.CLAUDE.md"
+    "templates/workspace.CLAUDE.md",
+    "templates/conductor.instructions.md"
   ],
   "engines": {
     "node": ">=20"
