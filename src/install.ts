@@ -71,7 +71,12 @@ export function prepareWorkspace(dir: string, fmt: "claude" | "agents", name = b
     out.push(m(`  created ${map} — fill in repos, group, base branch, Plane and issue standard`,
       `  criado ${map} — preencha repos, grupo, branch base, Plane e padrão de issue`));
   } else out.push(m(`  ok      ${map} (kept)`, `  ok      ${map} (mantido)`));
-  const r = spawnSync(process.execPath, [join(PKG, "dist", "cli.js"), "instructions", fmt, "-w", ws], { encoding: "utf8" });
+  // The conductor's instructions (what `orq conductor` looks for): regenerated on every run.
+  const ci = join(ws, ".orquestra-conductor.md");
+  const t = readFileSync(join(PKG, "templates", "conductor.instructions.md"), "utf8");
+  writeAtomic(ci, t.split("{{WORKSPACE}}").join(ws).split("{{NAME}}").join(name));
+  out.push(`  ${m("wrote", "escrevi")}   ${ci}`);
+  const r =spawnSync(process.execPath, [join(PKG, "dist", "cli.js"), "instructions", fmt, "-w", ws], { encoding: "utf8" });
   out.push(`  ${(r.stdout || r.stderr).trim()}`);
   return out;
 }
