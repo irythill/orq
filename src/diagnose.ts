@@ -22,6 +22,7 @@ const reason = (r: Reason) => ({
   at_max: `rounds ${r.n} reached max_rounds ${r.max}`,
   same_finding: `the same heavy finding came back in ${r.n} reviews`,
   repeated: `${r.n} heavy finding(s) repeated across reviews`,
+  fresh: `the reviews of fix rounds ${r.rounds?.join(", ")} raised new heavy findings outside what was fixed (scope too big?)`,
   slow: `round ${r.rounds?.join(", ")} was much slower than the others`,
 })[r.code];
 
@@ -45,7 +46,8 @@ export function buildPrompt(x: Metrics, fixes: Doc[], reviews: Doc[], cap = DIAG
     `## What to decide`,
     `Look for the real cause, for example: reviewer and implementer disagree about the requirement or the style; the scope is too big for one`,
     `branch; a flaky or environment-dependent test; an ambiguous spec or acceptance criterion; fixes that fix the symptom of each review and`,
-    `introduce the next one; a reviewer that keeps raising new things instead of checking the previous ones.`,
+    `introduce the next one; a reviewer that keeps raising new things instead of checking the previous ones (re-reading the whole branch every
+round: findings outside the fix diff don't make a round, they go to a follow-up list — recommend split, not continue).`,
     ``,
     `## Answer format`,
     `A short diagnosis (at most 15 lines): the cause, with the evidence (which round, which file or finding). Then, as the LAST line, exactly:`,
