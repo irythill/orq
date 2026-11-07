@@ -1967,6 +1967,24 @@ test("orq pick review|opinion: more than one declared agent and no --impl-agent/
   assert.equal(go("review", "--exclude-agent", "y").status, 0);
 });
 
+test("rounds: follow-up reasons come from .rounds-<session>.log and the log never counts as a round", async () => {
+  const { countRounds, roundReasons } = await import("./rounds.js");
+  const d = mkdtempSync(join(tmpdir(), "orq-reasons-"));
+  writeFileSync(join(d, ".rounds-s1"), "1");
+  writeFileSync(join(d, ".rounds-s1.log"), "2026-11-07T10:00:00Z unblock impl\n2026-11-07T10:10:00Z verify impl\n2026-11-07T11:00:00Z review impl\n");
+  const names = [".rounds-s1", ".rounds-s1.log"];
+  assert.equal(countRounds(d, names), 1);
+  assert.deepEqual(roundReasons(d, names), { unblock: 1, verify: 1, review: 1 });
+  rmSync(d, { recursive: true, force: true });
+});
+
+test("agent: --reason is validated and only applies to -R", async () => {
+  const { agent, ROUND_REASONS } = await import("./commands/agent.js");
+  assert.deepEqual(ROUND_REASONS, ["review", "verify", "unblock"]);
+  assert.equal(await agent(["-a", "codex", "-t", "x", "-d", ".", "-o", "x", "--reason", "nope", "--", "p.md"]), 2);
+  assert.equal(await agent(["-a", "codex", "-t", "x", "-d", ".", "-o", "x", "--reason", "verify", "--", "p.md"]), 2);
+});
+
 test("rounds: findings parse from tagged list items and match by file + word overlap", () => {
   const fs = parseFindings("Summary\n- [blocker] src/a.ts:10 missing null check on user input\n- plain note\n2. [minor] rename helper", 1);
   assert.equal(fs.length, 2);

@@ -6,6 +6,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Fixed
+- `policy.max_rounds` counts only review rounds: `orq agent -R --reason verify|unblock` (default `review`) neither
+  counts nor is refused; every follow-up goes to `.rounds-<session>.log` and `orq rounds` shows them per reason. The
+  round is counted at launch, so a dispatch refused later costs none. `/issue` names verify fixes `verify-fix-<n>.md` (#75).
 - Fix-round reviews converge on large branches: `orq agent -b <commit>` attaches only `<commit>..HEAD` (a review tool
   gets the round's start as `{base}`, not the whole branch again); in `/issue` a finding outside the fix diff never
   opens a round, it goes to a deferred list (security/personal-data leaks stop and ask the user); `orq rounds` warns

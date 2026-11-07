@@ -6,6 +6,10 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 ### Corrigido
+- `policy.max_rounds` conta só rodadas de revisão: `orq agent -R --reason verify|unblock` (padrão `review`) não conta
+  nem é recusado; todo follow-up vai para `.rounds-<sessão>.log` e o `orq rounds` mostra por motivo. A rodada é contada
+  no launch, então um dispatch recusado depois não gasta rodada. O `/issue` nomeia correções de verify como
+  `verify-fix-<n>.md` (#75).
 - As revisões das rodadas de correção convergem em branches grandes: `orq agent -b <commit>` anexa só `<commit>..HEAD`
   (uma ferramenta de revisão recebe o início da rodada como `{base}`, não a branch inteira de novo); no `/issue` um achado
   fora do diff da correção nunca abre rodada, vai para uma lista de adiados (vazamento de segurança/dado pessoal para e
