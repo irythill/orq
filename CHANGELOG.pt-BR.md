@@ -6,6 +6,10 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 ### Corrigido
+- Uma revisão (`orq agent -r` com prefixo `review*`) que sai com 0 sem veredito ("I'll start by exploring the repo...")
+  agora é `status=fail reason=no-verdict`, não `ok`. Veredito = um achado com severidade ou uma aprovação explícita
+  (APPROVED, LGTM, aprovado, sem achados...). `policy.review_verdict = false` desliga. Achados escritos como linhas
+  `[blocker] arquivo:linha` sem marcador de lista agora contam, também no `orq rounds` (#78).
 - As revisões das rodadas de correção convergem em branches grandes: `orq agent -b <commit>` anexa só `<commit>..HEAD`
   (uma ferramenta de revisão recebe o início da rodada como `{base}`, não a branch inteira de novo); no `/issue` um achado
   fora do diff da correção nunca abre rodada, vai para uma lista de adiados (vazamento de segurança/dado pessoal para e
