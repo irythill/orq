@@ -1,9 +1,12 @@
-# Proves portability on every push: the TypeScript CLI builds and its tests pass on Linux, macOS and Windows, and the
-# npm package installs from its tarball and runs (fake home and config: nothing of the runner's own is touched).
+# Builds and tests the CLI on Linux, macOS and Windows and installs the packed tarball. Required to merge into dev and main.
 name: ci
 on:
   push:
+    branches: [main, dev]
   pull_request:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
