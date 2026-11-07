@@ -6,6 +6,10 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Fixed
+- A review (`orq agent -r` on a `review*` prefix) that exits 0 without a verdict ("I'll start by exploring the repo...")
+  is now `status=fail reason=no-verdict` instead of `ok`. A verdict = a finding with a severity or an explicit approval
+  (APPROVED, LGTM, aprovado, no findings...). `policy.review_verdict = false` turns it off. Findings written as bare
+  `[blocker] file:line` lines (no list marker) now count, for `orq rounds` too (#78).
 - Fix-round reviews converge on large branches: `orq agent -b <commit>` attaches only `<commit>..HEAD` (a review tool
   gets the round's start as `{base}`, not the whole branch again); in `/issue` a finding outside the fix diff never
   opens a round, it goes to a deferred list (security/personal-data leaks stop and ask the user); `orq rounds` warns

@@ -54,7 +54,8 @@ const repoRel = (f: string) => f.replace(/\\/g, "/").replace(/^.*\.worktrees\/[^
 export function parseFindings(text: string, round: number): Finding[] {
   const out: Finding[] = [];
   for (const line of text.split("\n")) {
-    const it = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line);
+    // A list item, or a bare line that starts with a severity tag ("[blocker] src/a.ts:10 ...", as some reviewers write).
+    const it = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line) ?? /^\s*(\[(?:blocker|major|minor|nit|suggestion|important|critical)\].*)$/i.exec(line);
     if (!it) continue;
     const sevOf = (w?: string) => { const k = fold(w ?? ""); return Object.hasOwn(SEV, k) ? SEV[k] : undefined; };
     let m0 = /^\*\*\s*(\p{L}+)/u.exec(it[1]); // a leading bold severity wins over a [tag]
@@ -72,6 +73,15 @@ export function parseFindings(text: string, round: number): Finding[] {
 }
 
 /** Same finding? Same file (when both name one) and enough shared words; without a file, a stricter overlap. */
+// An explicit "nothing to fix" verdict, PT or EN, on a line of its own or as a heading/label.
+const APPROVED = /^\s*(?:[#>*_`-]+\s*)*(?:verdict|veredito|status|resultado)?\s*[:—-]?\s*\**\s*(approved|approve|lgtm|aprovad[oa]|no (?:blocking )?(?:findings|issues|blockers)|nenhum (?:achado|problema|blocker|bloqueante)|sem (?:achados|bloqueantes|blockers))\b/im;
+
+/** Does a review answer carry a verdict: at least one finding with a severity, or an explicit approval?
+ *  "I'll start by exploring the repo..." (a reviewer that stopped before reviewing) has neither. */
+export function hasVerdict(text: string): boolean {
+  return parseFindings(text, 0).length > 0 || APPROVED.test(text);
+}
+
 export function similar(a: Pick<Finding, "file" | "title">, b: Pick<Finding, "file" | "title">): boolean {
   const wa = words(a.title), wb = words(b.title);
   if (!wa.size || !wb.size) return false;
