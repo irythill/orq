@@ -1012,6 +1012,24 @@ test("process: sizes, tree memory, and the watchdog kills a tree over the cap", 
   assert.equal(await runCapped(process.execPath, ["-e", "0"], { mode: "auto" }), 0); // no cap
 });
 
+test("process: a command that cannot start (E2BIG thrown, ENOENT emitted) resolves SPAWN_FAILED with the error", async () => {
+  const { runCapped, SPAWN_FAILED } = await import("./process.js");
+  const { argvTooBig, spawnFailText } = await import("./commands/agent.js");
+  const errs: string[] = [];
+  const huge = "x".repeat(200 * 1024);
+  const onError = (e: NodeJS.ErrnoException) => errs.push(String(e.code));
+  // Only Linux caps a single argument (macOS takes 200 KB); Windows runs a binary without .exe through cmd.exe (exit 1, no ENOENT).
+  if (process.platform === "linux") assert.equal(await runCapped(process.execPath, ["-e", "0", huge], { mode: "off", stdio: "ignore", onError }), SPAWN_FAILED);
+  if (process.platform !== "win32") assert.equal(await runCapped("orq-no-such-binary-74", [], { mode: "off", stdio: "ignore", onError }), SPAWN_FAILED);
+  assert.deepEqual(errs, process.platform === "linux" ? ["E2BIG", "ENOENT"] : process.platform === "win32" ? [] : ["ENOENT"]);
+  assert.match(argvTooBig(["codex", huge], "linux")!, /128 KB/);
+  assert.equal(argvTooBig(["codex", "x".repeat(100 * 1024)], "linux"), undefined);
+  assert.match(argvTooBig(["codex", "x".repeat(40_000)], "win32")!, /32 KB/);
+  assert.match(argvTooBig(["codex", ...Array(12).fill("x".repeat(100 * 1024))], "darwin")!, /1 MB/);
+  const e2big = Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
+  assert.match(spawnFailText({ agent: "codex", argv: ["codex"] }, e2big), /could not start \(E2BIG\)[\s\S]*attach less/);
+});
+
 test("banner: only in a terminal, plain ASCII without color, roles beside the orc", async () => {
   const { banner, colorMode, infoLines, ORC } = await import("./banner.js");
   assert.equal(banner(["x"], "none", false), ""); // piped: nothing, ever
