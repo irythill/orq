@@ -6,6 +6,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 ### Fixed
+- `policy.max_rounds` counts only review rounds: `orq agent -R --reason verify|unblock` (default `review`) neither
+  counts nor is refused; every follow-up goes to `.rounds-<session>.log` and `orq rounds` shows them per reason. The
+  round is counted at launch, so a dispatch refused later costs none. `/issue` names verify fixes `verify-fix-<n>.md` (#75).
 - A review (`orq agent -r` on a `review*` prefix) that exits 0 without a verdict ("I'll start by exploring the repo...")
   is now `status=fail reason=no-verdict` instead of `ok`. A verdict = a finding with a severity or an explicit approval
   (APPROVED, LGTM, aprovado, no findings...). `policy.review_verdict = false` turns it off. Findings written as bare

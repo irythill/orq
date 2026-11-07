@@ -157,7 +157,10 @@ Child with `status=ok` → run the tests related to the diff, in their own tab, 
 `orq verify -w $WS -r <repo> -d $WT -b <BASE> -o $O/verify-<repo> -g <group>` → `$O/verify-<repo>.txt` with
 **new failures** and pre-existing ones: if any test fails, it runs the same test files on an updated
 `origin/<BASE>` (whatever fails there is pre-existing). You get the done line (`[HERDR-AGENT DONE]` / `[ORQ AGENT DONE]`) `verify ... new=N`.
-`new>0` → fix round with the list (step 6), no review. `new=0` → review.
+`new>0` → follow-up with the failing tests, no review: write `$O/verify-fix-<n>.md` (not `fix-<n>.md`) and add
+`--reason verify` to the `-R` call of step 6. `new=0` → review. A follow-up that only unblocks the child (files it
+couldn't fetch without network, a missing tool) uses `--reason unblock`. Only review rounds (the default `--reason
+review`) count towards `policy.max_rounds`.
 **Pre-existing failures get fixed too.** Any failure — tests listed as "already failing on origin/<BASE>", or a CI job
 (lint, biome, typecheck, shard, regression) failing on the PR or on the base — goes into a fix round on the issue's
 branch (separate `fix:`/`test:` commit naming the issue). Never close, move to In Review or call a PR done while

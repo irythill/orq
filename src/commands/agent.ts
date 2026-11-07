@@ -28,7 +28,10 @@ import { closeOwnTab, detectHost, type Host, launch, screenOpen, shq, typeInto }
 import { ackPrefix } from "../notice.js";
 import { dropWorktree, notify } from "../testrun.js";
 
-export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base] [-r] [-R session [-F [-F]]] [-T] -- <prompt.md>   run a child agent";
+export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base] [-r] [-R session [-F [-F]] [--reason review|verify|unblock]] [-T] -- <prompt.md>   run a child agent";
+
+/** Why a follow-up (-R) runs: only `review` (fixing a reviewer's findings) counts towards policy.max_rounds. */
+export const ROUND_REASONS = ["review", "verify", "unblock"];
 
 const CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
 const PF = ".herdr-agent-prompt.md"; // prompt_in_dir file name (kept from herdr-agent)
@@ -50,7 +53,7 @@ export async function agent(argv: string[]): Promise<number> {
   if (argv[0] === "--run") return runJob(argv[1]);
   if (argv[0] === "--turn") return turn(argv[1], argv[2], argv.slice(3));
   let a = process.env.AGENT || "", g = "", t = "", d = "", o = "", model = "", effort = "", acc = "", resume = "", base = "";
-  let ro = false, tui = false, force = 0, prompt: string | undefined;
+  let ro = false, tui = false, force = 0, prompt: string | undefined, reason = "review";
   const inc: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i], v = () => argv[++i] ?? "";
@@ -59,10 +62,13 @@ export async function agent(argv: string[]): Promise<number> {
     else if (x === "-o") o = v(); else if (x === "-m") model = v(); else if (x === "-e") effort = v();
     else if (x === "-c") acc = v(); else if (x === "-i") inc.push(resolve(v())); else if (x === "-R") resume = v();
     else if (x === "-b") base = v(); else if (x === "-p") v(); else if (x === "-r") ro = true; else if (x === "-T") tui = true; else if (x === "-F") force++;
+    else if (x === "--reason") reason = v();
     else if (!x.startsWith("-") && prompt === undefined) prompt = x;
     else { console.error(USAGE); return 2; }
   }
   if (!prompt) { console.error(m("give the prompt file", "informe o arquivo de prompt")); return 2; }
+  if (!ROUND_REASONS.includes(reason)) { console.error(m(`--reason must be one of ${ROUND_REASONS.join("|")}`, `--reason deve ser ${ROUND_REASONS.join("|")}`)); return 2; }
+  if (reason !== "review" && !resume) { console.error(m("--reason only applies to a follow-up (-R)", "--reason só vale para um follow-up (-R)")); return 2; }
   for (const [f, val] of [["t", t], ["d", d], ["o", o]]) if (!val) { console.error(`${m("missing", "faltou")} -${f}`); return 2; }
   // No default agent: an empty $(orq pick ...) means no candidate, and must not start anything.
   if (!a) { console.error(m("missing -a (if it came from orq pick, it found no candidate): nothing started", "faltou -a (se veio do orq pick, ele não achou candidato): nada foi iniciado")); return 2; }
@@ -97,7 +103,14 @@ export async function agent(argv: string[]): Promise<number> {
   }
   // Fix rounds: every -R on the same session counts, whatever the prefix is called. policy.max_rounds is enforced here,
   // not left to the conductor to remember (a 7-round fix loop is what burns the tokens). -F = the user said go on.
+  // Only --reason review counts; every follow-up is logged. Written at launch, so a later refusal costs no round.
+  let countRound: (() => void) | undefined;
   if (resume) {
+    const lf = join(dirname(O), `.rounds-${resume}.log`);
+    const logRound = () => { mkdirSync(dirname(O), { recursive: true }); appendFileSync(lf, `${new Date().toISOString()} ${reason} ${basename(O)}\n`); };
+    countRound = logRound;
+  }
+  if (resume && reason === "review") {
     const max = Number(getPath(cfg, "policy.max_rounds") ?? 2), cf = join(dirname(O), `.rounds-${resume}`);
     let n = 0;
     try { n = Number(readFileSync(cf, "utf8")) || 0; } catch { /* first follow-up */ }
@@ -116,8 +129,8 @@ export async function agent(argv: string[]): Promise<number> {
         return 4;
       }
     }
-    mkdirSync(dirname(O), { recursive: true });
-    writeFileSync(cf, String(n + 1));
+    const logRound = countRound!;
+    countRound = () => { logRound(); writeFileSync(cf, String(n + 1)); };
   }
   let P = resolve(prompt);
   if (!existsSync(repo)) { console.error(m(`no folder ${repo}`, `pasta ${repo} não existe`)); return 2; }
@@ -143,6 +156,7 @@ export async function agent(argv: string[]): Promise<number> {
   if (typed) {
     ackPrefix(O); // a follow-up on the issue: its failure notices were seen
     for (const s of [".done", ".out.md"]) rmSync(O + s, { force: true });
+    countRound?.();
     typeInto(open, readFileSync(P, "utf8"));
     console.log(`[orq agent] ${t} → ${open} ${m("(follow-up typed into the open screen)", "(follow-up digitado na tela aberta)")}`);
     return 0;
@@ -215,6 +229,7 @@ export async function agent(argv: string[]): Promise<number> {
     idleCloseMin: tui ? Number(mach.tui_idle_close_min ?? 30) : undefined,
   };
   writeAtomic(`${O}.job.json`, JSON.stringify(job, null, 1));
+  countRound?.();
   // Readable copy of the command (also what orq stats and herdr-board read).
   writeFileSync(`${O}.run.sh`, `#!/usr/bin/env bash\n# orq agent (generated; the run itself is \`orq agent --run ${O}.job.json\`) --unit=${unit} \n` +
     `cd ${shq(dir)}\n${Object.entries(env).map(([k, val]) => `${k}=${shq(val)} `).join("")}${cmd.map(shq).join(" ")}${job.stdin ? ` < ${shq(P)}` : ""}\n`);
