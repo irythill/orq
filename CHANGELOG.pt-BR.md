@@ -6,6 +6,10 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 ### Corrigido
+- `policy.max_rounds` conta só rodadas de revisão: `orq agent -R --reason verify|unblock` (padrão `review`) não conta
+  nem é recusado; todo follow-up vai para `.rounds-<sessão>.log` e o `orq rounds` mostra por motivo. A rodada é contada
+  no launch, então um dispatch recusado depois não gasta rodada. O `/issue` nomeia correções de verify como
+  `verify-fix-<n>.md` (#75).
 - Uma revisão (`orq agent -r` com prefixo `review*`) que sai com 0 sem veredito ("I'll start by exploring the repo...")
   agora é `status=fail reason=no-verdict`, não `ok`. Veredito = um achado com severidade ou uma aprovação explícita
   (APPROVED, LGTM, aprovado, sem achados...). `policy.review_verdict = false` desliga. Achados escritos como linhas

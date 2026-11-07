@@ -16,6 +16,7 @@ export interface RoundTime { round: number; secs: number }
 export interface Metrics {
   issue: string; rounds: number; max: number; secs: number; perRound: RoundTime[];
   findings: number; repeats: Repeat[]; level: Level; reasons: Reason[];
+  followups?: Record<string, number>; // -R follow-ups per reason; only "review" counts in `rounds`
 }
 /** Why the level is not ok: a code plus numbers, translated where it is shown (orq rounds), kept as is in --json. */
 export interface Reason { code: "over_max" | "at_max" | "same_finding" | "repeated" | "fresh" | "slow"; n: number; max?: number; rounds?: number[] }
@@ -142,9 +143,19 @@ export function countRounds(dir: string, names: string[]): number {
   for (const f of names) {
     const fx = /^fix-(\d+)\.md$/.exec(f);
     if (fx) n = Math.max(n, Number(fx[1]));
-    else if (f.startsWith(".rounds-")) n = Math.max(n, Number(read(join(dir, f))) || 0);
+    else if (f.startsWith(".rounds-") && !f.endsWith(".log")) n = Math.max(n, Number(read(join(dir, f))) || 0);
   }
   return n;
+}
+
+/** Follow-ups per reason (review|verify|unblock) from the .rounds-<session>.log files `orq agent -R` appends to. */
+export function roundReasons(dir: string, names: string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const f of names) {
+    if (!/^\.rounds-.+\.log$/.test(f)) continue;
+    for (const line of read(join(dir, f)).split("\n")) { const r = line.split(" ")[1]; if (r) out[r] = (out[r] ?? 0) + 1; }
+  }
+  return out;
 }
 
 /** The impure part: read .orquestra/<issue>/. undefined when the issue has no fix or review files at all. */
@@ -173,7 +184,9 @@ export function collectRounds(ws: string, issue: string, max: number): Metrics |
     return { round: k, secs: Number.isNaN(s) || Number.isNaN(next) ? 0 : Math.max(0, Math.round((next - s) / 1000)) };
   });
   const findings = [...reviews].flatMap(([k, fs]) => fs.flatMap((n) => parseFindings(read(join(dir, n)), k)));
-  return metrics(issue, { rounds, max, perRound, findings, secs: Math.round((t1 - t0) / 1000) });
+  const x = metrics(issue, { rounds, max, perRound, findings, secs: Math.round((t1 - t0) / 1000) });
+  const fu = roundReasons(dir, names);
+  return Object.keys(fu).length ? { ...x, followups: fu } : x;
 }
 
 /** Cheap change signature of an issue folder (names + mtimes, no reads) for caching collectRounds between redraws. */

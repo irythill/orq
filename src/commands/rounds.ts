@@ -50,6 +50,7 @@ export async function rounds(argv: string[]): Promise<number> {
   console.log(`${id}  ${mark(x)}  ${m("alert", "alerta")}: ${x.level}${x.reasons.length ? ` (${x.reasons.map(why).join("; ")})` : ""}`);
   console.log(m(`rounds ${x.rounds} of max ${x.max}; total time ${dur(x.secs)}; ${x.findings} finding(s) across reviews`,
     `rodadas ${x.rounds} de no máx. ${x.max}; tempo total ${dur(x.secs)}; ${x.findings} achado(s) nas revisões`));
+  if (x.followups) console.log(m("follow-ups (only review counts): ", "follow-ups (só review conta): ") + Object.entries(x.followups).map(([k, n]) => `${k} ${n}`).join(", "));
   for (const r of x.perRound) console.log(`  ${r.round === 0 ? m("impl + review", "impl + revisão") : m(`fix ${r.round} + review`, `fix ${r.round} + revisão`)}: ${dur(r.secs)}`);
   if (x.repeats.length) console.log(m("repeated findings:", "achados repetidos:"));
   for (const r of x.repeats) console.log(`  [${m("rounds", "rodadas")} ${r.rounds.join(",")}] ${r.title.slice(0, 100)}`);
