@@ -5,6 +5,10 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
+### Changed
+- **Node 22 or newer is required** (`engines >=22`). Node 20 reached end of life in April 2026. CI tests Node 22, 24
+  and 26.
+
 ### Fixed
 - `policy.max_rounds` counts only review rounds: `orq agent -R --reason verify|unblock` (default `review`) neither
   counts nor is refused; every follow-up goes to `.rounds-<session>.log` and `orq rounds` shows them per reason. The

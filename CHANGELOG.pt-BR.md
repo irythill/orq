@@ -5,6 +5,10 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
+### Alterado
+- **Agora é preciso Node 22 ou mais novo** (`engines >=22`). O Node 20 chegou ao fim de vida em abril de 2026. O CI
+  testa Node 22, 24 e 26.
+
 ### Corrigido
 - `policy.max_rounds` conta só rodadas de revisão: `orq agent -R --reason verify|unblock` (padrão `review`) não conta
   nem é recusado; todo follow-up vai para `.rounds-<sessão>.log` e o `orq rounds` mostra por motivo. A rodada é contada
