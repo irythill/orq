@@ -1,0 +1,40 @@
+name: Bug report
+description: Something in orq doesn't work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead. Paste exact error text.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. orq ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: orq version
+      description: Output of `orq --version`
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Node version, terminal (herdr, tmux, plain), agents involved (claude, codex, ...)
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Relevant files
+      description: The `.done` line, the end of the `.log`, `orq config get ...`. Remove tokens and private paths first.
+      render: text
