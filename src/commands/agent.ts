@@ -67,7 +67,7 @@ export async function agent(argv: string[]): Promise<number> {
   }
   if (!prompt) { console.error(m("give the prompt file", "informe o arquivo de prompt")); return 2; }
   if (!ROUND_REASONS.includes(reason)) { console.error(m(`--reason must be one of ${ROUND_REASONS.join("|")}`, `--reason deve ser ${ROUND_REASONS.join("|")}`)); return 2; }
-  if (reason !== "review" && !argv.includes("-R")) { console.error(m("--reason only applies to a follow-up (-R)", "--reason só vale para um follow-up (-R)")); return 2; }
+  if (reason !== "review" && !resume) { console.error(m("--reason only applies to a follow-up (-R)", "--reason só vale para um follow-up (-R)")); return 2; }
   for (const [f, val] of [["t", t], ["d", d], ["o", o]]) if (!val) { console.error(`${m("missing", "faltou")} -${f}`); return 2; }
   // No default agent: an empty $(orq pick ...) means no candidate, and must not start anything.
   if (!a) { console.error(m("missing -a (if it came from orq pick, it found no candidate): nothing started", "faltou -a (se veio do orq pick, ele não achou candidato): nada foi iniciado")); return 2; }
