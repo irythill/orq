@@ -184,6 +184,13 @@ export async function agent(argv: string[]): Promise<number> {
   vars.mode = expandTemplate((ro ? def.readonly : def.write) || "", vars);
   const cmd = expandTemplate(tpl, vars);
   if (!tpl.includes("{mode}") && !resume && !tui) cmd.push(...(vars.mode as string[]));
+  // A prompt passed as an argument ({prompt_text}) can be over what the OS takes: refuse now, not with E2BIG in the tab.
+  const tooBig = argvTooBig(cmd);
+  if (tooBig) {
+    console.error(m(`prompt too big for ${a}: ${tooBig}. Attach less with -i (e.g. only the round's diff; the agent can run git diff itself) or use an agent that reads the prompt from stdin or a file. Nothing started.`,
+      `prompt grande demais para ${a}: ${tooBig}. Anexe menos com -i (ex.: só o diff da rodada; o agente pode rodar git diff) ou use um agente que lê o prompt por stdin ou arquivo. Nada foi iniciado.`));
+    return 2;
+  }
   const env: Record<string, string> = {};
   for (const [k, val] of Object.entries(def.env ?? {})) env[k] = expandString(String(val), vars);
   if (acc) {
@@ -356,6 +363,25 @@ function lines(s: NodeJS.ReadableStream | null, each: (l: string) => void): Prom
   });
 }
 
+/** The answer of a run whose command never started: what failed and what to do, for the conductor. */
+export const spawnFailText = (j: Pick<Job, "agent" | "argv">, e: NodeJS.ErrnoException) =>
+  `orq agent: ${j.agent} could not start (${e.code ?? "error"}): ${e.message}\n` +
+  (e.code === "E2BIG" ? "The prompt (with its -i attachments) is too big to pass as an argument: attach less (e.g. the round's diff only) and let the agent read the rest with git.\n"
+    : e.code === "ENOENT" ? `Command not found: ${j.argv[0]}. Is it installed for the current PATH (and Node version)?\n` : "");
+
+/** Largest command line the OS takes: Linux caps each argument (MAX_ARG_STRLEN, 128 KiB), Windows the whole line. */
+export function argvTooBig(argv: string[], platform = process.platform): string | undefined {
+  const kb = (n: number) => `${Math.round(n / 1024)} KB`;
+  if (platform === "win32") {
+    const n = argv.reduce((s, a) => s + a.length + 3, 0);
+    return n > 32_000 ? m(`the command line is ${kb(n)} (Windows takes ~32 KB)`, `a linha de comando tem ${kb(n)} (o Windows aceita ~32 KB)`) : undefined;
+  }
+  const big = Math.max(0, ...argv.map((a) => Buffer.byteLength(a)));
+  if (platform === "linux" && big >= 128 * 1024) return m(`one argument is ${kb(big)} (Linux takes 128 KB per argument)`, `um argumento tem ${kb(big)} (o Linux aceita 128 KB por argumento)`);
+  const total = argv.reduce((s, a) => s + Buffer.byteLength(a) + 1, 0);
+  return total > 1_000_000 ? m(`the command line is ${kb(total)} (over ~1 MB)`, `a linha de comando tem ${kb(total)} (acima de ~1 MB)`) : undefined;
+}
+
 async function runJob(file: string): Promise<number> {
   const j = JSON.parse(readFileSync(file, "utf8")) as Job, O = j.prefix;
   writeFileSync(`${O}.pid`, String(process.pid));
@@ -390,7 +416,7 @@ async function runJob(file: string): Promise<number> {
   };
   if (j.tui) {
     // The agent's own screen: the terminal is its; answers come from the end-of-turn hook (`--turn`).
-    let ended = false;
+    let ended = false, tuiErr: NodeJS.ErrnoException | undefined;
     const end = (code: number, killed = false): string => {
       if (ended) return "fail";
       ended = true;
@@ -402,8 +428,9 @@ async function runJob(file: string): Promise<number> {
         writeAtomic(`${O}.done`, `status=killed rc=${code} at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
         if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=killed rc=${code} answer: ${O}.out.md`);
       } else if (!existsSync(`${O}.done`)) {
-        writeAtomic(`${O}.done`, `status=fail rc=${code} at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
-        if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=fail rc=${code} answer: ${O}.out.md`);
+        const why = tuiErr ? ` reason=spawn:${tuiErr.code ?? "error"}` : "";
+        writeAtomic(`${O}.done`, `status=fail rc=${code}${why} at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
+        if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=fail rc=${code}${why} answer: ${O}.out.md`);
       }
       rmSync(`${O}.pid`, { force: true });
       return killed ? "killed" : ok ? "ok" : "fail";
@@ -420,6 +447,7 @@ async function runJob(file: string): Promise<number> {
       const gone = () => { if (child) killTree(child, false); end(129); closeOwnTab(j.host); process.exit(0); };
       for (const sig of ["SIGHUP", "SIGTERM"] as NodeJS.Signals[]) process.on(sig, gone);
       rc = await runCapped(j.argv[0], j.argv.slice(1), { cap: j.cap, swap: j.swap, mode: j.mode, unit: j.unit, cwd: j.dir, env, quote: true, tty: true,
+        onError: (e) => { tuiErr = e; writeFileSync(`${O}.out.md`, spawnFailText(j, e)); },
         onSpawn: (c) => {
           child = c.pid;
           // A finished agent waits for a follow-up forever and holds its memory: after the idle timeout without a new
@@ -454,6 +482,7 @@ async function runJob(file: string): Promise<number> {
     return 0;
   }
   const log = createWriteStream(`${O}.log`);
+  let spawnErr: NodeJS.ErrnoException | undefined;
   if (!pre()) rc = 2;
   else {
     const env: NodeJS.ProcessEnv = { ...process.env, ...j.env };
@@ -470,6 +499,7 @@ async function runJob(file: string): Promise<number> {
       rc = await runCapped(j.argv[0], j.argv.slice(1), {
         cap: j.cap, swap: j.swap, mode: j.mode, unit: j.unit, cwd: j.dir, env, quote: true,
         stdio: [j.stdin ? openSync(j.prompt, "r") : "ignore", "pipe", "pipe"],
+        onError: (e) => { spawnErr = e; log.write(`[orq agent] could not start ${j.argv[0]}: ${e.message}\n`); },
         onSpawn: (c) => {
           streams = Promise.all([lines(c.stdout, (l) => onLine(l, true)), lines(c.stderr, (l) => onLine(l, false))]);
           // OpenCode sometimes doesn't exit after its final event (helpers hold the pipe): stop it after 30 s of quiet.
@@ -511,6 +541,8 @@ async function runJob(file: string): Promise<number> {
     res.rc = res.rc || 3;
   }
   if (j.answer !== "file") writeFileSync(`${O}.out.md`, res.answer ?? "");
+  // The agent never started: say why in the answer (the conductor reads it) instead of leaving it empty.
+  if (spawnErr) writeFileSync(`${O}.out.md`, spawnFailText(j, spawnErr));
   const sid = j.fromLog ? new RegExp(j.fromLog, "m").exec(logText)?.[1] : res.session ?? j.session;
   if (sid) writeFileSync(`${O}.id`, `${sid}\n`);
   if (rc === 0 && res.rc && !recovered) rc = res.rc;
@@ -526,11 +558,12 @@ async function runJob(file: string): Promise<number> {
   // fallback and the conductor must see it as not run, same as a whitespace-only answer.
   const noReview = noReviewMatch(j.noReview, answer);
   // killed (SIGKILL, memory cap...) is its own status: never ok, even if an ok_exit list or a leftover answer says otherwise.
-  const st = killedRc(rc) ? "killed" : verdict && !noReview && /\S/.test(answer) ? "ok" : "fail"; // whitespace-only answer = failure
-  writeAtomic(`${O}.done`, `status=${st} rc=${rc} at=${new Date().toISOString()} agent=${j.agent}\n`);
+  const st = spawnErr ? "fail" : killedRc(rc) ? "killed" : verdict && !noReview && /\S/.test(answer) ? "ok" : "fail"; // whitespace-only answer = failure
+  const why = spawnErr ? ` reason=spawn:${spawnErr.code ?? "error"}` : "";
+  writeAtomic(`${O}.done`, `status=${st} rc=${rc}${why} at=${new Date().toISOString()} agent=${j.agent}\n`);
   rmSync(`${O}.pid`, { force: true });
   state({ status: st, rc, end: new Date().toISOString() });
-  if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=${rc} answer: ${O}.out.md`);
+  if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=${rc}${why} answer: ${O}.out.md`);
   console.log(`\n[${j.agent} ${m("finished", "terminou")}: exit ${rc} status=${st}] ${m("answer", "resposta")}: ${O}.out.md`);
   if (j.host !== "plain" && !j.keep) { await sleep(j.closeAfter * 1000); closeOwnTab(j.host); }
   return 0;
