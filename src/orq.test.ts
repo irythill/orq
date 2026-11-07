@@ -1016,10 +1016,12 @@ test("process: a command that cannot start (E2BIG thrown, ENOENT emitted) resolv
   const { runCapped, SPAWN_FAILED } = await import("./process.js");
   const { argvTooBig, spawnFailText } = await import("./commands/agent.js");
   const errs: string[] = [];
-  const huge = "x".repeat(200 * 1024); // over Linux's 128 KiB per argument; macOS/Windows reject it too (total size)
-  assert.equal(await runCapped(process.execPath, ["-e", "0", huge], { mode: "off", stdio: "ignore", onError: (e) => errs.push(String(e.code)) }), SPAWN_FAILED);
-  assert.equal(await runCapped("orq-no-such-binary-74", [], { mode: "off", stdio: "ignore", onError: (e) => errs.push(String(e.code)) }), SPAWN_FAILED);
-  if (process.platform === "linux") assert.deepEqual(errs, ["E2BIG", "ENOENT"]);
+  const huge = "x".repeat(200 * 1024);
+  const onError = (e: NodeJS.ErrnoException) => errs.push(String(e.code));
+  // Only Linux caps a single argument (macOS takes 200 KB); Windows runs a binary without .exe through cmd.exe (exit 1, no ENOENT).
+  if (process.platform === "linux") assert.equal(await runCapped(process.execPath, ["-e", "0", huge], { mode: "off", stdio: "ignore", onError }), SPAWN_FAILED);
+  if (process.platform !== "win32") assert.equal(await runCapped("orq-no-such-binary-74", [], { mode: "off", stdio: "ignore", onError }), SPAWN_FAILED);
+  assert.deepEqual(errs, process.platform === "linux" ? ["E2BIG", "ENOENT"] : process.platform === "win32" ? [] : ["ENOENT"]);
   assert.match(argvTooBig(["codex", huge], "linux")!, /128 KB/);
   assert.equal(argvTooBig(["codex", "x".repeat(100 * 1024)], "linux"), undefined);
   assert.match(argvTooBig(["codex", "x".repeat(40_000)], "win32")!, /32 KB/);
