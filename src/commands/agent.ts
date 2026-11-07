@@ -15,6 +15,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "../accounts.js";
 import { gateFor } from "../diagnose.js";
+import { hasVerdict } from "../rounds.js";
 import { argvModel, useThrowaway, agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
 import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
@@ -40,7 +41,7 @@ interface Job {
   env: Record<string, string>; unset: string[]; stdin: boolean; format: string; answer: string;
   session?: string; fromLog?: string; parent: string; host: Host; unit: string; cap?: number; swap?: number;
   mode: MemMode; throwaway: boolean; promptInDir: boolean; closeAfter: number; keep: boolean; tui?: boolean;
-  okExit?: number[]; filter?: string; noReview?: string; idleCloseMin?: number; ro?: boolean;
+  okExit?: number[]; filter?: string; noReview?: string; idleCloseMin?: number; ro?: boolean; review?: boolean;
 }
 
 const git = (dir: string, ...a: string[]) => {
@@ -223,6 +224,8 @@ export async function agent(argv: string[]): Promise<number> {
     throwaway, promptInDir: Boolean(def.prompt_in_dir), closeAfter,
     keep: process.env.HERDR_KEEP_TAB === "1" || process.env.ORQ_KEEP_TAB === "1" || closeAfter <= 0, tui,
     okExit: def.ok_exit, filter: def.filter, noReview: def.no_review, ro,
+    // A review (-r, prefix review*) must end with a verdict; policy.review_verdict = false turns the check off.
+    review: ro && /^review/i.test(basename(O)) && getPath(cfg, "policy.review_verdict") !== false,
     idleCloseMin: tui ? Number(mach.tui_idle_close_min ?? 30) : undefined,
   };
   writeAtomic(`${O}.job.json`, JSON.stringify(job, null, 1));
@@ -302,10 +305,10 @@ function turn(file: string, kind: string, rest: string[]): number {
     } else { sid = rest[0]; answer = readFileSync(0, "utf8"); }
     writeFileSync(`${O}.out.md`, answer);
     if (sid) writeFileSync(`${O}.id`, `${sid}\n`);
-    const noReview = noReviewMatch(j.noReview, answer);
-    const st = /\S/.test(answer) && !noReview ? "ok" : "fail";
-    writeAtomic(`${O}.done`, `status=${st} rc=0 at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
-    if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=0 answer: ${O}.out.md`);
+    const noReview = noReviewMatch(j.noReview, answer), noVerdict = Boolean(j.review) && /\S/.test(answer) && !hasVerdict(answer);
+    const st = /\S/.test(answer) && !noReview && !noVerdict ? "ok" : "fail", why = noVerdict ? " reason=no-verdict" : "";
+    writeAtomic(`${O}.done`, `status=${st} rc=0${why} at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
+    if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=0${why} answer: ${O}.out.md`);
   } catch (e) { console.error(`orq agent --turn: ${(e as Error).message}`); }
   return 0;
 }
@@ -573,8 +576,9 @@ async function runJob(file: string): Promise<number> {
   // fallback and the conductor must see it as not run, same as a whitespace-only answer.
   const noReview = noReviewMatch(j.noReview, answer);
   // killed (SIGKILL, memory cap...) is its own status: never ok, even if an ok_exit list or a leftover answer says otherwise.
-  const st = spawnErr ? "fail" : killedRc(rc) ? "killed" : verdict && !noReview && /\S/.test(answer) ? "ok" : "fail"; // whitespace-only answer = failure
-  const why = spawnErr ? ` reason=spawn:${spawnErr.code ?? "error"}` : "";
+  const noVerdict = !spawnErr && Boolean(j.review) && verdict && !noReview && /\S/.test(answer) && !hasVerdict(answer);
+  const st = spawnErr ? "fail" : killedRc(rc) ? "killed" : verdict && !noReview && !noVerdict && /\S/.test(answer) ? "ok" : "fail"; // whitespace-only answer = failure
+  const why = spawnErr ? ` reason=spawn:${spawnErr.code ?? "error"}` : noVerdict ? " reason=no-verdict" : "";
   writeAtomic(`${O}.done`, `status=${st} rc=${rc}${why} at=${new Date().toISOString()} agent=${j.agent}\n`);
   rmSync(`${O}.pid`, { force: true });
   state({ status: st, rc, end: new Date().toISOString() });

@@ -14,7 +14,7 @@ import { setTomlString } from "./toml-set.js";
 import { FORMATS, parseResetIn, usesPrompt, useThrowaway } from "./agents.js";
 import { buildPrompt, diagnosisGate, recommendation, trim } from "./diagnose.js";
 import { resolveRole } from "./roles.js";
-import { metrics, parseFindings, repeats, similar, slowRounds, freshRounds, mark } from "./rounds.js";
+import { hasVerdict, metrics, parseFindings, repeats, similar, slowRounds, freshRounds, mark } from "./rounds.js";
 import { agyNote, antigravityFromModels, copilotFromUser, format, fromCache, humanReset, learnExhausted, mergeLearned, minimaxFromRemains, modelLines } from "./quota.js";
 import { writeAtomic } from "./fsutil.js";
 
@@ -2001,6 +2001,19 @@ test("agent: --reason is validated and only applies to -R", async () => {
   assert.deepEqual(ROUND_REASONS, ["review", "verify", "unblock"]);
   assert.equal(await agent(["-a", "codex", "-t", "x", "-d", ".", "-o", "x", "--reason", "nope", "--", "p.md"]), 2);
   assert.equal(await agent(["-a", "codex", "-t", "x", "-d", ".", "-o", "x", "--reason", "verify", "--", "p.md"]), 2);
+});
+
+test("rounds: a review answer has a verdict (findings or an explicit approval), bare [tag] lines count", () => {
+  // A reviewer that stopped before reviewing (seen 2026-11-07, rc=0): no verdict.
+  assert.equal(hasVerdict("I'll start by exploring the repo..."), false);
+  assert.equal(hasVerdict("Looking at the diff now, will report back."), false);
+  for (const ok of ["APPROVED", "Approved.", "## Verdict: APPROVED", "**APPROVED** — no blockers left", "LGTM", "Veredito: aprovado",
+    "No blocking findings.", "Nenhum bloqueante.", "- [suggestion] src/a.ts:3 rename x", "1. **Bloqueante** — src/b.ts:9 falta checagem"])
+    assert.equal(hasVerdict(ok), true, ok);
+  assert.equal(hasVerdict("The approach is not approved by me yet, still reading"), false); // "approved" mid-sentence is not a verdict
+  // Codex writes findings without a list marker: they count as findings (for orq rounds too).
+  const bare = parseFindings("[blocker] src/process.ts:172 — wait() resolves twice\n\n[suggestion] docs", 1);
+  assert.equal(bare.length, 2); assert.equal(bare[0].file, "src/process.ts"); assert.equal(bare[0].severity, "blocker");
 });
 
 test("rounds: findings parse from tagged list items and match by file + word overlap", () => {
