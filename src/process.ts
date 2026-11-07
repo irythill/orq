@@ -102,6 +102,18 @@ export interface RunOpts {
   stdio?: StdioOptions; env?: NodeJS.ProcessEnv; onSpawn?: (c: ChildProcess) => void;
   quote?: boolean; // Windows shell (.cmd shims): quote each argument instead of passing a command line as is
   tty?: boolean; // an interactive screen (-T): stays in the terminal's session; the watchdog kills its tree pid by pid
+  onError?: (e: NodeJS.ErrnoException) => void; // the command could not start (E2BIG, ENOENT, EACCES...): rc is SPAWN_FAILED
+}
+
+/** Exit code when the command never started (spawn threw or emitted "error"). */
+export const SPAWN_FAILED = 127;
+
+/** Node throws some spawn errors synchronously (E2BIG, EINVAL...) and emits others (ENOENT): one path for both. */
+function startFailed(e: unknown, o: RunOpts): Promise<number> {
+  const err = e as NodeJS.ErrnoException;
+  console.error(`orq: ${err.message}`);
+  o.onError?.(err);
+  return Promise.resolve(SPAWN_FAILED);
 }
 
 /** cmd.exe quoting for one argument (only used when Windows needs a shell). */
@@ -115,18 +127,22 @@ export function runCapped(cmd: string, args: string[], o: RunOpts = {}): Promise
   if (mode === "kernel") {
     const sd = ["--user", "--scope", "-q", ...noExp(), ...(o.unit ? [`--unit=${o.unit}`] : []), "-p", `MemoryMax=${o.cap}`,
       ...(o.swap !== undefined ? ["-p", `MemorySwapMax=${o.swap}`] : []), "--", cmd, ...args];
-    const c = spawn("systemd-run", sd, { stdio: o.stdio ?? "inherit", cwd: o.cwd, env: o.env });
+    let c: ChildProcess;
+    try { c = spawn("systemd-run", sd, { stdio: o.stdio ?? "inherit", cwd: o.cwd, env: o.env }); } catch (e) { return startFailed(e, o); }
     o.onSpawn?.(c);
-    return wait(c);
+    return wait(c, o);
   }
   const win = process.platform === "win32";
   // Own process group on Linux/macOS, so the whole tree can be killed at once (not for a screen: it needs the terminal).
   // Windows: a shell only for .cmd/.bat shims (npx, claude…); an .exe runs directly (paths with spaces stay intact).
   const shell = win && !/\.exe$/i.test(cmd), q = shell && o.quote;
-  const child = spawn(q ? winQuote(cmd) : cmd, q ? args.map(winQuote) : args,
-    { stdio: o.stdio ?? "inherit", cwd: o.cwd, env: o.env, detached: !win && !o.tty, shell, windowsHide: true });
+  let child: ChildProcess;
+  try {
+    child = spawn(q ? winQuote(cmd) : cmd, q ? args.map(winQuote) : args,
+      { stdio: o.stdio ?? "inherit", cwd: o.cwd, env: o.env, detached: !win && !o.tty, shell, windowsHide: true });
+  } catch (e) { return startFailed(e, o); }
   o.onSpawn?.(child);
-  if (mode === "off" || !child.pid) return wait(child);
+  if (mode === "off" || !child.pid) return wait(child, o);
   const fwd = (sig: NodeJS.Signals) => () => { try { process.kill(-child.pid!, sig); } catch { child.kill(sig); } };
   const onInt = fwd("SIGINT"), onTerm = fwd("SIGTERM");
   if (!win && !o.tty) { process.on("SIGINT", onInt); process.on("SIGTERM", onTerm); }
@@ -143,14 +159,14 @@ export function runCapped(cmd: string, args: string[], o: RunOpts = {}): Promise
       killTree(child.pid!, !o.tty);
     }
   }, o.intervalMs ?? 1000);
-  return wait(child).then((code) => {
+  return wait(child, o).then((code) => {
     clearInterval(timer);
     process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
     return killed ? 137 : code;
   });
 }
 
-const wait = (c: ReturnType<typeof spawn>) => new Promise<number>((res) => {
-  c.on("error", (e) => { console.error(`orq: ${e.message}`); res(127); });
+const wait = (c: ChildProcess, o: RunOpts = {}) => new Promise<number>((res) => {
+  c.on("error", (e) => { startFailed(e, o).then(res); });
   c.on("exit", (code, sig) => res(code ?? (sig ? 128 + 9 : 1)));
 });
