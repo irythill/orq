@@ -5,6 +5,10 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    ignore:
+      # Its major follows the lowest supported Node (engines), raised by hand.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       npm:
         patterns: ["*"]
