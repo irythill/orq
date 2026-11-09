@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "../accounts.js";
 import { gateFor } from "../diagnose.js";
 import { hasVerdict } from "../rounds.js";
-import { argvModel, commitMessage, stepIns, stepInNote, useThrowaway, agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
+import { argvModel, baseCommit, commitMessage, isCommitBase, stepIns, stepInNote, useThrowaway, agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
 import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
@@ -28,7 +28,7 @@ import { closeOwnTab, detectHost, type Host, launch, screenOpen, shq, typeInto }
 import { ackPrefix } from "../notice.js";
 import { dropWorktree, notify } from "../testrun.js";
 
-export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base] [-r] [-R session [-F [-F]] [--reason review|verify|unblock]] [-T] -- <prompt.md>   run a child agent";
+export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base [--base-branch <branch>]] [-r] [-R session [-F [-F]] [--reason review|verify|unblock]] [-T] -- <prompt.md>   run a child agent";
 
 /** Why a follow-up (-R) runs: only `review` (fixing a reviewer's findings) counts towards policy.max_rounds. */
 export const ROUND_REASONS = ["review", "verify", "unblock"];
@@ -42,7 +42,7 @@ interface Job {
   session?: string; fromLog?: string; parent: string; host: Host; unit: string; cap?: number; swap?: number;
   mode: MemMode; throwaway: boolean; promptInDir: boolean; closeAfter: number; keep: boolean; tui?: boolean;
   okExit?: number[]; filter?: string; noReview?: string; idleCloseMin?: number; ro?: boolean; review?: boolean;
-  orqCommits?: boolean; orqFetches?: boolean;
+  orqCommits?: boolean; orqFetches?: boolean; scopeNote?: string;
 }
 
 const git = (dir: string, ...a: string[]) => {
@@ -53,7 +53,7 @@ const git = (dir: string, ...a: string[]) => {
 export async function agent(argv: string[]): Promise<number> {
   if (argv[0] === "--run") return runJob(argv[1]);
   if (argv[0] === "--turn") return turn(argv[1], argv[2], argv.slice(3));
-  let a = process.env.AGENT || "", g = "", t = "", d = "", o = "", model = "", effort = "", acc = "", resume = "", base = "";
+  let a = process.env.AGENT || "", g = "", t = "", d = "", o = "", model = "", effort = "", acc = "", resume = "", base = "", baseBranch = "";
   let ro = false, tui = false, force = 0, prompt: string | undefined, reason = "review";
   const inc: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -63,7 +63,7 @@ export async function agent(argv: string[]): Promise<number> {
     else if (x === "-o") o = v(); else if (x === "-m") model = v(); else if (x === "-e") effort = v();
     else if (x === "-c") acc = v(); else if (x === "-i") inc.push(resolve(v())); else if (x === "-R") resume = v();
     else if (x === "-b") base = v(); else if (x === "-p") v(); else if (x === "-r") ro = true; else if (x === "-T") tui = true; else if (x === "-F") force++;
-    else if (x === "--reason") reason = v();
+    else if (x === "--reason") reason = v(); else if (x === "--base-branch") baseBranch = v();
     else if (!x.startsWith("-") && prompt === undefined) prompt = x;
     else { console.error(USAGE); return 2; }
   }
@@ -139,9 +139,22 @@ export async function agent(argv: string[]): Promise<number> {
   mkdirSync(dirname(O), { recursive: true });
   // -b <base>: attaches `git diff origin/<base>...HEAD` (review without running git; required for Antigravity).
   // A base with no origin/<base> but naming a commit (a fix round's round-<n>.sha) attaches `<base>..HEAD`: only that round's delta.
+  // An agent that can't review a commit base (agents.<name>.base_commit) gets the branch base instead: the whole branch.
+  let scopeNote = "";
+  if (base && !baseCommit(def) && isCommitBase(repo, base)) {
+    const branch = baseBranch || git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")?.replace(/^origin\//, "");
+    if (!branch) {
+      console.error(m(`${a} can't review -b ${base} (a commit) and no branch base is known: pass --base-branch <branch>`,
+        `${a} não revisa -b ${base} (um commit) e a base da branch é desconhecida: informe --base-branch <branch>`));
+      return 2;
+    }
+    scopeNote = m(`${a} can't review a commit base (agents.${a}.base_commit = false): reviewing against origin/${branch.replace(/^origin\//, "")} instead. The review covers the whole branch, not just the round delta.`,
+      `${a} não revisa uma base que é commit (agents.${a}.base_commit = false): revisando contra origin/${branch}. A revisão cobre a branch inteira, não só o delta da rodada.`);
+    console.log(`[orq agent] ${scopeNote}`);
+    base = branch.replace(/^origin\//, "");
+  }
   if (base) {
-    const has = (ref: string) => spawnSync("git", ["-C", repo, "rev-parse", "--verify", "-q", `${ref}^{commit}`]).status === 0;
-    const range = !has(`origin/${base}`) && has(base) ? `${base}..HEAD` : `origin/${base}...HEAD`;
+    const range = isCommitBase(repo, base) ?`${base}..HEAD` : `origin/${base}...HEAD`;
     const r = spawnSync("git", ["-C", repo, "diff", range], { encoding: "utf8", maxBuffer: 1 << 30 });
     if (r.status !== 0) { console.error(m(`could not build the diff ${range}`, `não consegui gerar o diff ${range}`)); return 2; }
     writeFileSync(`${O}.diff`, r.stdout); inc.push(`${O}.diff`);
@@ -225,7 +238,7 @@ export async function agent(argv: string[]): Promise<number> {
     swap: parseSize(mach.agent_swap_max as string | undefined), mode: (mach.mem_enforce as MemMode | undefined) ?? "auto",
     throwaway, promptInDir: Boolean(def.prompt_in_dir), closeAfter,
     keep: process.env.HERDR_KEEP_TAB === "1" || process.env.ORQ_KEEP_TAB === "1" || closeAfter <= 0, tui,
-    okExit: def.ok_exit, filter: def.filter, noReview: def.no_review, ro, orqCommits: steps.commit, orqFetches: steps.fetch,
+    okExit: def.ok_exit, filter: def.filter, noReview: def.no_review, ro, orqCommits: steps.commit, orqFetches: steps.fetch, scopeNote,
     // A review (-r, prefix review*) must end with a verdict; policy.review_verdict = false turns the check off.
     review: ro && /^review/i.test(basename(O)) && getPath(cfg, "policy.review_verdict") !== false,
     idleCloseMin: tui ? Number(mach.tui_idle_close_min ?? 30) : undefined,
@@ -551,6 +564,8 @@ async function runJob(file: string): Promise<number> {
   const res = fmt.finish(logText, stdout);
   post(j.answer === "file" ? (existsSync(`${O}.out.md`) ? readFileSync(`${O}.out.md`, "utf8") : "") : res.answer ?? "");
   if (committed) res.answer = `${res.answer ?? ""}\n## Commit (by orq)\n${committed}\n`;
+  const scope = j.scopeNote ? `\n## Review scope (by orq)\n${j.scopeNote}\n` : "";
+  if (scope) res.answer = `${res.answer ?? ""}${scope}`;
   // Denied commands do not sink a write run that did work: keep the diff and report ok with the denied list in the answer.
   let recovered = false;
   if (res.denied?.length && !j.ro && !j.throwaway && existsSync(j.dir)) {
@@ -574,7 +589,7 @@ async function runJob(file: string): Promise<number> {
     res.rc = res.rc || 3;
   }
   if (j.answer !== "file") writeFileSync(`${O}.out.md`, res.answer ?? "");
-  else if (committed) appendFileSync(`${O}.out.md`, `\n## Commit (by orq)\n${committed}\n`);
+  else if (committed || scope) appendFileSync(`${O}.out.md`, `${committed ? `\n## Commit (by orq)\n${committed}\n` : ""}${scope}`);
   // The agent never started: say why in the answer (the conductor reads it) instead of leaving it empty.
   if (spawnErr) writeFileSync(`${O}.out.md`, spawnFailText(j, spawnErr));
   const sid = j.fromLog ? new RegExp(j.fromLog, "m").exec(logText)?.[1] : res.session ?? j.session;

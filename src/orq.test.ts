@@ -2488,6 +2488,69 @@ console.log("Commit: feat: add a.txt\\n\\ndone");\n`);
   assert.match(spawnSync("git", ["-C", repo, "status", "--porcelain"], { encoding: "utf8" }).stdout, /\?\? /);
 });
 
+test("base_commit = false (default for a tool): pick review skips it on a commit base", async () => {
+  const { pick, parseQuota } = await import("./pick.js");
+  const agents = {
+    revtool: { run: "revtool -b {base}", write: false, models: { review: { default: "m" } } },
+    forced: { run: "revtool -b {base}", write: false, base_commit: true, models: { review: { default: "m" } } },
+    chat: { run: "chat {prompt}", base_commit: false, models: { review: { default: "m" } } },
+    plain: { run: "chat {prompt}", models: { review: { default: "m" } } },
+  };
+  const cfg = { agents, roles: { reviewer: { pool: ["revtool", "forced", "chat", "plain"] } } };
+  const inp = { cfg, role: "review" as const, level: "medium", exclude: new Set<string>(), stats: [], blocks: new Set<string>(), recent: [], quota: parseQuota("") };
+  const names = (commitBase: boolean) => pick({ ...inp, commitBase }).cands.map((c) => c.agent).sort();
+  assert.deepEqual(names(false), ["chat", "forced", "plain", "revtool"]);
+  assert.deepEqual(names(true), ["forced", "plain"]);
+  assert.ok(pick({ ...inp, commitBase: true }).notes.some((n) => /^revtool: .*base_commit = false/.test(n)));
+});
+
+test("agent: a commit base falls back to the branch base for base_commit = false, with a warning and a scope note", () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  (env as Record<string, string>).ORQ_TERMINAL = "plain";
+  const repo = join(root, "r"), git = (...a: string[]) => spawnSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" });
+  mkdirSync(repo);
+  git("init", "-q"); git("commit", "-q", "--allow-empty", "-m", "base"); git("update-ref", "refs/remotes/origin/dev", "HEAD");
+  writeFileSync(join(repo, "impl.txt"), "impl\n"); git("add", "."); git("commit", "-q", "-m", "impl");
+  const sha = git("rev-parse", "HEAD").stdout.trim();
+  writeFileSync(join(repo, "fix.txt"), "fix\n"); git("add", "."); git("commit", "-q", "-m", "fix");
+  const tool = join(root, "tool.mjs");
+  writeFileSync(tool, "console.log('APPROVED ' + process.argv[2]);\n");
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { revtool: {
+    run: `'${process.execPath}' '${tool}' {base}`, write: false, mem_max: "off" } } }));
+  writeFileSync(join(root, "p.md"), "ignored\n");
+  const O = join(root, "out", "r");
+  const go = (...extra: string[]) => run("agent", "-a", "revtool", "-t", "T", "-d", repo, "-o", O, "-r", "-b", sha, ...extra, "--", join(root, "p.md"));
+  const noBranch = go();
+  assert.equal(noBranch.status, 2);
+  assert.match(noBranch.stderr, /--base-branch/);
+  const ok = go("--base-branch", "origin/dev");
+  assert.equal(ok.status, 0);
+  assert.match(ok.stdout, /can't review a commit base.*whole branch/);
+  run("wait", "--timeout", "60", O);
+  const diff = readFileSync(`${O}.diff`, "utf8");
+  assert.match(diff, /impl\.txt/);
+  assert.match(diff, /fix\.txt/);
+  const answer = readFileSync(`${O}.out.md`, "utf8");
+  assert.match(answer, /APPROVED dev/);
+  assert.match(answer, /## Review scope \(by orq\)\n.*whole branch/);
+});
+
+test("pick review --base: resolves the commit from the workspace root, not the bare cwd", () => {
+  const { root, env } = sandbox(), ws = join(root, "ws"), other = join(ws, "other");
+  const git = (cwd: string, ...a: string[]) => spawnSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" });
+  mkdirSync(join(ws, ".orq"), { recursive: true });
+  writeFileSync(join(ws, ".orq", "workspace.json"), JSON.stringify({ agents: { revtool: {
+    run: "revtool -b {base}", write: false, models: { review: { default: "m" } } } }, roles: { reviewer: { pool: ["revtool"] } } }));
+  git(ws, "init", "-q"); git(ws, "commit", "-q", "--allow-empty", "-m", "x");
+  const sha = git(ws, "rev-parse", "HEAD").stdout.trim();
+  mkdirSync(other); git(other, "init", "-q"); git(other, "commit", "-q", "--allow-empty", "-m", "y");
+  const r = spawnSync(process.execPath, [CLI, "pick", "review", "--base", sha, "--no-record"], { env, cwd: other, encoding: "utf8" });
+  assert.equal(r.status, 3, r.stderr);
+  assert.match(r.stderr, /revtool: can't review a commit base/);
+});
+
 test("board idle: an agent tree with ~no CPU for 30+ min reads idle; real work resets it", async () => {
   const { idleFor, cpuTicks, render } = await import("./commands/board.js");
   const base: Record<string, { ticks: number; at: number }> = {}, min = 60_000, t0 = 1_000_000;

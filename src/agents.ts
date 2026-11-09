@@ -18,6 +18,7 @@
 //   no_review = "Nothing to review"       # regex: a match on the answer's first line (or a short answer, 200 chars) = nothing reviewed → status=fail
 //   commit   = false                      # the agent can't run git commit: orq commits a write run's changes for it
 //   network  = false                      # the agent has no network: orq fetches origin before a write run (no fetch/pull/push for it)
+//   base_commit = false                   # can't review `-b <commit>` (diffs against origin/<base> itself): pick skips it, agent falls back to the branch base (default: follows usesPrompt: true if the agent takes the prompt, false for a tool that ignores it)
 //
 // Templates: words split on spaces ('...' or "..." keep spaces). {name} or {name:default}; a [group] is dropped when
 // any placeholder in it is empty, and repeated for a list placeholder ({gitroots}). Placeholders: prompt (file),
@@ -27,6 +28,7 @@
 // The hook (`orq agent --turn <job> <turn_hook>`) reads the turn in the agent's own shape: claude (Stop hook JSON on
 // stdin), codex (notify JSON as the last argument), opencode (<session id> <answer file>, from orq's plugin) or text
 // (the answer on stdin, the session id as an argument).
+import { spawnSync } from "node:child_process";
 import type { Obj } from "./config.js";
 import { m } from "./i18n.js";
 
@@ -53,12 +55,22 @@ export interface AgentDef {
   filter?: string; // shell line run on the answer (stdin → stdout), e.g. a tool's JSON → [blocker]/[suggestion]
   commit?: boolean; // false = orq commits a write run's changes itself (default true)
   network?: boolean; // false = orq fetches origin before a write run; the agent rebases locally (default true)
+  base_commit?: boolean; // false = can't review a commit base (-b <sha>): orq pick skips it, orq agent uses the branch base (default: true if the agent takes the prompt, false for a tool that ignores it)
   no_review?: string; // regex: matched on the answer's first line (or all of a short one) = "nothing was reviewed" → status=fail, not a verdict
 }
 
 /** Does the agent's command take the prompt (stdin, a file in its folder or a {prompt*} placeholder)? A review tool like revtool does not. */
 export const usesPrompt = (a: Pick<AgentDef, "run" | "stdin" | "prompt_in_dir">) =>
   Boolean(a.stdin || a.prompt_in_dir || /\{prompt(_text|_hint)?\}/.test(a.run ?? ""));
+
+/** Can the agent review the delta from a commit (`-b <sha>`)? A tool that ignores the prompt diffs against origin/<base> itself, so by default it can't. */
+export const baseCommit = (def: Pick<AgentDef, "base_commit" | "run" | "stdin" | "prompt_in_dir">) => def.base_commit ?? usesPrompt(def);
+
+/** Does `base` name a commit rather than a branch (no origin/<base>, but it resolves)? A fix round's round-<n>.sha does. */
+export function isCommitBase(repo: string, base: string): boolean {
+  const has = (ref: string) => spawnSync("git", ["-C", repo, "rev-parse", "--verify", "-q", `${ref}^{commit}`]).status === 0;
+  return !has(`origin/${base}`) && has(base);
+}
 
 /** What orq does for a write run in a git repo that the agent itself can't: commit its changes, fetch origin. */
 export const stepIns = (def: Pick<AgentDef, "commit" | "network">, ro: boolean, inGit: boolean) =>
