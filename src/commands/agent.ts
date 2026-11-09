@@ -142,16 +142,16 @@ export async function agent(argv: string[]): Promise<number> {
   // An agent that can't review a commit base (agents.<name>.base_commit) gets the branch base instead: the whole branch.
   let scopeNote = "";
   if (base && !baseCommit(def) && isCommitBase(repo, base)) {
-    const branch = baseBranch || git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")?.replace(/^origin\//, "");
+    const branch = baseBranch?.replace(/^origin\//, "") || git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")?.replace(/^origin\//, "");
     if (!branch) {
       console.error(m(`${a} can't review -b ${base} (a commit) and no branch base is known: pass --base-branch <branch>`,
         `${a} não revisa -b ${base} (um commit) e a base da branch é desconhecida: informe --base-branch <branch>`));
       return 2;
     }
-    scopeNote = m(`${a} can't review a commit base (agents.${a}.base_commit = false): reviewing against origin/${branch.replace(/^origin\//, "")} instead. The review covers the whole branch, not just the round delta.`,
+    scopeNote = m(`${a} can't review a commit base (agents.${a}.base_commit = false): reviewing against origin/${branch} instead. The review covers the whole branch, not just the round delta.`,
       `${a} não revisa uma base que é commit (agents.${a}.base_commit = false): revisando contra origin/${branch}. A revisão cobre a branch inteira, não só o delta da rodada.`);
     console.log(`[orq agent] ${scopeNote}`);
-    base = branch.replace(/^origin\//, "");
+    base = branch;
   }
   if (base) {
     const range = isCommitBase(repo, base) ?`${base}..HEAD` : `origin/${base}...HEAD`;
