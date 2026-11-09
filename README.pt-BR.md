@@ -60,7 +60,7 @@ Você declara só os que tem, e os papéis que cada um pode assumir.
 ## Instalação
 
 Linux, macOS ou Windows (nativo, não só WSL), em qualquer shell — bash, zsh, fish, PowerShell, cmd.
-**Requisitos:** Node 20+ com `npm`, `git`, e pelo menos um agente da tabela acima, logado. Opcional:
+**Requisitos:** Node 22+ com `npm`, `git`, e pelo menos um agente da tabela acima, logado. Opcional:
 [herdr](https://herdr.dev) ou tmux, para cada filho ter sua própria aba ou janela (sem eles, os filhos rodam em
 segundo plano e o `orq board` mostra todos).
 
@@ -103,7 +103,7 @@ git clone https://github.com/irythill/orq ~/Code/orq && cd ~/Code/orq
 ./install.sh            # links em ~/.local/bin, serviço do herdr, skills do Claude
 ```
 
-Precisa de `git`, `jq`, Node 20+ com `npm`, `python3` (3.11+ para config em TOML; mais antigo → config em JSON ou
+Precisa de `git`, `jq`, Node 22+ com `npm`, `python3` (3.11+ para config em TOML; mais antigo → config em JSON ou
 `pip install --user tomli`) e `systemd` de usuário (WSL2: Ubuntu 22.04+ com systemd habilitado). O `install.sh`
 confere os requisitos (tabela do que foi encontrado e do que falta), compila o CLI `orq` (`src/` → `dist/`) e depois
 cria **symlinks** (nunca copia) dos scripts em `~/.local/bin`, do `setup/herdr.service` em `~/.config/systemd/user/`

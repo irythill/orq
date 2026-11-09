@@ -58,7 +58,7 @@ You declare only the ones you have, and the roles each may take.
 ## Install
 
 Linux, macOS or Windows (native, not only WSL), in any shell — bash, zsh, fish, PowerShell, cmd.
-**Requirements:** Node 20+ with `npm`, `git`, and at least one agent from the table above, logged in. Optional:
+**Requirements:** Node 22+ with `npm`, `git`, and at least one agent from the table above, logged in. Optional:
 [herdr](https://herdr.dev) or tmux, so each child gets its own tab or window (otherwise children run in the
 background and `orq board` shows them).
 
@@ -100,7 +100,7 @@ git clone https://github.com/irythill/orq ~/Code/orq && cd ~/Code/orq
 ./install.sh            # links in ~/.local/bin, herdr service, skills for Claude
 ```
 
-Needs `git`, `jq`, Node 20+ with `npm`, `python3` (3.11+ for TOML config; older → JSON config or
+Needs `git`, `jq`, Node 22+ with `npm`, `python3` (3.11+ for TOML config; older → JSON config or
 `pip install --user tomli`) and user `systemd` (WSL2: Ubuntu 22.04+ with systemd enabled). `install.sh` checks the
 requirements (table of what's found and missing), builds the `orq` CLI (`src/` → `dist/`), then **symlinks** (never
 copies) the scripts into `~/.local/bin`, `setup/herdr.service` into `~/.config/systemd/user/` (and enables it), and
@@ -155,6 +155,8 @@ run     = "revtool --markdown -b {base}"  # {base} = orq agent -b; it reads the 
 write   = false
 ok_exit = [0, 1]                         # exit 1 = findings, still a verdict
 no_review = "Nothing to review"          # matched on the answer's first line (or a short answer): not a verdict, status=fail
+# commit = false                         # can't git commit: orq commits a write run's changes
+# network = false                        # no network: orq fetches origin before a write run
 # filter = "jq -r '...'"                 # optional: its output → [blocker]/[suggestion] lines
 
 [conductor]
