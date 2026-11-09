@@ -2464,7 +2464,7 @@ test("agent: commit = false → orq commits the write run with the agent's messa
   spawnSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]);
   const fake = join(root, "fake.mjs");
   writeFileSync(fake, `import { readFileSync, writeFileSync } from "node:fs";
-const p = readFileSync(0, "utf8"); writeFileSync("a.txt", "x"); writeFileSync("${join(root, "seen.md")}", p);
+const p = readFileSync(0, "utf8"); writeFileSync("a.txt", "x"); writeFileSync(${JSON.stringify(join(root, "seen.md"))}, p);
 console.log("Commit: feat: add a.txt\\n\\ndone");\n`);
   mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
   writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { fake: {
