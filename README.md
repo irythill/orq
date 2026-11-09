@@ -157,6 +157,7 @@ ok_exit = [0, 1]                         # exit 1 = findings, still a verdict
 no_review = "Nothing to review"          # matched on the answer's first line (or a short answer): not a verdict, status=fail
 # commit = false                         # can't git commit: orq commits a write run's changes
 # network = false                        # no network: orq fetches origin before a write run
+# base_commit = false                    # can't review `-b <sha>` (default for a tool): pick skips it on a round delta, agent falls back to the branch base
 # filter = "jq -r '...'"                 # optional: its output → [blocker]/[suggestion] lines
 
 [conductor]

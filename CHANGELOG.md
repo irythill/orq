@@ -11,6 +11,10 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   the answer, else the title) and reports it under `## Commit (by orq)`; `network = false` → orq runs `git fetch origin`
   before the run so the agent can rebase locally. The prompt says so, so the agent doesn't try. Built in: antigravity
   `commit = false`, codex `network = false`.
+- Agent capability `base_commit` (default: true if the agent takes the prompt, false for a tool that ignores it). A tool that diffs against
+  `origin/<base>` itself can't review `-b <round-n.sha>`, so `orq pick review --base <ref>` skips it when the base is a
+  commit, and `orq agent -b <commit>` falls back to the branch base (`--base-branch <branch>`, else `origin/HEAD`), warns and
+  adds `## Review scope (by orq)` to the answer: the review covers the whole branch, not just the round delta (#76).
 
 ### Changed
 - **Node 22 or newer is required** (`engines >=22`). Node 20 reached end of life in April 2026. CI tests Node 22, 24
