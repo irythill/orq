@@ -16,6 +16,8 @@
 //   ok_exit  = [0, 1]                     # exit codes that still count as a verdict (a review tool exits 1 on findings)
 //   filter   = "jq -r '.findings[] | ...'" # shell line: gets the answer on stdin, its stdout becomes the answer
 //   no_review = "Nothing to review"       # regex: a match on the answer's first line (or a short answer, 200 chars) = nothing reviewed → status=fail
+//   commit   = false                      # the agent can't run git commit: orq commits a write run's changes for it
+//   network  = false                      # the agent has no network: orq fetches origin before a write run (no fetch/pull/push for it)
 //
 // Templates: words split on spaces ('...' or "..." keep spaces). {name} or {name:default}; a [group] is dropped when
 // any placeholder in it is empty, and repeated for a list placeholder ({gitroots}). Placeholders: prompt (file),
@@ -49,12 +51,30 @@ export interface AgentDef {
   turn_hook?: "claude" | "codex" | "opencode" | "text";
   ok_exit?: number[]; // exit codes that are a verdict, not a failure (default [0])
   filter?: string; // shell line run on the answer (stdin → stdout), e.g. a tool's JSON → [blocker]/[suggestion]
+  commit?: boolean; // false = orq commits a write run's changes itself (default true)
+  network?: boolean; // false = orq fetches origin before a write run; the agent rebases locally (default true)
   no_review?: string; // regex: matched on the answer's first line (or all of a short one) = "nothing was reviewed" → status=fail, not a verdict
 }
 
 /** Does the agent's command take the prompt (stdin, a file in its folder or a {prompt*} placeholder)? A review tool like revtool does not. */
 export const usesPrompt = (a: Pick<AgentDef, "run" | "stdin" | "prompt_in_dir">) =>
   Boolean(a.stdin || a.prompt_in_dir || /\{prompt(_text|_hint)?\}/.test(a.run ?? ""));
+
+/** What orq does for a write run in a git repo that the agent itself can't: commit its changes, fetch origin. */
+export const stepIns = (def: Pick<AgentDef, "commit" | "network">, ro: boolean, inGit: boolean) =>
+  ({ commit: !ro && inGit && def.commit === false, fetch: !ro && inGit && def.network === false });
+
+/** The note added to the prompt so the agent doesn't try what orq does for it. */
+export function stepInNote(s: { commit: boolean; fetch: boolean }): string {
+  const l: string[] = [];
+  if (s.fetch) l.push("- You have no network access. orq already ran `git fetch origin`, so the origin/* refs are fresh: rebase or diff against them locally. Don't run git fetch, pull or push.");
+  if (s.commit) l.push("- You can't run `git commit`. Leave your changes in the working tree; orq commits them after you finish. Start your final answer with a one-line commit message in the form `Commit: <message>`.");
+  return l.length ? `\n\n## Environment (from orq)\n${l.join("\n")}\n` : "";
+}
+
+/** The commit message an agent proposed (`Commit: ...` line in its answer), else the fallback. */
+export const commitMessage = (answer: string, fallback: string) =>
+  /^\W*commit:\s*`?([^`\n]+?)`?\s*$/im.exec(answer)?.[1]?.trim() || fallback;
 
 /** Read only runs of a `throwaway` agent get a worktree copy of HEAD, but only where there is a git repo to copy. */
 export const useThrowaway = (def: Pick<AgentDef, "throwaway">, ro: boolean, resume: boolean, inGit: boolean) =>
@@ -87,7 +107,7 @@ export const BUILTIN_AGENTS: Record<string, AgentDef> = {
       `--skip-git-repo-check {mode} ${NOMCP_CODEX} -o {out} -`,
     resume: `codex exec resume {session} -c model_reasoning_effort={effort:low} ` +
       `-c sandbox_workspace_write.writable_roots={gitroots_json} ${NOMCP_CODEX} -o {out} -`,
-    readonly: "", write: "[--add-dir {gitroots}]", stdin: true, format: "codex", answer: "file", throwaway: true,
+    readonly: "", write: "[--add-dir {gitroots}]", stdin: true, format: "codex", answer: "file", throwaway: true, network: false,
     // The screen: no approvals (nobody to approve), the same sandbox as exec; notify = end of turn.
     tui: `codex [-m {model}] -c model_reasoning_effort={effort:low} -s workspace-write -a never -C {dir} {mode} ` +
       `${NOMCP_CODEX} -c notify={hook_json} {prompt_text}`,
@@ -109,7 +129,7 @@ export const BUILTIN_AGENTS: Record<string, AgentDef> = {
     // a run that only had commands denied still counts when the worktree changed (see the antigravity format). The prompt goes in a file in its folder (excluded from git) and -p only says "read it".
     run: `${AGY} {mode} -p {prompt_hint}`, resume: `${AGY} --conversation {session} {mode} -p {prompt_hint}`,
     readonly: "--mode plan", write: "--mode accept-edits --add-dir {gitdir}",
-    format: "antigravity", throwaway: true, prompt_in_dir: true,
+    format: "antigravity", throwaway: true, prompt_in_dir: true, commit: false,
   },
   copilot: {
     // Second opinion, always read only: git reads allowed, anything else denied by -p without asking.

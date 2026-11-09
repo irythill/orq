@@ -155,6 +155,8 @@ run     = "revtool --markdown -b {base}"  # {base} = orq agent -b; it reads the 
 write   = false
 ok_exit = [0, 1]                         # exit 1 = findings, still a verdict
 no_review = "Nothing to review"          # matched on the answer's first line (or a short answer): not a verdict, status=fail
+# commit = false                         # can't git commit: orq commits a write run's changes
+# network = false                        # no network: orq fetches origin before a write run
 # filter = "jq -r '...'"                 # optional: its output → [blocker]/[suggestion] lines
 
 [conductor]

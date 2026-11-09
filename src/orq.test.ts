@@ -2453,6 +2453,41 @@ process.stdin.resume().on("data", () => {}).on("end", () => process.exit(0));\n`
   assert.match(c.out, /status=fail/);
 });
 
+test("agent: commit = false → orq commits the write run with the agent's message; network = false → fetch + prompt note", () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  Object.assign(env, { ORQ_TERMINAL: "plain", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" });
+  const remote = join(root, "remote"), repo = join(root, "repo");
+  mkdirSync(remote);
+  spawnSync("git", ["-C", remote, "init", "-q", "--bare"]);
+  spawnSync("git", ["clone", "-q", remote, repo]);
+  spawnSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]);
+  const fake = join(root, "fake.mjs");
+  writeFileSync(fake, `import { readFileSync, writeFileSync } from "node:fs";
+const p = readFileSync(0, "utf8"); writeFileSync("a.txt", "x"); writeFileSync(${JSON.stringify(join(root, "seen.md"))}, p);
+console.log("Commit: feat: add a.txt\\n\\ndone");\n`);
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { fake: {
+    run: `'${process.execPath}' '${fake}'`, write: "", stdin: true, mem_max: "off", commit: false, network: false } } }));
+  writeFileSync(join(root, "p.md"), "hi\n");
+  const O = join(root, "out", "impl");
+  assert.equal(run("agent", "-a", "fake", "-t", "impl", "-d", repo, "-o", O, "--", join(root, "p.md")).status, 0);
+  assert.match(run("wait", "--timeout", "60", O).stdout, /status=ok/);
+  const seen = readFileSync(join(root, "seen.md"), "utf8");
+  assert.match(seen, /no network access/);
+  assert.match(seen, /can't run `git commit`/);
+  assert.equal(spawnSync("git", ["-C", repo, "log", "-1", "--format=%s"], { encoding: "utf8" }).stdout.trim(), "feat: add a.txt");
+  assert.equal(spawnSync("git", ["-C", repo, "status", "--porcelain"], { encoding: "utf8" }).stdout, "");
+  assert.match(readFileSync(`${O}.out.md`, "utf8"), /## Commit \(by orq\)\n\w+ feat: add a\.txt/);
+  // Read only: no note, no commit.
+  const R = join(root, "out", "ro");
+  writeFileSync(join(repo, "b.txt"), "y");
+  run("agent", "-a", "fake", "-t", "ro", "-d", repo, "-o", R, "-r", "--", join(root, "p.md"));
+  run("wait", "--timeout", "60", R);
+  assert.doesNotMatch(readFileSync(join(root, "seen.md"), "utf8"), /from orq/);
+  assert.match(spawnSync("git", ["-C", repo, "status", "--porcelain"], { encoding: "utf8" }).stdout, /\?\? /);
+});
+
 test("board idle: an agent tree with ~no CPU for 30+ min reads idle; real work resets it", async () => {
   const { idleFor, cpuTicks, render } = await import("./commands/board.js");
   const base: Record<string, { ticks: number; at: number }> = {}, min = 60_000, t0 = 1_000_000;

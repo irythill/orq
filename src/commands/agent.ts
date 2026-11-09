@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "../accounts.js";
 import { gateFor } from "../diagnose.js";
 import { hasVerdict } from "../rounds.js";
-import { argvModel, useThrowaway, agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
+import { argvModel, commitMessage, stepIns, stepInNote, useThrowaway, agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
 import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
@@ -42,6 +42,7 @@ interface Job {
   session?: string; fromLog?: string; parent: string; host: Host; unit: string; cap?: number; swap?: number;
   mode: MemMode; throwaway: boolean; promptInDir: boolean; closeAfter: number; keep: boolean; tui?: boolean;
   okExit?: number[]; filter?: string; noReview?: string; idleCloseMin?: number; ro?: boolean; review?: boolean;
+  orqCommits?: boolean; orqFetches?: boolean;
 }
 
 const git = (dir: string, ...a: string[]) => {
@@ -145,8 +146,9 @@ export async function agent(argv: string[]): Promise<number> {
     if (r.status !== 0) { console.error(m(`could not build the diff ${range}`, `não consegui gerar o diff ${range}`)); return 2; }
     writeFileSync(`${O}.diff`, r.stdout); inc.push(`${O}.diff`);
   }
-  if (inc.length) {
-    let text = readFileSync(P, "utf8");
+  const steps = stepIns(def, ro, git(repo, "rev-parse", "--git-dir") !== undefined), note = stepInNote(steps);
+  if (inc.length || note) {
+    let text = readFileSync(P, "utf8") + note;
     for (const f of inc) text += `\n--- ${basename(f)} ---\n${readFileSync(f, "utf8")}\n--- end of ${basename(f)} ---\n`;
     writeFileSync(`${O}.prompt.md`, text); P = `${O}.prompt.md`;
   }
@@ -223,7 +225,7 @@ export async function agent(argv: string[]): Promise<number> {
     swap: parseSize(mach.agent_swap_max as string | undefined), mode: (mach.mem_enforce as MemMode | undefined) ?? "auto",
     throwaway, promptInDir: Boolean(def.prompt_in_dir), closeAfter,
     keep: process.env.HERDR_KEEP_TAB === "1" || process.env.ORQ_KEEP_TAB === "1" || closeAfter <= 0, tui,
-    okExit: def.ok_exit, filter: def.filter, noReview: def.no_review, ro,
+    okExit: def.ok_exit, filter: def.filter, noReview: def.no_review, ro, orqCommits: steps.commit, orqFetches: steps.fetch,
     // A review (-r, prefix review*) must end with a verdict; policy.review_verdict = false turns the check off.
     review: ro && /^review/i.test(basename(O)) && getPath(cfg, "policy.review_verdict") !== false,
     idleCloseMin: tui ? Number(mach.tui_idle_close_min ?? 30) : undefined,
@@ -400,6 +402,14 @@ export function argvTooBig(argv: string[], platform = process.platform): string 
   return total > 1_000_000 ? m(`the command line is ${kb(total)} (over ~1 MB)`, `a linha de comando tem ${kb(total)} (acima de ~1 MB)`) : undefined;
 }
 
+/** Commits everything in `dir` for an agent that can't; returns the line for its answer. */
+function orqCommit(dir: string, msg: string): string {
+  const add = spawnSync("git", ["-C", dir, "add", "-A"], { encoding: "utf8" });
+  const c = add.status === 0 ? spawnSync("git", ["-C", dir, "commit", "-q", "-m", msg], { encoding: "utf8" }) : add;
+  return c.status === 0 ? `${git(dir, "rev-parse", "--short", "HEAD")} ${msg}`
+    : `FAILED (exit ${c.status}): ${(c.stderr || c.stdout).trim()}. The changes are still in the worktree.`;
+}
+
 async function runJob(file: string): Promise<number> {
   const j = JSON.parse(readFileSync(file, "utf8")) as Job, O = j.prefix;
   writeFileSync(`${O}.pid`, String(process.pid));
@@ -417,6 +427,8 @@ async function runJob(file: string): Promise<number> {
       if (spawnSync("git", ["-C", j.repo, "worktree", "add", "-q", "--detach", j.dir, "HEAD"], { stdio: "inherit" }).status !== 0) return false;
       try { symlinkSync(realpathSync(join(j.repo, "node_modules")), join(j.dir, "node_modules"), process.platform === "win32" ? "junction" : "dir"); } catch { /* none */ }
     }
+    if (j.orqFetches && spawnSync("git", ["-C", j.dir, "fetch", "-q", "origin"], { stdio: "inherit" }).status !== 0)
+      console.error(m("[orq agent] git fetch origin failed; the agent sees the local origin/* refs", "[orq agent] git fetch origin falhou; o agente vê as refs origin/* locais"));
     if (j.promptInDir) {
       copyFileSync(j.prompt, join(j.dir, PF));
       const ex = git(j.dir, "rev-parse", "--git-path", "info/exclude");
@@ -428,9 +440,11 @@ async function runJob(file: string): Promise<number> {
     }
     return true;
   };
-  const post = () => {
+  let committed = "";
+  const post = (answer = "") => {
     if (j.promptInDir) rmSync(join(j.dir, PF), { force: true });
     if (j.throwaway) dropWorktree(j.repo, j.dir);
+    else if (j.orqCommits && existsSync(j.dir) && git(j.dir, "status", "--porcelain")) committed = orqCommit(j.dir, commitMessage(answer, j.title));
   };
   if (j.tui) {
     // The agent's own screen: the terminal is its; answers come from the end-of-turn hook (`--turn`).
@@ -534,8 +548,9 @@ async function runJob(file: string): Promise<number> {
     await Promise.race([streams, sleep(5000)]);
   }
   await new Promise((r) => log.end(r));
-  post();
   const res = fmt.finish(logText, stdout);
+  post(j.answer === "file" ? (existsSync(`${O}.out.md`) ? readFileSync(`${O}.out.md`, "utf8") : "") : res.answer ?? "");
+  if (committed) res.answer = `${res.answer ?? ""}\n## Commit (by orq)\n${committed}\n`;
   // Denied commands do not sink a write run that did work: keep the diff and report ok with the denied list in the answer.
   let recovered = false;
   if (res.denied?.length && !j.ro && !j.throwaway && existsSync(j.dir)) {
@@ -559,6 +574,7 @@ async function runJob(file: string): Promise<number> {
     res.rc = res.rc || 3;
   }
   if (j.answer !== "file") writeFileSync(`${O}.out.md`, res.answer ?? "");
+  else if (committed) appendFileSync(`${O}.out.md`, `\n## Commit (by orq)\n${committed}\n`);
   // The agent never started: say why in the answer (the conductor reads it) instead of leaving it empty.
   if (spawnErr) writeFileSync(`${O}.out.md`, spawnFailText(j, spawnErr));
   const sid = j.fromLog ? new RegExp(j.fromLog, "m").exec(logText)?.[1] : res.session ?? j.session;

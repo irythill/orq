@@ -5,6 +5,13 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
+### Adicionado
+- Capacidades `commit` e `network` por agente (`[agents.<nome>]`, padrão true). Numa execução de escrita num repo git,
+  o orq faz o que o agente não consegue: `commit = false` → o orq commita as mudanças depois (mensagem de uma linha
+  `Commit: ...` na resposta, senão o título) e mostra em `## Commit (by orq)`; `network = false` → o orq roda
+  `git fetch origin` antes, para o agente fazer o rebase localmente. O prompt avisa, para o agente não tentar.
+  Embutidos: antigravity `commit = false`, codex `network = false`.
+
 ### Alterado
 - **Agora é preciso Node 22 ou mais novo** (`engines >=22`). O Node 20 chegou ao fim de vida em abril de 2026. O CI
   testa Node 22, 24 e 26.
