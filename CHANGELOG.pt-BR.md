@@ -11,6 +11,11 @@ English: [CHANGELOG.md](CHANGELOG.md).
   `Commit: ...` na resposta, senão o título) e mostra em `## Commit (by orq)`; `network = false` → o orq roda
   `git fetch origin` antes, para o agente fazer o rebase localmente. O prompt avisa, para o agente não tentar.
   Embutidos: antigravity `commit = false`, codex `network = false`.
+
+### Alterado
+- **Agora é preciso Node 22 ou mais novo** (`engines >=22`). O Node 20 chegou ao fim de vida em abril de 2026. O CI
+  testa Node 22, 24 e 26.
+
 ### Corrigido
 - `policy.max_rounds` conta só rodadas de revisão: `orq agent -R --reason verify|unblock` (padrão `review`) não conta
   nem é recusado; todo follow-up vai para `.rounds-<sessão>.log` e o `orq rounds` mostra por motivo. A rodada é contada

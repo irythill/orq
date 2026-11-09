@@ -122,8 +122,8 @@ for c in git jq python3 node npm; do
   else row "${R}MISSING${N}" "$c" "$(m "required: install it with your package manager" "obrigatório: instale pelo gerenciador de pacotes")"; ERRORS=$((ERRORS + 1)); fi
 done
 if command -v node >/dev/null; then
-  if node -e 'process.exit(+process.versions.node.split(".")[0] < 20 ? 1 : 0)'; then row "${G}ok${N}" "node >= 20" "$(node -v)"
-  else row "${R}MISSING${N}" "node >= 20" "$(node -v): $(m "too old, update it" "antigo demais, atualize")"; ERRORS=$((ERRORS + 1)); fi
+  if node -e 'process.exit(+process.versions.node.split(".")[0] < 22 ? 1 : 0)'; then row "${G}ok${N}" "node >= 22" "$(node -v)"
+  else row "${R}MISSING${N}" "node >= 22" "$(node -v): $(m "too old, update it" "antigo demais, atualize")"; ERRORS=$((ERRORS + 1)); fi
 fi
 if command -v python3 >/dev/null; then
   pyv=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
@@ -146,7 +146,7 @@ for c in claude codex opencode agy copilot; do
 done
 [ "$AGENTS" = 0 ] && warn "$(m "no agent CLI found: install and log in to at least one" "nenhum agente encontrado: instale e faça login em pelo menos um")"
 if [ "$ERRORS" -gt 0 ]; then
-  echo "${R}$(m error erro)${N}: $(m "$ERRORS required tool(s) missing (git, jq, python3, node >= 20, npm). Install them and re-run." "faltam $ERRORS ferramenta(s) obrigatória(s) (git, jq, python3, node >= 20, npm). Instale e rode de novo.")" >&2
+  echo "${R}$(m error erro)${N}: $(m "$ERRORS required tool(s) missing (git, jq, python3, node >= 22, npm). Install them and re-run." "faltam $ERRORS ferramenta(s) obrigatória(s) (git, jq, python3, node >= 22, npm). Instale e rode de novo.")" >&2
   exit 1
 fi
 

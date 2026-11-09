@@ -11,6 +11,11 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   the answer, else the title) and reports it under `## Commit (by orq)`; `network = false` → orq runs `git fetch origin`
   before the run so the agent can rebase locally. The prompt says so, so the agent doesn't try. Built in: antigravity
   `commit = false`, codex `network = false`.
+
+### Changed
+- **Node 22 or newer is required** (`engines >=22`). Node 20 reached end of life in April 2026. CI tests Node 22, 24
+  and 26.
+
 ### Fixed
 - `policy.max_rounds` counts only review rounds: `orq agent -R --reason verify|unblock` (default `review`) neither
   counts nor is refused; every follow-up goes to `.rounds-<session>.log` and `orq rounds` shows them per reason. The

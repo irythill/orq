@@ -13,4 +13,4 @@
 
 ## CI
 `ci` runs on every pull request and on pushes to `dev` and `main`: build and tests on Linux, macOS and Windows with
-Node 20 and 24, plus an install from the packed tarball.
+Node 22, 24 and 26, plus an install from the packed tarball.
