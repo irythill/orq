@@ -5,6 +5,12 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
+### Added
+- Agent capabilities `commit` and `network` (`[agents.<name>]`, default true). For a write run in a git repo, orq does
+  what the agent can't: `commit = false` → orq commits the changes after the run (message from a `Commit: ...` line in
+  the answer, else the title) and reports it under `## Commit (by orq)`; `network = false` → orq runs `git fetch origin`
+  before the run so the agent can rebase locally. The prompt says so, so the agent doesn't try. Built in: antigravity
+  `commit = false`, codex `network = false`.
 ### Fixed
 - `policy.max_rounds` counts only review rounds: `orq agent -R --reason verify|unblock` (default `review`) neither
   counts nor is refused; every follow-up goes to `.rounds-<session>.log` and `orq rounds` shows them per reason. The
