@@ -5,6 +5,8 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
+
+## [0.7.0] — 2026-11-10
 ### Added
 - Agent capabilities `commit` and `network` (`[agents.<name>]`, default true). For a write run in a git repo, orq does
   what the agent can't: `commit = false` → orq commits the changes after the run (message from a `Commit: ...` line in
