@@ -1,7 +1,7 @@
 // Picks agent, model, effort and account for a role (port of orq-pick, plus fixed roles).
 //   fixed role: the first agent of [agent, ...fallback] that passes the filters wins — no scoring, never swapped
 //               for an agent the user didn't list.
-//   auto role:  every pool agent that passes is scored:
+//   auto role:  every (agent, model) pair that passes is scored (a level may list several models):
 //     quality * delivery + tokens * economy + speed * quickness − rotation * (picks in the last `window`)
 //     − reserve (agents with reserve = true) + explore (fewer than `min_samples` runs, fading with n, none after
 //     `explore_streak` picks in a row). Each axis is (prior·k + observed·n)/(k + n), k = min_samples.
@@ -32,7 +32,7 @@ export interface PickInput {
   commitBase?: boolean; // the review base is a commit (a round delta): agents with base_commit = false are out
   cfg: Obj; role: PickRole; level: string; implVendor?: string; implAgent?: string; exclude: Set<string>;
   missing?: Map<string, string> /* agent → why its CLI does not resolve */;
-  stats: Row[]; quota: QuotaMap; windows?: WindowMap; blocks: Set<string>; recent: { agent: string }[]; now?: number /* epoch s */;
+  stats: Row[]; quota: QuotaMap; windows?: WindowMap; blocks: Set<string>; recent: { agent: string; model?: string }[]; now?: number /* epoch s */;
 }
 export interface Candidate {
   agent: string; model: string; effort?: string; acct?: string; score: number; why: string;
@@ -93,15 +93,30 @@ export function limitsFor(pol: Obj, level: string): [number, number] {
   return [Math.min(Number(five[level] ?? five.medium), Number(pol.quota_limit ?? 90)), Number(pol.quota_week ?? 95)];
 }
 
-export function modelFor(a: Obj, role: PickRole, level: string): [string, string | undefined] | undefined {
-  if (a.models === undefined) return ["", undefined]; // no models configured: the CLI's default
-  const models = a.models as Record<string, Record<string, string>>;
+/** A level's spec: one "model@effort" or a list of candidates, each scored as its own (agent, model) pair. */
+type Spec = string | string[];
+
+/** The agent's models section for a role, with the same fallbacks as the roles (fix → impl, watchdog → opinion → review). */
+function roleModels(a: Obj, role: PickRole): Record<string, Spec> {
+  const models = (a.models ?? {}) as Record<string, Record<string, Spec>>;
   const lr = legacyRole(role);
-  const ms = models[lr] ?? (lr === "fix" ? models.impl : lr === "watchdog" ? models.opinion ?? models.review : undefined) ?? {};
-  const spec = ms[level] ?? ms.default ?? ms.medium ?? ms.simple;
-  if (!spec) return undefined;
-  const [model, effort] = spec.split("@");
-  return [model, effort || undefined];
+  return models[lr] ?? (lr === "fix" ? models.impl : lr === "watchdog" ? models.opinion ?? models.review : undefined) ?? {};
+}
+
+const specList = (spec: Spec | undefined) => (Array.isArray(spec) ? spec : spec ? [spec] : []).map(String).filter(Boolean)
+  .map((x) => { const [model, effort] = x.split("@"); return [model, effort || undefined] as [string, string | undefined]; });
+
+/** Every candidate model for the role/level, in the order configured; undefined when none is. */
+export function modelsFor(a: Obj, role: PickRole, level: string): [string, string | undefined][] | undefined {
+  if (a.models === undefined) return [["", undefined]]; // no models configured: the CLI's default
+  const ms = roleModels(a, role);
+  const list = specList(ms[level] ?? ms.default ?? ms.medium ?? ms.simple);
+  return list.length ? list : undefined;
+}
+
+/** The first candidate model for the role/level. */
+export function modelFor(a: Obj, role: PickRole, level: string): [string, string | undefined] | undefined {
+  return modelsFor(a, role, level)?.[0];
 }
 
 // --- per-model quota ---------------------------------------------------------------------------------------------------
@@ -119,17 +134,16 @@ export function modelKey(model: string, keys: string[]): string | undefined {
 
 /** The models of an agent's role section lighter than `level`, the closest first, without repeats of `tried`. */
 export function lighterModels(a: Obj, role: PickRole, level: string, tried: string[]): [string, string | undefined][] {
-  const models = a.models as Record<string, Record<string, string>> | undefined;
-  if (!models) return [];
-  const lr = legacyRole(role);
-  const ms = models[lr] ?? (lr === "fix" ? models.impl : lr === "watchdog" ? models.opinion ?? models.review : undefined) ?? {};
+  if (!a.models) return [];
+  const ms = roleModels(a, role);
   const rank = LEVEL_RANK[level] ?? 1, seen = new Set(tried);
   const out: [string, string | undefined][] = [];
   for (const [, spec] of Object.entries(ms).filter(([lv]) => (LEVEL_RANK[lv] ?? 1) < rank)
       .sort((x, y) => (LEVEL_RANK[y[0]] ?? 1) - (LEVEL_RANK[x[0]] ?? 1))) {
-    const [model, effort] = spec.split("@");
-    if (seen.has(model)) continue;
-    seen.add(model); out.push([model, effort || undefined]);
+    for (const [model, effort] of specList(spec)) {
+      if (seen.has(model)) continue;
+      seen.add(model); out.push([model, effort]);
+    }
   }
   return out;
 }
@@ -183,8 +197,8 @@ export function pick(inp: PickInput): PickResult {
       out(name, m("can't review a commit base (base_commit = false)", "não revisa uma base que é commit (base_commit = false)")); continue;
     }
     if (role === "watchdog" && !takesPrompt(cfg, name)) { out(name, m("ignores prompts (a review tool)", "ignora prompts (ferramenta de revisão)")); continue; }
-    const mf = modelFor(a, role, level);
-    if (!mf) { out(name, m(`no model for ${role}/${level}`, `sem modelo para ${role}/${level}`)); continue; }
+    const mfs = modelsFor(a, role, level);
+    if (!mfs) { out(name, m(`no model for ${role}/${level}`, `sem modelo para ${role}/${level}`)); continue; }
     // Quota: an agent with several accounts (claude) prefers one not projecting past the limit, then the least used.
     const qn = (a.quota as string[] | undefined) ?? [];
     const headroom = Math.max(0, Number(a.headroom ?? 0));
@@ -229,8 +243,8 @@ export function pick(inp: PickInput): PickResult {
       return { pace: paces.length ? Math.max(...paces) : undefined,
         hot: penalty > 0 && ((p5 !== undefined && p5 > limit5) || (pw !== undefined && pw > limitWeek)) };
     };
-    // The chosen account's per-model buckets: an exhausted model gives way to a lighter one of the same agent.
-    let mfx = mf;
+    // The chosen account's per-model buckets: an exhausted candidate drops out; with none left, a lighter model of the agent.
+    let mfx = mfs;
     const acc0 = usable.length ? [...usable].sort((x, y) => x[1]! - y[1]!)[0][0] : undefined;
     const mkeys = acc0 ? Object.keys(inp.windows ?? {}).filter((k) => k.startsWith(`${acc0}/`)).map((k) => k.slice(acc0.length + 1)) : [];
     if (acc0 && mkeys.length) {
@@ -243,15 +257,17 @@ export function pick(inp: PickInput): PickResult {
         return `${model} ${five ? `5h ${q.five}%` : `${m("week", "semana")} ${q.week}%`}`
           + (at.length ? ` (${m("back", "volta")} ${humanReset(Math.max(...at))})` : "");
       };
-      const tried: string[] = [], skipped: string[] = [];
-      let found: [string, string | undefined] | undefined;
-      for (const cand of [mf, ...lighterModels(a, role, level, [mf[0]])]) {
-        const why = over(cand[0]);
-        if (!why) { found = cand; break; }
-        tried.push(cand[0]); skipped.push(why);
+      const skipped: string[] = [];
+      let found = mfs.filter((c) => { const why = over(c[0]); if (why) skipped.push(why); return !why; });
+      if (!found.length) {
+        for (const cand of lighterModels(a, role, level, mfs.map((c) => c[0]))) {
+          const why = over(cand[0]);
+          if (!why) { found = [cand]; break; }
+          skipped.push(why);
+        }
       }
-      if (!found) { out(name, `${m("every model over its quota", "todo modelo acima da cota")}: ${skipped.join(", ")}`); continue; }
-      if (skipped.length) out(name, `${m("quota exhausted", "cota esgotada")}: ${skipped.join(", ")}; ${m("using", "usando")} ${found[0]}`);
+      if (!found.length) { out(name, `${m("every model over its quota", "todo modelo acima da cota")}: ${skipped.join(", ")}`); continue; }
+      if (skipped.length) out(name, `${m("quota exhausted", "cota esgotada")}: ${skipped.join(", ")}; ${m("using", "usando")} ${found.map((c) => c[0]).join(", ")}`);
       mfx = found;
     }
     const ranked = usable.map(([n, v]) => ({ n, v: v!, ...paceOf(n) }))
@@ -259,9 +275,12 @@ export function pick(inp: PickInput): PickResult {
     const chosen = ranked[0];
     const acct = qn.length > 1 ? chosen?.n : undefined;
     const statRole = role === "fix" || role === "worker" ? "impl" : role;
-    const stOf = (sr: string) => inp.stats.find((r) => r.role === sr && r.agent === name && r.model === (mfx[0].split("/").pop() || "default"));
-    const st = stOf(statRole) ?? (role === "watchdog" ? stOf("review") : undefined); // no watchdog runs yet: its review record
-    pass.push({ agent: name, model: mfx[0], effort: mfx[1], acct, a, st, pace: chosen?.pace, hot: Boolean(chosen?.hot) });
+    // One candidate per (agent, model) pair, each scored on its own stats row; a fixed role takes the first model.
+    for (const [model, effort] of res.mode === "fixed" ? mfx.slice(0, 1) : mfx) {
+      const stOf = (sr: string) => inp.stats.find((r) => r.role === sr && r.agent === name && r.model === (model.split("/").pop() || "default"));
+      const st = stOf(statRole) ?? (role === "watchdog" ? stOf("review") : undefined); // no watchdog runs yet: its review record
+      pass.push({ agent: name, model, effort, acct, a, st, pace: chosen?.pace, hot: Boolean(chosen?.hot) });
+    }
     if (res.mode === "fixed") break; // the first that passes wins
   }
 
@@ -298,9 +317,10 @@ export function pick(inp: PickInput): PickResult {
     const t = axis(m("economy", "economia"), prior, c.st?.new && refTok ? Math.min(1, refTok / c.st.new) : undefined, n);
     const s = axis(m("speed", "rapidez"), prior, c.st?.min && refMin ? Math.min(1, refMin / Math.max(c.st.min, 0.1)) : undefined, n);
     const used = inp.recent.filter((p) => p.agent === c.agent).length;
-    // Exploration fades as samples come in and stops after explore_streak picks of the agent in a row.
+    // Exploration fades as samples come in and stops after explore_streak picks of the pair in a row (rotation stays per agent).
+    const same = (p: { agent: string; model?: string }) => p.agent === c.agent && (p.model === undefined || p.model === c.model);
     let streak = 0;
-    for (let i = inp.recent.length - 1; i >= 0 && inp.recent[i].agent === c.agent; i--) streak++;
+    for (let i = inp.recent.length - 1; i >= 0 && same(inp.recent[i]); i--) streak++;
     const capped = few(c.st) && streak >= w.explore_streak;
     const explore = few(c.st) && !capped ? w.explore * (k - n) / k : 0;
     const hot = Boolean(c.hot) && penalty > 0;
