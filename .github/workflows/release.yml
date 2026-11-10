@@ -1,34 +1,57 @@
-# Publishes @irythill/orq to npm when a v* tag is pushed. Trusted publishing (OIDC): no npm token in the repo, and the
-# package gets provenance linking it to this repo and commit. The tag must match package.json's version.
-#   npm version patch && git push --follow-tags
+# Publishes @irythill/orq to npm when main carries a version that has no tag yet (a dev → main merge, checked by the
+# `version` job in ci.yml), or when a v* tag is pushed by hand. Trusted publishing (OIDC): no npm token in the repo, and
+# the package gets provenance linking it to this repo and commit. The GitHub release (and its tag) come from the
+# CHANGELOG section.
 name: release
 on:
   push:
+    branches: [main]
     tags: ['v*']
 
 permissions:
-  contents: write # the GitHub release
+  contents: write # the tag and the GitHub release
   id-token: write # npm trusted publishing
+concurrency:
+  group: release
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment: npm # add required reviewers to this environment to approve each publish
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+        with:
+          fetch-depth: 0
+      - name: version to release
+        id: v
+        run: |
+          v=$(node -p 'require("./package.json").version')
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            test "${GITHUB_REF_NAME#v}" = "$v" || { echo "tag $GITHUB_REF_NAME != package.json $v"; exit 1; }
+            gh release view "v$v" >/dev/null 2>&1 && { echo "v$v already released"; exit 0; }
+          elif git rev-parse -q --verify "refs/tags/v$v" >/dev/null; then
+            echo "v$v is already tagged: nothing to release"; exit 0
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - if: steps.v.outputs.version
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - name: tag matches package.json
-        run: test "${GITHUB_REF_NAME#v}" = "$(node -p 'require("./package.json").version')"
-      - run: npm ci
-      - run: npm test
-      - run: npm publish --provenance
-      - name: GitHub release with the CHANGELOG section
+      - if: steps.v.outputs.version
+        run: npm ci
+      - if: steps.v.outputs.version
+        run: npm test
+      - if: steps.v.outputs.version
+        run: npm publish --provenance
+      - name: tag + GitHub release with the CHANGELOG section
+        if: steps.v.outputs.version
         env:
           GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.v.outputs.version }}
         run: |
-          v=${GITHUB_REF_NAME#v}
-          awk -v v="$v" 'index($0, "## [" v "]") == 1 {f=1; next} /^## /{f=0} f' CHANGELOG.md > notes.md
+          awk -v v="$V" 'index($0, "## [" v "]") == 1 {f=1; next} /^## /{f=0} f' CHANGELOG.md > notes.md
           printf '\nInstall: `npm i -g @irythill/orq` then `orq setup`.\n' >> notes.md
-          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
+          gh release create "v$V" --target "$GITHUB_SHA" --title "v$V" --notes-file notes.md

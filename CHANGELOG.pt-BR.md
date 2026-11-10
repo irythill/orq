@@ -8,6 +8,7 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [0.7.0] — 2026-11-10
 ### Adicionado
+- Automação de release: cada push em `dev` abre ou atualiza o PR `dev → main` com a versão que os commits pedem; a checagem `version` reprova um PR para `main` até o package.json e os dois changelogs terem essa versão; o merge em `main` cria a tag, publica no npm e cria o release no GitHub. Títulos de PR seguem Conventional Commits (veja CONTRIBUTING.md).
 - Capacidades `commit` e `network` por agente (`[agents.<nome>]`, padrão true). Numa execução de escrita num repo git,
   o orq faz o que o agente não consegue: `commit = false` → o orq commita as mudanças depois (mensagem de uma linha
   `Commit: ...` na resposta, senão o título) e mostra em `## Commit (by orq)`; `network = false` → o orq roda

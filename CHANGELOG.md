@@ -8,6 +8,7 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [0.7.0] — 2026-11-10
 ### Added
+- Release automation: every push to `dev` opens or updates the `dev → main` PR with the version the commits call for; a `version` check fails a PR into `main` until package.json and both changelogs carry it; merging into `main` tags, publishes to npm and creates the GitHub release. PR titles must be Conventional Commits (see CONTRIBUTING.md).
 - Agent capabilities `commit` and `network` (`[agents.<name>]`, default true). For a write run in a git repo, orq does
   what the agent can't: `commit = false` → orq commits the changes after the run (message from a `Commit: ...` line in
   the answer, else the title) and reports it under `## Commit (by orq)`; `network = false` → orq runs `git fetch origin`
