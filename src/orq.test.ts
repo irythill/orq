@@ -2831,3 +2831,24 @@ test("stats: agent and model always named; screen runs time to the first turn (#
     assert.equal(rows(rs)[0].min, 2);
   } finally { rmSync(ws, { recursive: true, force: true }); }
 });
+
+test("release: version from conventional commits; check wants package, lock and both changelogs", async () => {
+  const mod = "../scripts/release.mjs";
+  const { bumpOf, next, problems } = await import(mod);
+  const c = (subject: string, body = "") => ({ subject, body });
+  assert.equal(bumpOf(c("feat(agent): x")), "minor");
+  assert.equal(bumpOf(c("fix: x (#1)")), "patch");
+  assert.equal(bumpOf(c("chore(release): 0.7.0")), "none");
+  assert.equal(bumpOf(c("refactor!: x")), "major");
+  assert.equal(bumpOf(c("fix: x", "BREAKING CHANGE: y")), "major");
+  assert.deepEqual(next("v0.6.1", [c("fix: a"), c("feat: b")]), { last: "v0.6.1", next: "0.7.0", bump: "minor" });
+  assert.deepEqual(next("v0.6.1", [c("fix!: a")]), { last: "v0.6.1", next: "0.7.0", bump: "minor" }); // 0.x: breaking → minor
+  assert.deepEqual(next("v1.2.3", [c("fix!: a")]), { last: "v1.2.3", next: "2.0.0", bump: "major" });
+  assert.deepEqual(next("v1.2.3", [c("fix: a")]).next, "1.2.4");
+  assert.equal(next("v1.2.3", [c("docs: a")]).next, null);
+  const log = (v: string, unrel = "") => `# C\n\n## [Unreleased]\n${unrel}\n## [${v}] — d\n- x\n`;
+  const ok = { pkg: { version: "0.7.0" }, lock: { version: "0.7.0" }, en: log("0.7.0"), pt: log("0.7.0") };
+  assert.deepEqual(problems("0.7.0", ok), []);
+  const bad = problems("0.7.0", { ...ok, pkg: { version: "0.6.1" }, pt: log("0.6.1", "### Fixed\n- y\n") });
+  assert.equal(bad.length, 3, bad.join("\n"));
+});
