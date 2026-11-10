@@ -4,7 +4,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 
 function inside(dir: string, path: string): boolean {
   const rel = relative(dir, path);
-  return !!rel && !rel.startsWith("..") && !isAbsolute(rel);
+  return (rel === "" || !rel.startsWith("..")) && !isAbsolute(rel);
 }
 
 /** Processes whose cwd is under `dir`; other platforms skip this check. */
