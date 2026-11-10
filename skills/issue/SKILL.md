@@ -227,7 +227,9 @@ Then a new `orq verify` (4b) and the **round review** (step 5 with these changes
   no verdict → a new `orq pick review` (saved to the same file).
 - Extra attachments: `git -C $WT diff $(cat $O/round-<n>.sha)..HEAD > $O/fix-<n>.diff` → `-i $O/fix-<n>.md -i $O/fix-<n>.diff`
   (the full `-b $BASE` diff stays, as context). **A review tool** gets `-b $(cat $O/round-<n>.sha)` instead of `-b $BASE`:
-  `{base}` becomes that commit, so it reviews only the round's delta, not the whole branch again.
+  `{base}` becomes that commit, so it reviews only the round's delta, not the whole branch again. Pick the round reviewer with
+  `orq pick review --base $(cat $O/round-<n>.sha) ...`: a tool with `base_commit = false` is skipped. Dispatched anyway, `orq agent`
+  falls back to the branch base (`--base-branch $BASE`) and its answer says the review covers the whole branch.
 - The prompt asks a closed question: "for each item in fix-<n>.md: RESOLVED or NOT RESOLVED (why); then the fix diff:
   any regression it introduced, as `[blocker]`/`[suggestion]`. Outside the fix diff, report only a blocker you missed
   before that would break production, and say why it wasn't in the first review". Anything else is a suggestion. If a review

@@ -13,7 +13,7 @@
 // Pacing: an account whose usage, at the pace so far in a window (used ÷ elapsed share), projects past
 // that window's pick limit (the filter's) at its reset is passed over for another account under the limit when the agent has several,
 // and otherwise loses policy.pacing_penalty (default 0.3, 0 = off) of score — soft, never a drop.
-import { agentDef, usesPrompt } from "./agents.js";
+import { agentDef, baseCommit, usesPrompt } from "./agents.js";
 import type { Obj } from "./config.js";
 import { m } from "./i18n.js";
 import { humanReset } from "./quota.js";
@@ -29,6 +29,7 @@ export type WindowMap = Record<string, { five?: number; week?: number; resetFive
   spanFive?: number; spanWeek?: number; expired?: string; note?: string }>;
 
 export interface PickInput {
+  commitBase?: boolean; // the review base is a commit (a round delta): agents with base_commit = false are out
   cfg: Obj; role: PickRole; level: string; implVendor?: string; implAgent?: string; exclude: Set<string>;
   stats: Row[]; quota: QuotaMap; windows?: WindowMap; blocks: Set<string>; recent: { agent: string }[]; now?: number /* epoch s */;
 }
@@ -136,6 +137,11 @@ const WEIGHTS = { quality: 0.4, tokens: 0.45, speed: 0.15, rotation: 0.2, reserv
 export const weights = (cfg: Obj) =>
   ({ ...WEIGHTS, ...((((cfg.policy ?? {}) as Obj).weights ?? {}) as Partial<typeof WEIGHTS>) });
 
+/** The merged definition (built-in + config) can review a commit base (agents.<name>.base_commit); an agent that can't be resolved can't. */
+function takesBaseCommit(cfg: Obj, name: string): boolean {
+  try { return baseCommit(agentDef(cfg, name)); } catch { return false; }
+}
+
 /** The merged definition (built-in + config) takes a prompt; an agent that can't be resolved doesn't. */
 function takesPrompt(cfg: Obj, name: string): boolean {
   try { return usesPrompt(agentDef(cfg, name)); } catch { return false; }
@@ -169,6 +175,9 @@ export function pick(inp: PickInput): PickResult {
     if ((role === "review" || role === "opinion" || role === "watchdog") && res.rule === "other-vendor" && inp.implVendor && otherVendor
         && vendorOf(name, a) === inp.implVendor) {
       out(name, m("same vendor as the implementer", "mesmo fornecedor do implementador")); continue;
+    }
+    if (role === "review" && inp.commitBase && !takesBaseCommit(cfg, name)) {
+      out(name, m("can't review a commit base (base_commit = false)", "não revisa uma base que é commit (base_commit = false)")); continue;
     }
     if (role === "watchdog" && !takesPrompt(cfg, name)) { out(name, m("ignores prompts (a review tool)", "ignora prompts (ferramenta de revisão)")); continue; }
     const mf = modelFor(a, role, level);

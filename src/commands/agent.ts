@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "../accounts.js";
 import { gateFor } from "../diagnose.js";
 import { hasVerdict } from "../rounds.js";
-import { argvModel, commitMessage, stepIns, stepInNote, useThrowaway, agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
+import { argvModel, baseCommit, commitMessage, isCommitBase, stepIns, stepInNote, useThrowaway, agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
 import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
@@ -28,7 +28,7 @@ import { closeOwnTab, detectHost, type Host, launch, screenOpen, shq, typeInto }
 import { ackPrefix } from "../notice.js";
 import { dropWorktree, notify } from "../testrun.js";
 
-export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base] [-r] [-R session [-F [-F]] [--reason review|verify|unblock]] [-T] -- <prompt.md>   run a child agent";
+export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base [--base-branch <branch>]] [-r] [-R session [-F [-F]] [--reason review|verify|unblock]] [-T] -- <prompt.md>   run a child agent";
 
 /** Why a follow-up (-R) runs: only `review` (fixing a reviewer's findings) counts towards policy.max_rounds. */
 export const ROUND_REASONS = ["review", "verify", "unblock"];
@@ -42,7 +42,7 @@ interface Job {
   session?: string; fromLog?: string; parent: string; host: Host; unit: string; cap?: number; swap?: number;
   mode: MemMode; throwaway: boolean; promptInDir: boolean; closeAfter: number; keep: boolean; tui?: boolean;
   okExit?: number[]; filter?: string; noReview?: string; idleCloseMin?: number; ro?: boolean; review?: boolean;
-  orqCommits?: boolean; orqFetches?: boolean;
+  orqCommits?: boolean; orqFetches?: boolean; scopeNote?: string;
 }
 
 const git = (dir: string, ...a: string[]) => {
@@ -53,7 +53,7 @@ const git = (dir: string, ...a: string[]) => {
 export async function agent(argv: string[]): Promise<number> {
   if (argv[0] === "--run") return runJob(argv[1]);
   if (argv[0] === "--turn") return turn(argv[1], argv[2], argv.slice(3));
-  let a = process.env.AGENT || "", g = "", t = "", d = "", o = "", model = "", effort = "", acc = "", resume = "", base = "";
+  let a = process.env.AGENT || "", g = "", t = "", d = "", o = "", model = "", effort = "", acc = "", resume = "", base = "", baseBranch = "";
   let ro = false, tui = false, force = 0, prompt: string | undefined, reason = "review";
   const inc: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -63,7 +63,7 @@ export async function agent(argv: string[]): Promise<number> {
     else if (x === "-o") o = v(); else if (x === "-m") model = v(); else if (x === "-e") effort = v();
     else if (x === "-c") acc = v(); else if (x === "-i") inc.push(resolve(v())); else if (x === "-R") resume = v();
     else if (x === "-b") base = v(); else if (x === "-p") v(); else if (x === "-r") ro = true; else if (x === "-T") tui = true; else if (x === "-F") force++;
-    else if (x === "--reason") reason = v();
+    else if (x === "--reason") reason = v(); else if (x === "--base-branch") baseBranch = v();
     else if (!x.startsWith("-") && prompt === undefined) prompt = x;
     else { console.error(USAGE); return 2; }
   }
@@ -139,9 +139,22 @@ export async function agent(argv: string[]): Promise<number> {
   mkdirSync(dirname(O), { recursive: true });
   // -b <base>: attaches `git diff origin/<base>...HEAD` (review without running git; required for Antigravity).
   // A base with no origin/<base> but naming a commit (a fix round's round-<n>.sha) attaches `<base>..HEAD`: only that round's delta.
+  // An agent that can't review a commit base (agents.<name>.base_commit) gets the branch base instead: the whole branch.
+  let scopeNote = "";
+  if (base && !baseCommit(def) && isCommitBase(repo, base)) {
+    const branch = baseBranch?.replace(/^origin\//, "") || git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")?.replace(/^origin\//, "");
+    if (!branch) {
+      console.error(m(`${a} can't review -b ${base} (a commit) and no branch base is known: pass --base-branch <branch>`,
+        `${a} não revisa -b ${base} (um commit) e a base da branch é desconhecida: informe --base-branch <branch>`));
+      return 2;
+    }
+    scopeNote = m(`${a} can't review a commit base (agents.${a}.base_commit = false): reviewing against origin/${branch} instead. The review covers the whole branch, not just the round delta.`,
+      `${a} não revisa uma base que é commit (agents.${a}.base_commit = false): revisando contra origin/${branch}. A revisão cobre a branch inteira, não só o delta da rodada.`);
+    console.log(`[orq agent] ${scopeNote}`);
+    base = branch;
+  }
   if (base) {
-    const has = (ref: string) => spawnSync("git", ["-C", repo, "rev-parse", "--verify", "-q", `${ref}^{commit}`]).status === 0;
-    const range = !has(`origin/${base}`) && has(base) ? `${base}..HEAD` : `origin/${base}...HEAD`;
+    const range = isCommitBase(repo, base) ?`${base}..HEAD` : `origin/${base}...HEAD`;
     const r = spawnSync("git", ["-C", repo, "diff", range], { encoding: "utf8", maxBuffer: 1 << 30 });
     if (r.status !== 0) { console.error(m(`could not build the diff ${range}`, `não consegui gerar o diff ${range}`)); return 2; }
     writeFileSync(`${O}.diff`, r.stdout); inc.push(`${O}.diff`);
@@ -164,6 +177,10 @@ export async function agent(argv: string[]): Promise<number> {
     return 0;
   }
   for (const s of [".done", ".out.md", ".pid"]) rmSync(O + s, { force: true });
+  // .id is the session this prefix's screen answers for (`--turn codex` drops other threads): an id left by an earlier
+  // run on the prefix (another agent, another session) would drop every turn of this one.
+  if (resume) writeFileSync(`${O}.id`, `${resume}\n`);
+  else rmSync(`${O}.id`, { force: true });
   const throwaway = useThrowaway(def, ro, Boolean(resume), git(repo, "rev-parse", "--git-dir") !== undefined);
   const dir = throwaway ? `${repo}.review-${process.pid}` : repo;
   const gd = git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir");
@@ -225,7 +242,7 @@ export async function agent(argv: string[]): Promise<number> {
     swap: parseSize(mach.agent_swap_max as string | undefined), mode: (mach.mem_enforce as MemMode | undefined) ?? "auto",
     throwaway, promptInDir: Boolean(def.prompt_in_dir), closeAfter,
     keep: process.env.HERDR_KEEP_TAB === "1" || process.env.ORQ_KEEP_TAB === "1" || closeAfter <= 0, tui,
-    okExit: def.ok_exit, filter: def.filter, noReview: def.no_review, ro, orqCommits: steps.commit, orqFetches: steps.fetch,
+    okExit: def.ok_exit, filter: def.filter, noReview: def.no_review, ro, orqCommits: steps.commit, orqFetches: steps.fetch, scopeNote,
     // A review (-r, prefix review*) must end with a verdict; policy.review_verdict = false turns the check off.
     review: ro && /^review/i.test(basename(O)) && getPath(cfg, "policy.review_verdict") !== false,
     idleCloseMin: tui ? Number(mach.tui_idle_close_min ?? 30) : undefined,
@@ -365,6 +382,26 @@ export function idleExpired(done: string, idleMs: number, now = Date.now(), busy
   try { return idleMs > 0 && now - Math.max(statSync(done).mtimeMs, busyAt) >= idleMs; } catch { return false; }
 }
 
+/** A -T turn ended without its hook: the screen was seen busy (`busyAt`) after the last .done (if any), and has been
+ *  idle since `idleSince` for `graceMs`. All times epoch ms; 0 = never seen. */
+export function missedTurn(done: string, busyAt: number, idleSince: number, graceMs: number, now = Date.now()): boolean {
+  if (!busyAt || !idleSince || idleSince < busyAt || now - idleSince < graceMs) return false;
+  try { return statSync(done).mtimeMs < busyAt; } catch { return true; }
+}
+
+const NO_HOOK_GRACE_MS = 60_000;
+
+/** Signals a -T turn whose end-of-turn hook never fired: .done (status=fail reason=no-hook) and the done line, with the
+ *  screen's last lines as the answer, so the conductor isn't left waiting. A late hook still overwrites both. */
+function noHook(j: Job, pane: string): void {
+  const O = j.prefix;
+  const r = spawnSync("herdr", ["pane", "read", pane, "--lines", "80", "--format", "text"], { encoding: "utf8", timeout: 5_000 });
+  writeFileSync(`${O}.out.md`, `${m("The agent's end-of-turn hook did not fire; its turn looks finished (the screen went idle). Last lines of the screen:",
+    "O hook de fim de turno do agente não disparou; o turno parece terminado (a tela ficou ociosa). Últimas linhas da tela:")}\n\n${r.status === 0 ? r.stdout : ""}`);
+  writeAtomic(`${O}.done`, `status=fail rc=0 reason=no-hook at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
+  if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=fail rc=0 reason=no-hook answer: ${O}.out.md`);
+}
+
 /** herdr's view of the agent on a pane: working | blocked | idle | done | unknown; undefined when it can't be read. */
 function paneStatus(pane: string): string | undefined {
   const r = spawnSync("herdr", ["pane", "get", pane], { encoding: "utf8", timeout: 5_000 });
@@ -485,24 +522,26 @@ async function runJob(file: string): Promise<number> {
           // A finished agent waits for a follow-up forever and holds its memory: after the idle timeout without a new
           // turn, kill it; the normal end below cleans up and closes the tab. "New turn" = .done removed (`-R` typed
           // into the screen removes it) or rewritten (the next end of turn), so idle = .done untouched that long.
-          const idleMs = (j.idleCloseMin ?? 0) * 60_000;
-          if (idleMs > 0 && !j.keep) {
-            // On herdr the pane's agent status also catches a turn typed straight into the screen (.done only changes
-            // when it ends). Elsewhere (tmux) only .done tells: a turn typed directly into the screen that runs longer
-            // than the timeout can still be closed.
-            let busyAt = 0;
-            const pane = j.host === "herdr" ? process.env.HERDR_PANE_ID : undefined;
-            idleT = setInterval(() => {
-              const st = pane ? paneStatus(pane) : undefined;
-              if (st === "working" || st === "blocked") busyAt = Date.now();
-              if (!idleExpired(`${O}.done`, idleMs, Date.now(), busyAt)) return;
-              clearInterval(idleT);
-              console.log(m(`[orq agent] no follow-up for ${j.idleCloseMin} min: closing the finished agent`, `[orq agent] sem follow-up há ${j.idleCloseMin} min: fechando o agente que terminou`));
-              idleClosed = true;
-              if (child) killTree(child, false);
-            }, Math.min(30_000, Math.max(1_000, idleMs / 2)));
-            idleT.unref();
-          }
+          const idleMs = (j.idleCloseMin && !j.keep ? j.idleCloseMin : 0) * 60_000;
+          // On herdr the pane's agent status also catches a turn typed straight into the screen (.done only changes
+          // when it ends), and a turn whose hook never fired (busy, then idle, .done not rewritten): that one is
+          // signalled from here, flagged reason=no-hook, with the screen's tail as the answer. Elsewhere (tmux) only
+          // .done tells: a turn typed directly into the screen that runs longer than the timeout can still be closed.
+          const pane = j.host === "herdr" ? process.env.HERDR_PANE_ID : undefined;
+          if (!pane && idleMs <= 0) return;
+          let busyAt = 0, idleSince = 0;
+          idleT = setInterval(() => {
+            const st = pane ? paneStatus(pane) : undefined, now = Date.now();
+            if (st === "working" || st === "blocked") { busyAt = now; idleSince = 0; }
+            else if (st === "idle" || st === "done") idleSince ||= now;
+            if (pane && missedTurn(`${O}.done`, busyAt, idleSince, NO_HOOK_GRACE_MS, now)) noHook(j, pane);
+            if (!idleExpired(`${O}.done`, idleMs, now, busyAt)) return;
+            clearInterval(idleT);
+            console.log(m(`[orq agent] no follow-up for ${j.idleCloseMin} min: closing the finished agent`, `[orq agent] sem follow-up há ${j.idleCloseMin} min: fechando o agente que terminou`));
+            idleClosed = true;
+            if (child) killTree(child, false);
+          }, pane ? 15_000 : Math.min(30_000, Math.max(1_000, idleMs / 2)));
+          idleT.unref();
         } });
       clearInterval(idleT);
       if (idleClosed) rc = 0; // closed on purpose after a finished turn: not a kill
@@ -551,6 +590,8 @@ async function runJob(file: string): Promise<number> {
   const res = fmt.finish(logText, stdout);
   post(j.answer === "file" ? (existsSync(`${O}.out.md`) ? readFileSync(`${O}.out.md`, "utf8") : "") : res.answer ?? "");
   if (committed) res.answer = `${res.answer ?? ""}\n## Commit (by orq)\n${committed}\n`;
+  const scope = j.scopeNote ? `\n## Review scope (by orq)\n${j.scopeNote}\n` : "";
+  if (scope) res.answer = `${res.answer ?? ""}${scope}`;
   // Denied commands do not sink a write run that did work: keep the diff and report ok with the denied list in the answer.
   let recovered = false;
   if (res.denied?.length && !j.ro && !j.throwaway && existsSync(j.dir)) {
@@ -574,7 +615,7 @@ async function runJob(file: string): Promise<number> {
     res.rc = res.rc || 3;
   }
   if (j.answer !== "file") writeFileSync(`${O}.out.md`, res.answer ?? "");
-  else if (committed) appendFileSync(`${O}.out.md`, `\n## Commit (by orq)\n${committed}\n`);
+  else if (committed || scope) appendFileSync(`${O}.out.md`, `${committed ? `\n## Commit (by orq)\n${committed}\n` : ""}${scope}`);
   // The agent never started: say why in the answer (the conductor reads it) instead of leaving it empty.
   if (spawnErr) writeFileSync(`${O}.out.md`, spawnFailText(j, spawnErr));
   const sid = j.fromLog ? new RegExp(j.fromLog, "m").exec(logText)?.[1] : res.session ?? j.session;

@@ -5,6 +5,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isCommitBase } from "../agents.js";
 import { loadConfig, type Obj } from "../config.js";
 import { m } from "../i18n.js";
 import { asArgs, escalate, parseQuota, modelFor, parseWindows, pick as choose } from "../pick.js";
@@ -15,7 +16,7 @@ import { collectRuns, rows } from "../stats.js";
 import { load as loadBlocks } from "./block.js";
 
 export const USAGE = `orq pick <impl|fix|worker|review|opinion|watchdog> [--level simple|medium|heavy] [--impl-vendor <v>|--impl-agent <a>]
-         [--exclude-agent <a>]... [-w <workspace>] [--explain] [--no-record]
+         [--exclude-agent <a>]... [-w <workspace>] [--base <ref>] [--explain] [--no-record]
 orq pick fix --same <impl pick file>   same agent/model/account as the implementer, effort one level up`;
 
 // The board refreshes this file; fresher than 10 min → no new quota requests.
@@ -39,7 +40,7 @@ export async function pick(argv: string[]): Promise<number> {
     return 0;
   }
   let level = "medium", implVendor: string | undefined, implAgent: string | undefined, ws: string | undefined;
-  let explain = false, record = true;
+  let explain = false, record = true, base: string | undefined;
   const exclude = new Set<string>();
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
@@ -48,6 +49,7 @@ export async function pick(argv: string[]): Promise<number> {
     else if (a === "--impl-agent") implAgent = argv[++i];
     else if (a === "--exclude-agent") exclude.add(argv[++i]);
     else if (a === "-w") ws = expand(argv[++i]);
+    else if (a === "--base") base = argv[++i];
     else if (a === "--explain") explain = true;
     else if (a === "--no-record") record = false;
     else { console.error(USAGE); return 2; }
@@ -78,7 +80,9 @@ export async function pick(argv: string[]): Promise<number> {
     .map((l) => { try { return JSON.parse(l); } catch { return {}; } })
     .filter((p) => p.role === role).slice(-window);
   const qt = await quotaText(cfg);
-  const res = choose({ cfg, role, level, implVendor, implAgent, exclude, stats, quota: parseQuota(qt), windows: parseWindows(qt),
+  // A review of a commit base (a round delta) leaves out agents that can't diff against one (agents.<name>.base_commit).
+  const commitBase = role === "review" && Boolean(base) && isCommitBase((ws ?? cfg._workspace ?? process.cwd()) as string, base!);
+  const res = choose({ cfg, role, level, implVendor, implAgent, exclude, commitBase, stats, quota: parseQuota(qt), windows: parseWindows(qt),
     blocks: new Set(Object.keys(loadBlocks())), recent });
   if (!res.best) {
     console.error(`orq pick: ${m("no candidate for ", "nenhum candidato para ")}${role}`
