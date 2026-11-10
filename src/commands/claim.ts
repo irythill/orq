@@ -115,7 +115,7 @@ export async function claim(argv: string[]): Promise<number> {
       // (the user may have renamed the workspace since, or it may not be a herdr conductor at all).
       const n = (alive && (field(t, "kind") || "herdr") === "herdr" ? names.get(field(t, "pane")) ?? "" : "") || nameOf(t);
       console.log(`${d} ${n ? `"${n}" ` : ""}${t.replace(/ name=.*$/, "")} (${alive ? "alive" : "dead"})`
-        + (n ? ` session=${sessionName(ws, n)}` : ""));
+        + ` session=${sessionName(ws, n)}`);
     }
     return 0;
   }
