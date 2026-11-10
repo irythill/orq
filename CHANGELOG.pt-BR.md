@@ -5,6 +5,8 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
+
+## [0.7.0] — 2026-11-10
 ### Adicionado
 - Capacidades `commit` e `network` por agente (`[agents.<nome>]`, padrão true). Numa execução de escrita num repo git,
   o orq faz o que o agente não consegue: `commit = false` → o orq commita as mudanças depois (mensagem de uma linha
