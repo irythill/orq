@@ -30,7 +30,7 @@ export function stats(argv: string[]): number {
   for (const x of [...rs].sort((a, b) => ORDER.indexOf(a.role) - ORDER.indexOf(b.role) || b.n - a.n)) {
     const ap = x.approved !== null ? `${x.approved}% (${x.n_appr})` : "-";
     console.log(`${x.role.padEnd(7)} ${x.agent.padEnd(12)} ${x.model.slice(0, 22).padEnd(22)} ${String(x.n).padStart(4)} `
-      + `${String(x.ok).padStart(5)} ${ap.padStart(12)} ${String(x.min).padStart(6)} ${k(x.new).padStart(10)} ${k(x.tot).padStart(10)}`);
+      + `${String(x.ok).padStart(5)} ${ap.padStart(12)} ${String(x.min ?? "-").padStart(6)} ${k(x.new).padStart(10)} ${k(x.tot).padStart(10)}`);
   }
   return 0;
 }

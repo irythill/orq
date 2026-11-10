@@ -428,7 +428,7 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
   const top = [...s.scoreboard].sort((a, b) => b.n - a.n).slice(0, 8);
   if (top.length) out.push(` ${c.mut}${m("role", "papel").padEnd(7)} ${m("agent", "agente").padEnd(12)} ${m("model", "modelo").padEnd(20)} ${"n".padStart(4)} ${"ok%".padStart(5)} ${m("approved%", "aprov%").padStart(10)} ${"min".padStart(6)}${c.r}`);
   for (const x of top)
-    out.push(` ${c.ink2}${x.role.padEnd(7)}${c.r} ${c.ink}${fit(x.agent, 12)}${c.r} ${c.mut}${fit(x.model, 20)}${c.r} ${c.ink}${String(x.n).padStart(4)} ${String(x.ok).padStart(5)} ${(x.approved === null ? "-" : `${x.approved}%`).padStart(10)} ${String(x.min).padStart(6)}${c.r}`);
+    out.push(` ${c.ink2}${x.role.padEnd(7)}${c.r} ${c.ink}${fit(x.agent, 12)}${c.r} ${c.mut}${fit(x.model, 20)}${c.r} ${c.ink}${String(x.n).padStart(4)} ${String(x.ok).padStart(5)} ${(x.approved === null ? "-" : `${x.approved}%`).padStart(10)} ${String(x.min ?? "-").padStart(6)}${c.r}`);
   if (!top.length) out.push(` ${c.mut}${m("no runs yet", "nenhuma execução ainda")}${c.r}`);
 
   out.push("", `${c.rul}${"─".repeat(W - 2)}${c.r}`, ` ${c.mut}${m("q quit · r quota · l language · t theme", "q sai · r cota · l idioma · t tema")}${c.r}`);

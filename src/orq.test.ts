@@ -2792,3 +2792,42 @@ test("pick: an agent whose CLI doesn't resolve is out, with a reinstall hint (#7
   assert.equal(r.best?.agent, "b");
   assert.deepEqual(r.notes, ["a: `a` not found on PATH"]);
 });
+
+test("stats: agent and model always named; screen runs time to the first turn (#59)", async () => {
+  const { agentModel, collectRuns, rows } = await import("./stats.js");
+  // A review tool from the job: named, model "-"; a prompt's "-m 'feat(ui): …'" is never the model.
+  assert.deepEqual(agentModel("", "", { agent: "corvus", argv: ["corvus", "--markdown", "-b", "dev"] }), ["corvus", "-"]);
+  assert.deepEqual(agentModel("", "", { agent: "opencode", argv: ["opencode", "run", "-m", "minimax/MiniMax-M3", "git commit -m \"feat(ui): x\""] }),
+    ["opencode", "MiniMax-M3"]);
+  // opencode's screen: the model is in its config env; the pick only counts when it names the same agent.
+  assert.deepEqual(agentModel("", "", { agent: "opencode", argv: ["opencode", "--standalone"],
+    env: { OPENCODE_CONFIG_CONTENT: '{"model":"minimax/MiniMax-M3"}' } }, "-a claude -m claude-sonnet-5"), ["opencode", "MiniMax-M3"]);
+  assert.deepEqual(agentModel("", "", { agent: "copilot", argv: ["copilot", "-p", "x"] }, "-a copilot -m auto"), ["copilot", "auto"]);
+  // An older run without a job: past the wrapper, quotes respected.
+  assert.deepEqual(agentModel("#!/usr/bin/env bash\ncd /x\nX='{\"a\":\"b -p c\"}' systemd-run --user --pty codex exec -m gpt-6-sol -s x -", ""),
+    ["codex", "gpt-6-sol"]);
+  assert.deepEqual(agentModel("", '{"type":"system","subtype":"init","model":"claude-sonnet-5"}', { agent: "claude", argv: ["claude", "-p"] }),
+    ["claude", "claude-sonnet-5"]);
+  assert.deepEqual(agentModel("", "", { agent: "claude", argv: ["claude", "-p"] }), ["claude", "default"]);
+
+  const ws = mkdtempSync(join(tmpdir(), "orq-stats-")), d = join(ws, ".orquestra", "X-1");
+  mkdirSync(d, { recursive: true });
+  const run = (name: string, done: string, turns?: string[]) => {
+    writeFileSync(join(d, `${name}.run.sh`), "#!/usr/bin/env bash\n");
+    writeFileSync(join(d, `${name}.job.json`), JSON.stringify({ agent: "codex", argv: ["codex", "-m", "gpt-6-sol"] }));
+    writeFileSync(join(d, `${name}.out.md`), "ok");
+    writeFileSync(join(d, `${name}.done`), done);
+    if (turns) writeFileSync(join(d, `${name}.turns`), turns.join("\n") + "\n");
+  };
+  const t0 = Date.now();
+  run("impl-a", "status=ok rc=0 mode=tui\n", [new Date(t0 + 120_000).toISOString(), new Date(t0 + 86_400_000).toISOString()]);
+  run("impl-b", "status=ok rc=0 mode=tui\n"); // older screen run: no .turns → untimed
+  run("impl-c", "status=killed rc=137\n");
+  try {
+    const rs = collectRuns(ws, 30);
+    assert.deepEqual(rs.map((r) => [r.name, r.timed]).sort(), [["impl-a", true], ["impl-b", false], ["impl-c", false]]);
+    const a = rs.find((r) => r.name === "impl-a")!;
+    assert.ok(a.secs >= 110 && a.secs <= 130, `${a.secs}`); // the first turn, not the next day's
+    assert.equal(rows(rs)[0].min, 2);
+  } finally { rmSync(ws, { recursive: true, force: true }); }
+});

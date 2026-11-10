@@ -323,6 +323,7 @@ function turn(file: string, kind: string, rest: string[]): number {
       try { answer = readFileSync(rest[1], "utf8"); rmSync(rest[1], { force: true }); } catch { /* none */ }
     } else { sid = rest[0]; answer = readFileSync(0, "utf8"); }
     writeFileSync(`${O}.out.md`, answer);
+    appendFileSync(`${O}.turns`, `${new Date().toISOString()}\n`); // stats: work time ends at the first turn
     if (sid) writeFileSync(`${O}.id`, `${sid}\n`);
     const noReview = noReviewMatch(j.noReview, answer), noVerdict = Boolean(j.review) && /\S/.test(answer) && !hasVerdict(answer);
     const st = /\S/.test(answer) && !noReview && !noVerdict ? "ok" : "fail", why = noVerdict ? " reason=no-verdict" : "";
