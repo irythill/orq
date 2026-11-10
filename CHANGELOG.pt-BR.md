@@ -21,6 +21,11 @@ English: [CHANGELOG.md](CHANGELOG.md).
   testa Node 22, 24 e 26.
 
 ### Corrigido
+- `orq agent -T` com Codex às vezes nunca sinalizava o fim do turno (#62): um `.id` deixado no prefixo por uma execução
+  anterior (outro agente ou sessão) fazia o `--turn codex` descartar todo turno real como thread paralela. Um novo
+  lançamento agora o apaga (`-R` grava a sessão retomada). No herdr, um turno cujo hook ainda não dispara (tela vista
+  ocupada, depois ociosa por 60 s, `.done` não reescrito) é sinalizado pelo runner como `status=fail reason=no-hook`,
+  com as últimas linhas da tela como resposta.
 - `policy.max_rounds` conta só rodadas de revisão: `orq agent -R --reason verify|unblock` (padrão `review`) não conta
   nem é recusado; todo follow-up vai para `.rounds-<sessão>.log` e o `orq rounds` mostra por motivo. A rodada é contada
   no launch, então um dispatch recusado depois não gasta rodada. O `/issue` nomeia correções de verify como

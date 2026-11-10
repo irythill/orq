@@ -1328,6 +1328,50 @@ process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.search(/[\\r\
   } finally { spawnSync("tmux", ["-S", sock, "kill-server"]); }
 });
 
+test("agent -T: a Codex-style screen on a prefix with a stale .id from an earlier run still signals its turn (#62)", { skip: !hasTmux && "no tmux" }, async () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "AGENT", "HERDR_AGENT_TUI"]) delete (env as Record<string, string | undefined>)[k];
+  const sock = join(root, "tmux.sock");
+  assert.equal(spawnSync("tmux", ["-S", sock, "-f", "/dev/null", "new-session", "-d", "-s", "t", "-x", "120", "-y", "30"], { env }).status, 0);
+  try {
+    Object.assign(env, { TMUX: `${sock},0,0`, ORQ_TERMINAL: "tmux", HERDR_CLOSE_DELAY: "0" });
+    // Codex's notify: the turn's JSON as the last argument, on a thread id orq can't know in advance.
+    const fake = join(root, "fake-codex.mjs");
+    writeFileSync(fake, `import { spawnSync } from "node:child_process";
+const hook = JSON.parse(process.argv[2]);
+spawnSync(hook[0], [...hook.slice(1), JSON.stringify({ type: "agent-turn-complete", "thread-id": "th-new", "last-assistant-message": "done" })]);
+process.stdin.on("data", (d) => { if (String(d).includes("bye")) process.exit(0); });\n`);
+    mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+    writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { fake: {
+      run: "true", tui: `'${process.execPath}' '${fake}' {hook_json}`, turn_hook: "codex", mem_max: "off" } } }));
+    mkdirSync(join(root, "w")); mkdirSync(join(root, "out"));
+    writeFileSync(join(root, "p.md"), "go\n");
+    const O = join(root, "out", "x");
+    writeFileSync(`${O}.id`, "claude-session-from-an-earlier-run\n");
+    assert.equal(run("agent", "-a", "fake", "-T", "-t", "screen", "-d", join(root, "w"), "-o", O, "--", join(root, "p.md")).status, 0);
+    const w = run("wait", "--timeout", "30", O);
+    assert.equal(w.status, 0, w.stdout + w.stderr);
+    assert.equal(readFileSync(`${O}.out.md`, "utf8"), "done");
+    assert.equal(readFileSync(`${O}.id`, "utf8").trim(), "th-new");
+    spawnSync("tmux", ["-S", sock, "send-keys", "-t", readFileSync(`${O}.pane`, "utf8").trim().slice(5), "bye", "Enter"]);
+  } finally { spawnSync("tmux", ["-S", sock, "kill-server"]); }
+});
+
+test("missedTurn: a -T turn without its hook is one seen busy after the last .done, then idle for the grace", async () => {
+  const { missedTurn } = await import("./commands/agent.js");
+  const { utimesSync } = await import("node:fs");
+  const d = join(mkdtempSync(join(tmpdir(), "orq-nohook-")), "x.done"), now = Date.now();
+  assert.equal(missedTurn(d, 0, now - 120_000, 60_000, now), false); // never seen busy
+  assert.equal(missedTurn(d, now - 200_000, 0, 60_000, now), false); // still busy
+  assert.equal(missedTurn(d, now - 200_000, now - 30_000, 60_000, now), false); // idle, within the grace
+  assert.equal(missedTurn(d, now - 200_000, now - 90_000, 60_000, now), true); // no .done at all
+  writeFileSync(d, "status=ok");
+  utimesSync(d, new Date(now - 300_000), new Date(now - 300_000));
+  assert.equal(missedTurn(d, now - 200_000, now - 90_000, 60_000, now), true); // .done from an earlier turn
+  utimesSync(d, new Date(now - 100_000), new Date(now - 100_000));
+  assert.equal(missedTurn(d, now - 200_000, now - 90_000, 60_000, now), false); // the hook wrote it
+});
+
 test("board: agents, queue, claims, quota and blocks from fake state files, plain when piped", async () => {
   const { root, env, run } = sandbox(), st = join(root, "state", "orq"), ws = join(root, "ws"), now = Date.now();
   const iso = (ms: number) => new Date(ms).toISOString(), dead = spawnSync(process.execPath, ["-e", ""]).pid!;
