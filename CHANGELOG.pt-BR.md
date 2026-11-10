@@ -21,6 +21,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
   testa Node 22, 24 e 26.
 
 ### Corrigido
+- `orq pick` pula um agente cuja CLI não está no PATH (ex.: instalada sob outra versão do Node), com dica para reinstalar, em vez de falhar depois do despacho (#77).
+- Vários conductors no mesmo workspace ganham nomes de sessão distintos, `conductor-<workspace>:<label do herdr ou ORQ_CONDUCTOR_ID>`, para poderem se endereçar; `orq claim -l` termina cada linha com esse `session=` (#79).
 - `orq agent -T` com Codex às vezes nunca sinalizava o fim do turno (#62): um `.id` deixado no prefixo por uma execução
   anterior (outro agente ou sessão) fazia o `--turn codex` descartar todo turno real como thread paralela. Um novo
   lançamento agora o apaga (`-R` grava a sessão retomada). No herdr, um turno cujo hook ainda não dispara (tela vista

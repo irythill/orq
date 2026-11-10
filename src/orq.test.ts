@@ -984,7 +984,7 @@ esac
   mkdirSync(join(root, ".orquestra", "X-1"), { recursive: true });
   writeFileSync(join(root, ".orquestra", "X-1", "owner"), `pane=w1:p1 kind=herdr account=work at=${new Date().toISOString()} name=stored-name\n`);
   const list = spawnSync(process.execPath, [CLI, "claim", "-w", root, "-l"], { env: testEnv, encoding: "utf8" });
-  assert.match(list.stdout, /X-1 "emp: orq-cms" pane=w1:p1/);
+  assert.match(list.stdout, /X-1 "emp: orq-cms" pane=w1:p1 .*\(alive\) session=conductor-[^:]+:emp-orq-cms$/m);
   const from = spawnSync(process.execPath, [CLI, "claim", "-w", root, "--from", "orq-cms"], { env: testEnv, encoding: "utf8" });
   assert.equal(from.status, 0, from.stdout + from.stderr);
   assert.match(from.stdout, /X-1 "emp: orq-cms" \(alive\)/);
@@ -2363,6 +2363,8 @@ test("conductor: model aliases map to the exact ids, anything else passes throug
   assert.equal(modelId("haiku"), "claude-haiku-4-5-20251001");
   assert.equal(modelId("claude-foo-1"), "claude-foo-1");
   assert.deepEqual(claudeArgs(join("x", "ws-abc"), { model: "", resume: "" }, "P"), ["-n", "conductor-ws-abc", "--append-system-prompt-file", "P"]);
+  assert.deepEqual(claudeArgs(join("x", "crm"), { model: "", resume: "" }, "P", "emp: Theme UI"),
+    ["-n", "conductor-crm:emp-theme-ui", "--append-system-prompt-file", "P"]); // #79: one name per conductor
   assert.deepEqual(claudeArgs(join("x", "ws"), { model: "opus", resume: "s1" }, "P"),
     ["--resume", "s1", "-n", "conductor-ws", "--model", "claude-opus-5-5", "--append-system-prompt-file", "P"]);
 });
