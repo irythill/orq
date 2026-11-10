@@ -6,6 +6,13 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-10
+### Adicionado
+- `orq pick` pontua pares (agente, modelo): um nível em `models.<papel>` pode listar vários modelos candidatos (`medium = ["a@medium", "b@medium"]`; uma string continua valendo). Cada par é pontuado pelo seu próprio histórico, com exploração e checagem de cota por modelo próprias; `--explain` mostra uma linha por par. Papéis fixos usam o primeiro modelo (#103).
+
+### Corrigido
+- Checagem de release: a última versão é a maior tag `v*`, não a mais próxima alcançável a partir da `dev` (as tags de release ficam nos merges da main), então o PR dev → main não pede mais a versão já lançada.
+
 ## [0.7.0] — 2026-11-10
 ### Adicionado
 - Docs em dia com a 0.7.0 (os dois READMEs, a skill `/issue`, troubleshooting): os filtros novos do `orq pick`, os nomes de sessão dos conductors, o orq fazendo fetch/commit pelos agentes que não conseguem, `orq <comando>` no lugar dos antigos `orq-*`; o exemplo de config do README em português foi atualizado. Os títulos dos PRs do Dependabot viraram Conventional Commits explícitos.

@@ -6,6 +6,13 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-10
+### Added
+- `orq pick` scores (agent, model) pairs: a level in `models.<role>` may list several candidate models (`medium = ["a@medium", "b@medium"]`; a string stays valid). Each pair is scored on its own stats row, with its own exploration and per-model quota check; `--explain` shows one line per pair. Fixed roles take the first model (#103).
+
+### Fixed
+- Release check: the last version is the highest `v*` tag, not the nearest one reachable from `dev` (release tags sit on main's merge commits), so the dev → main PR no longer asks for the version already released.
+
 ## [0.7.0] — 2026-11-10
 ### Added
 - Docs in sync with 0.7.0 (both READMEs, the `/issue` skill, troubleshooting): `orq pick`'s new filters, conductor session names, orq fetching/committing for agents that can't, `orq <command>` instead of the old `orq-*` names; the Portuguese README's config example caught up. Dependabot PR titles are explicit Conventional Commits.

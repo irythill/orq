@@ -11,8 +11,9 @@ import { pathToFileURL } from "node:url";
 const git = (...a) => execFileSync("git", a, { encoding: "utf8" }).trim();
 const RANK = { none: 0, patch: 1, minor: 2, major: 3 };
 
+/** The highest v* tag in the repo. Not `git describe`: release tags sit on main's merge commits, which dev never contains. */
 export function lastTag() {
-  try { return git("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*.[0-9]*.[0-9]*"); } catch { return undefined; }
+  try { return git("tag", "--list", "v[0-9]*.[0-9]*.[0-9]*", "--sort=-v:refname").split("\n")[0] || undefined; } catch { return undefined; }
 }
 
 /** [{subject, body}] of the non-merge commits after `tag` up to `ref`. */
