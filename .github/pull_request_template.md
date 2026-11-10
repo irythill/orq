@@ -4,7 +4,7 @@ Closes #
 
 
 ## Checklist
-- [ ] Targets `dev`
+- [ ] Targets `dev`, with a Conventional Commit title (`fix(pick): …`, `feat(agent): …`)
 - [ ] `npm test` passes locally
 - [ ] Tests added or updated for the change
 - [ ] `CHANGELOG.md` and `CHANGELOG.pt-BR.md` updated under `[Unreleased]` (user-visible changes)

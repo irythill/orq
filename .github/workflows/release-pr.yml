@@ -40,3 +40,6 @@ jobs:
           echo "$out"
           gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=$st -f context=version \
             -f description="$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-140)" >/dev/null
+          # Its own title ("Release v…") is conventional by construction; the ci `title` job doesn't run on it.
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=success -f context=title \
+            -f description="release PR title" >/dev/null

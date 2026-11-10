@@ -8,6 +8,7 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [0.7.0] — 2026-11-10
 ### Added
+- Docs in sync with 0.7.0 (both READMEs, the `/issue` skill, troubleshooting): `orq pick`'s new filters, conductor session names, orq fetching/committing for agents that can't, `orq <command>` instead of the old `orq-*` names; the Portuguese README's config example caught up. Dependabot PR titles are explicit Conventional Commits.
 - Release automation: every push to `dev` opens or updates the `dev → main` PR with the version the commits call for; a `version` check fails a PR into `main` until package.json and both changelogs carry it; merging into `main` tags, publishes to npm and creates the GitHub release. PR titles must be Conventional Commits (see CONTRIBUTING.md).
 - Agent capabilities `commit` and `network` (`[agents.<name>]`, default true). For a write run in a git repo, orq does
   what the agent can't: `commit = false` → orq commits the changes after the run (message from a `Commit: ...` line in

@@ -3,6 +3,9 @@ updates:
   - package-ecosystem: npm
     directory: /
     target-branch: dev
+    commit-message:
+      prefix: fix(deps)            # shipped dependencies: a patch release
+      prefix-development: chore(deps)
     schedule:
       interval: weekly
     ignore:
@@ -15,6 +18,8 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     target-branch: dev
+    commit-message:
+      prefix: ci(deps)
     schedule:
       interval: weekly
     groups:
