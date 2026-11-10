@@ -1,0 +1,45 @@
+# Keeps a dev → main PR open whenever dev is ahead of main, its body listing the commits since the last tag and the
+# version they call for (scripts/release.mjs).
+name: release-pr
+on:
+  push:
+    branches: [dev]
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write # a PR opened with GITHUB_TOKEN triggers no workflow, so the version check is reported from here
+concurrency:
+  group: release-pr
+  cancel-in-progress: true
+
+jobs:
+  pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: open or update the dev → main PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch -q origin main
+          if [ "$(git rev-list --count origin/main..HEAD)" = 0 ]; then echo "dev has nothing main lacks"; exit 0; fi
+          node scripts/release.mjs notes > body.md
+          v=$(node scripts/release.mjs next | node -p 'JSON.parse(require("fs").readFileSync(0)).next || ""')
+          title="Release ${v:+v$v}"; [ -n "$v" ] || title="dev → main (no release)"
+          n=$(gh pr list --base main --head dev --state open --json number -q '.[0].number')
+          if [ -n "$n" ]; then gh pr edit "$n" --title "$title" --body-file body.md
+          else gh pr create --base main --head dev --title "$title" --body-file body.md; fi
+      - name: report the version check on dev's head
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if out=$(node scripts/release.mjs check 2>&1); then st=success; else st=failure; fi
+          echo "$out"
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=$st -f context=version \
+            -f description="$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-140)" >/dev/null
+          # Its own title ("Release v…") is conventional by construction; the ci `title` job doesn't run on it.
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=success -f context=title \
+            -f description="release PR title" >/dev/null

@@ -8,6 +8,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [0.7.0] — 2026-11-10
 ### Adicionado
+- Docs em dia com a 0.7.0 (os dois READMEs, a skill `/issue`, troubleshooting): os filtros novos do `orq pick`, os nomes de sessão dos conductors, o orq fazendo fetch/commit pelos agentes que não conseguem, `orq <comando>` no lugar dos antigos `orq-*`; o exemplo de config do README em português foi atualizado. Os títulos dos PRs do Dependabot viraram Conventional Commits explícitos.
+- Automação de release: cada push em `dev` abre ou atualiza o PR `dev → main` com a versão que os commits pedem; a checagem `version` reprova um PR para `main` até o package.json e os dois changelogs terem essa versão; o merge em `main` cria a tag, publica no npm e cria o release no GitHub. Títulos de PR seguem Conventional Commits (veja CONTRIBUTING.md).
 - Capacidades `commit` e `network` por agente (`[agents.<nome>]`, padrão true). Numa execução de escrita num repo git,
   o orq faz o que o agente não consegue: `commit = false` → o orq commita as mudanças depois (mensagem de uma linha
   `Commit: ...` na resposta, senão o título) e mostra em `## Commit (by orq)`; `network = false` → o orq roda

@@ -99,7 +99,8 @@ Always include:
   choice doesn't come back as a blocker.
 - **No tests in the child** (memory rule): "don't run jest/vitest; I run the related tests afterwards".
 - **Fresh branch:** "before your final answer: `git fetch origin <BASE> && git rebase origin/<BASE>`; on conflict stop
-  and report; after the rebase repeat lint/tsc". Codex has no network: for it, you fetch and check in step 5.
+  and report; after the rebase repeat lint/tsc". An agent without network (Codex) can't fetch: `orq agent` fetches before
+  the run and adds a note to its prompt, so it only rebases locally.
 
 **Base = the repo's base branch from the workspace `CLAUDE.md`, always from the updated remote (`origin/<BASE>`).**
 Worktree with `git worktree add` (not `herdr worktree create`: that opens a separate herdr workspace per worktree, and
@@ -128,7 +129,7 @@ orq agent $(cat $O/impl-<repo>.pick) -g <group> -t "<ID> impl <repo>" -d $WT -o 
 ```
 - The Claude account (`-c`) already comes from `orq pick` (one under the limit whose pace stays within it, then the least used).
 - Full final answer in `$O/impl-<repo>.out.md`; log in `.log`; the agent's session id in `.id`.
-- Codex's sandbox has no network: `git fetch` is yours, beforehand (above). Push/PR: yours (step 7).
+- An agent without network (`network = false`, e.g. Codex): `orq agent` runs `git fetch origin` before a write run, so it can rebase locally. Push/PR: yours (step 7).
 - `orq agent` returns immediately (no need to background it); the child's pane is in `<prefix>.pane`
   (to peek: `<prefix>.log`; in herdr, `herdr pane read $(cat <prefix>.pane) --source recent`).
 - **No baseline in the issue flow:** don't run `orq baseline` before dispatching (the base moves with every merge and

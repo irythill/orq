@@ -4,7 +4,7 @@ import { m } from "../i18n.js";
 import { expand } from "../paths.js";
 import { collectRuns, rows } from "../stats.js";
 
-export const USAGE = "orq stats [-w <workspace>] [--days N] [--json]   scoreboard: delivery, time and tokens per agent";
+export const USAGE = "orq stats [-w <workspace>] [--days N] [--json]   scoreboard per agent and model: delivery, time, tokens";
 
 const k = (n: number | null) => (n === null ? "-" : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 const ORDER = ["impl", "fix", "review", "watchdog", "other"];
