@@ -28,8 +28,8 @@ const BINS = /^(codex|claude|opencode|agy|copilot|corvus)$/;
 
 /** The model a log says was used: Claude's init event, Codex's banner, opencode's step events. */
 function logModel(log: string): string | undefined {
-  return /"type":"system"[^\n]*?"model":"([^"]+)"/.exec(log)?.[1] ?? /^model: (\S+)/m.exec(log)?.[1]
-    ?? /"modelID":"([^"]+)"/.exec(log)?.[1];
+  return /"type"\s*:\s*"system"[^\n]*?"model"\s*:\s*"([^"]+)"/.exec(log)?.[1] ?? /^model: (\S+)/m.exec(log)?.[1]
+    ?? /"modelID"\s*:\s*"([^"]+)"/.exec(log)?.[1];
 }
 
 /** The argv of a generated .run.sh: its command, shell-tokenized (quotes span lines), without leading VAR=value words. */
