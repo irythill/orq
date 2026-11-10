@@ -21,6 +21,8 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   and 26.
 
 ### Fixed
+- `orq pick` skips an agent whose CLI doesn't resolve on PATH (e.g. installed under another Node version), with a reinstall hint, instead of failing after dispatch (#77).
+- Several conductors on one workspace get distinct session names, `conductor-<workspace>:<herdr label or ORQ_CONDUCTOR_ID>`, so they can address each other; `orq claim -l` ends each line with that `session=` (#79).
 - `orq agent -T` with Codex sometimes never signalled the end of a turn (#62): a `.id` left on the prefix by an earlier
   run (another agent or session) made `--turn codex` drop every real turn as a side thread. A new launch now clears it
   (`-R` writes the resumed session). On herdr, a turn whose hook still doesn't fire (screen seen busy, then idle for

@@ -2,14 +2,14 @@
 // instructions, the chosen account and model (port of setup/herdr-conductor, for any terminal and OS).
 //   orq conductor [account|-] [model] [-r <session>]
 // Workspace: the current folder if it has .orquestra-conductor.md, else $CONDUCTOR_WS. $CONDUCTOR_FILE overrides the
-// instructions file. The session is named conductor-<workspace folder>.
+// instructions file. The session is named conductor-<workspace folder>:<herdr label or ORQ_CONDUCTOR_ID> (see sessionName).
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { claudeAccounts } from "../accounts.js";
 import { m } from "../i18n.js";
 import { runCapped } from "../process.js";
-import { claim } from "./claim.js";
+import { claim, herdrName, sessionName } from "./claim.js";
 
 export const USAGE = `orq conductor [account|-] [model] [-r <session>]   open the conductor (Claude) here: instructions, account, model
   model: sonnet | opus | haiku | a full id; "-" as account = default account; -r resumes that conversation`;
@@ -50,8 +50,8 @@ export function findWorkspace(cwd: string, env: NodeJS.ProcessEnv, exists: (p: s
 export const instructionsFile = (ws: string, env: NodeJS.ProcessEnv) => env.CONDUCTOR_FILE ? resolve(env.CONDUCTOR_FILE) : join(ws, ".orquestra-conductor.md");
 
 /** The claude command line (without the executable). The instructions go by file, so no shell ever sees their text. */
-export function claudeArgs(ws: string, a: Pick<Args, "model" | "resume">, file: string): string[] {
-  return [...(a.resume ? ["--resume", a.resume] : []), "-n", `conductor-${basename(ws)}`,
+export function claudeArgs(ws: string, a: Pick<Args, "model" | "resume">, file: string, name = ""): string[] {
+  return [...(a.resume ? ["--resume", a.resume] : []), "-n", sessionName(ws, name),
     ...(a.model ? ["--model", modelId(a.model)] : []), "--append-system-prompt-file", file];
 }
 
@@ -90,5 +90,6 @@ export async function conductor(argv: string[]): Promise<number> {
   if (process.env.HERDR_PANE_ID) try { await claim(["-w", ws, "--register"]); } catch { /* best effort */ }
   if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved;
 
-  return runCapped("claude", claudeArgs(ws, a, file), { mode: "off", env, cwd: ws, quote: true, tty: true });
+  const name = (process.env.HERDR_PANE_ID ? herdrName(process.env.HERDR_PANE_ID) : "") || process.env.ORQ_CONDUCTOR_ID || "";
+  return runCapped("claude", claudeArgs(ws, a, file, name), { mode: "off", env, cwd: ws, quote: true, tty: true });
 }
