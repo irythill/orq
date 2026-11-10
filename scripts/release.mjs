@@ -12,7 +12,7 @@ const git = (...a) => execFileSync("git", a, { encoding: "utf8" }).trim();
 const RANK = { none: 0, patch: 1, minor: 2, major: 3 };
 
 export function lastTag() {
-  try { return git("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"); } catch { return undefined; }
+  try { return git("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*.[0-9]*.[0-9]*"); } catch { return undefined; }
 }
 
 /** [{subject, body}] of the non-merge commits after `tag` up to `ref`. */
