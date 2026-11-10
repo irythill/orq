@@ -2591,7 +2591,7 @@ test("pick review --base: resolves the commit from the workspace root, not the b
   const sha = git(ws, "rev-parse", "HEAD").stdout.trim();
   mkdirSync(other); git(other, "init", "-q"); git(other, "commit", "-q", "--allow-empty", "-m", "y");
   const bin = join(root, "bin");
-  mkdirSync(bin); writeFileSync(join(bin, "revtool"), "#!/bin/sh\n", { mode: 0o755 });
+  mkdirSync(bin); writeFileSync(join(bin, process.platform === "win32" ? "revtool.cmd" : "revtool"), "#!/bin/sh\n", { mode: 0o755 });
   const r = spawnSync(process.execPath, [CLI, "pick", "review", "--base", sha, "--no-record"],
     { env: { ...env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }, cwd: other, encoding: "utf8" });
   assert.equal(r.status, 3, r.stderr);
@@ -2772,9 +2772,10 @@ test("writeAtomic: creates parent directories, writes UTF-8, overwrites existing
 test("pick: an agent whose CLI doesn't resolve is out, with a reinstall hint (#77)", async () => {
   const { missingBinary } = await import("./agents.js");
   const dir = mkdtempSync(join(tmpdir(), "orq-bin-"));
-  writeFileSync(join(dir, "acme"), "#!/bin/sh\n", { mode: 0o755 });
+  const ext = process.platform === "win32" ? ".cmd" : "";
+  writeFileSync(join(dir, `acme${ext}`), "#!/bin/sh\n", { mode: 0o755 });
   const cfg = { agents: { acme: { run: "acme -p {prompt_text}" }, gone: { run: "gone-cli -p {prompt_text}" },
-    abs: { run: `${join(dir, "acme")} -p` } } };
+    abs: { run: `${join(dir, `acme${ext}`)} -p` } } };
   const path = process.env.PATH;
   process.env.PATH = dir;
   try {
