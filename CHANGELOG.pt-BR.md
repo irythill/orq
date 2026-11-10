@@ -5,6 +5,8 @@ O que mudou no orq, do mais novo para o mais antigo. As datas são de quando ent
 English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
+
+## [0.8.0] — 2026-11-10
 ### Adicionado
 - `orq pick` pontua pares (agente, modelo): um nível em `models.<papel>` pode listar vários modelos candidatos (`medium = ["a@medium", "b@medium"]`; uma string continua valendo). Cada par é pontuado pelo seu próprio histórico, com exploração e checagem de cota por modelo próprias; `--explain` mostra uma linha por par. Papéis fixos usam o primeiro modelo (#103).
 
