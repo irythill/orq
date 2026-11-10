@@ -6,7 +6,7 @@
 |---|---|---|
 | Prompt arrives with pieces missing; empty answers; "Invalid environment variable name evaluates to an empty string" in the log | `systemd-run` expands `${...}` in its arguments — JS template strings and GitHub Actions expressions in the prompt vanished (Claude escaped it by reading stdin) | `orq agent` passes `--expand-environment=no` (systemd ≥ 254) |
 | Test queue stuck for an hour behind full test suites | the baseline was keyed to the base SHA: every merge invalidated it and each conductor re-ran the full suite, sometimes twice | `herdr-verify` checks the base **on demand**: only the failing test files, on a fresh `origin/<base>`; `herdr-baseline` is manual only |
-| Conductors always pick the same agent | an LLM reading prose rules favors the newest, most specific rule | `orq-pick` decides from data (delivery, tokens, speed, quota, rotation); the skill forbids choosing by hand |
+| Conductors always pick the same agent | an LLM reading prose rules favors the newest, most specific rule | `orq pick` decides from data (delivery, tokens, speed, quota, rotation); the skill forbids choosing by hand |
 | After one failed review, every later review goes to the same agent | `--exclude-agent` "stuck" in the conductor's head | the skill says the exclusion is for redoing that one review only |
 | Antigravity review ends with no output | in headless mode `agy` denies any command outside its own allowlist and one denial ends the run | it only reviews, with the diff attached (`-b`) and no terminal; failure without a verdict → another reviewer |
 | Empty answer reported as `status=ok` | the check only looked for a non-empty file (a single newline passed) | whitespace-only answer = `fail` |

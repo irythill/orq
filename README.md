@@ -48,9 +48,9 @@ You ── "/issue DEMO-123" ──► conductor (Claude, in any terminal)
 | Agent | CLI | Possible roles | Notes |
 |---|---|---|---|
 | Claude Code | `claude` | conductor, implement, review | several accounts (`claude-accounts`); Opus as conductor |
-| Codex | `codex` | implement, review | sandbox without network: the conductor runs `git fetch`; quota from its session files (the free plan's 30-day window included) |
+| Codex | `codex` | implement, review | sandbox without network: orq runs `git fetch` before a write run (`network = false`); quota from its session files (the free plan's 30-day window included) |
 | OpenCode | `opencode` | implement, review | any provider (e.g. MiniMax); on MiniMax, quota from the Token Plan API with your key |
-| Antigravity | `agy` | review | headless denies commands outside its allowlist: it reviews by reading the attached diff |
+| Antigravity | `agy` | review (implement with an allowlist) | headless denies commands outside its allowlist: it reviews by reading the attached diff; it can't commit, so orq commits its write runs (`commit = false`) |
 | GitHub Copilot | `copilot` | second opinion | small allowances on some plans: occasional use |
 
 You declare only the ones you have, and the roles each may take.
@@ -120,10 +120,10 @@ Two layers, to keep **your way of working** apart from **the team's project**:
 | File | Whose | What it holds |
 |---|---|---|
 | `~/.config/orq/config.toml` | yours, stays on your machine | agents, accounts, models per role and level, pick weights, memory limits |
-| `<workspace>/.orq/workspace.toml` 🚧 | the team's, versioned | Plane (projects, issue standard), repos, base branch, verification, tests, dependencies |
+| `<workspace>/.orq/workspace.toml` | the team's, versioned | Plane (projects, issue standard), repos, base branch, verification, tests, dependencies |
 
-The more specific one wins, key by key. JSON works too (`config.json`). To see the merged result: `orq-config`
-(everything), `orq-config get policy.weights`, `orq-config files`.
+The more specific one wins, key by key. JSON works too (`config.json`). To see the merged result: `orq config`
+(everything), `orq config get policy.weights`, `orq config files`.
 
 ### Example: personal config
 Complete, commented example: [`examples/irythill/config.toml`](examples/irythill/config.toml). The essentials:
@@ -180,18 +180,19 @@ speed    = 0.15
 rotation = 0.20                          # penalty for having been picked recently
 ```
 
-### How `orq-pick` chooses
-1. **Filters:** only agents with that role, under the quota limit, not blocked (`orq-block`) and, for reviews, from a
-   vendor other than the implementer's. With several accounts, it prefers one whose pace stays within the limit, then
+### How `orq pick` chooses
+1. **Filters:** only agents with that role whose CLI is on the PATH, under the quota limit, not blocked (`orq block`)
+   and, for reviews, from a vendor other than the implementer's (and, for a round's delta, able to review a commit:
+   `base_commit`). With several accounts, it prefers one whose pace stays within the limit, then
    the least used.
 2. **Scores:** `quality × delivery + tokens × economy + speed × quickness − rotation × recent picks`. The numbers come
-   from the history (`orq-stats`); an agent with few runs uses the config's `prior` and gets an exploration bonus.
+   from the history (`orq stats`); an agent with few runs uses the config's `prior` and gets an exploration bonus.
 3. **`reserve = true` agents** (e.g. Claude, which shares quota with the conductor) only come in when nothing else fits.
 
 ```bash
-orq-pick review --impl-agent codex --explain     # every candidate's score and who was left out, and why
-orq-stats --days 30                              # scoreboard: delivery, approval, time and tokens per agent and model
-orq-block antigravity --days 3                   # out of the picks (e.g. weekly quota gone, no collector for it)
+orq pick review --impl-agent codex --explain     # every candidate's score and who was left out, and why
+orq stats --days 30                              # scoreboard per agent and model: delivery, approval, time (to the first turn), tokens
+orq block antigravity --days 3                   # out of the picks (e.g. weekly quota gone, no collector for it)
 orq pick fix --same .orquestra/<ID>/impl-<repo>.pick   # a fix round: the implementer's agent/model/account, effort +1
 ```
 
@@ -199,7 +200,7 @@ orq pick fix --same .orquestra/<ID>/impl-<repo>.pick   # a fix round: the implem
 orq speaks English and Portuguese: CLI messages, `orq board`, notices and `install.sh`. It follows
 `[ui] lang` in your config (`"auto"` = system locale, `"en"`, `"pt"`), or the `ORQ_LANG` environment variable.
 Switch it any time:
-- `orq-lang pt` / `orq-lang en` / `orq-lang toggle` (`orq-lang` alone shows the current one);
+- `orq lang pt` / `orq lang en` / `orq lang toggle` (`orq lang` alone shows the current one);
 - `l` inside `orq board`;
 - in herdr, a key for it: see [With herdr](#with-herdr).
 
@@ -216,7 +217,9 @@ Open the conductor in any terminal, in your workspace folder (the one `orq setup
 ```bash
 cd ~/Code/<workspace> && orq conductor [account] [model]   # any terminal: loads the conductor instructions, the workspace CLAUDE.md and the /issue skill
 ```
-With several conductors, give each a fixed name (`export ORQ_CONDUCTOR_ID=<name>`) so `orq claim` can tell them apart.
+With several conductors, give each a fixed name (`export ORQ_CONDUCTOR_ID=<name>`; in herdr, the workspace label is
+used) so `orq claim` can tell them apart: the Claude session is named `conductor-<workspace>:<name>`, and
+`orq claim -l` ends each line with that `session=`, so conductors can message each other.
 Variants:
 - **herdr:** run `herdr` (the server runs as a service), then the same `orq conductor` in a pane (`herdr-conductor` still works).
 - **tmux:** run `orq conductor` in a pane; children open as tmux windows.
@@ -302,6 +305,7 @@ Day to day, shortcuts and several issues at once: [docs/herdr.md](docs/herdr.md)
 - [docs/omarchy.md](docs/omarchy.md) — extras for Omarchy users
 - [docs/portability.md](docs/portability.md) — the roadmap: Linux, macOS and native Windows, any agent as conductor, user-defined roles, guided setup
 - [CHANGELOG.md](CHANGELOG.md) — what changed, release by release
+- [CONTRIBUTING.md](CONTRIBUTING.md) — branches, PR titles, how releases are cut
 - `examples/` — real configurations to copy
 
 ## License

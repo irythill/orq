@@ -50,9 +50,9 @@ You ── "/issue DEMO-123" ──► conductor (Claude, in any terminal)
 | Agente | CLI | Papéis possíveis | Observações |
 |---|---|---|---|
 | Claude Code | `claude` | conductor, implement, review | várias contas (`claude-accounts`); Opus como conductor |
-| Codex | `codex` | implement, review | sandbox sem rede: o conductor roda o `git fetch`; cota lida dos arquivos de sessão (inclusive a janela de 30 dias do plano free) |
+| Codex | `codex` | implement, review | sandbox sem rede: o orq roda o `git fetch` antes de uma execução de escrita (`network = false`); cota lida dos arquivos de sessão (inclusive a janela de 30 dias do plano free) |
 | OpenCode | `opencode` | implement, review | qualquer provider (ex.: MiniMax); na MiniMax, cota pela API do Token Plan com a sua chave |
-| Antigravity | `agy` | review | em modo headless nega comandos fora da allowlist: faz a review lendo o diff anexado |
+| Antigravity | `agy` | review (implement com allowlist) | em modo headless nega comandos fora da allowlist: faz a review lendo o diff anexado; não consegue commitar, então o orq commita as execuções de escrita dele (`commit = false`) |
 | GitHub Copilot | `copilot` | segunda opinião | cota pequena em alguns planos: uso ocasional |
 
 Você declara só os que tem, e os papéis que cada um pode assumir.
@@ -114,7 +114,7 @@ sobrescreve um arquivo de verdade (avisa e pula) e nunca escreve a sua config.
 | Flag | O que faz |
 |---|---|
 | `--dry-run` | mostra o que faria, sem mudar nada |
-| `--uninstall` | remove só os links que ele cria, e só os que apontam para este repo (config e histórico ficam) |
+| `--uninstall` | remove só os links que ele cria, e só os que apontam para este repo, e desativa os timers de usuário do orq no systemd (`systemctl --user disable --now`); config e histórico ficam |
 
 ## Configuração
 
@@ -123,10 +123,10 @@ Duas camadas, para separar **o seu jeito de trabalhar** do **projeto do time**:
 | Arquivo | De quem | O que guarda |
 |---|---|---|
 | `~/.config/orq/config.toml` | seu, fica na sua máquina | agentes, contas, modelos por papel e nível, pesos do pick, limites de memória |
-| `<workspace>/.orq/workspace.toml` 🚧 | do time, versionado | Plane (projetos, padrão de issue), repos, branch base, verificação, testes, dependências |
+| `<workspace>/.orq/workspace.toml` | do time, versionado | Plane (projetos, padrão de issue), repos, branch base, verificação, testes, dependências |
 
 O mais específico ganha, chave por chave. JSON também funciona (`config.json`). Para ver o resultado mesclado:
-`orq-config` (tudo), `orq-config get policy.weights`, `orq-config files`.
+`orq config` (tudo), `orq config get policy.weights`, `orq config files`.
 
 ### Exemplo: config pessoal
 Exemplo completo e comentado: [`examples/irythill/config.toml`](examples/irythill/config.toml). O essencial:
@@ -151,6 +151,18 @@ roles  = ["review"]                      # here it only reviews; for someone els
 [agents.opencode.models.review]
 default = "minimax/MiniMax-M3"
 
+[agents.revtool]                          # a review tool, not a chat: no prompt, no session
+vendor  = "minimax"                      # the vendor of the model it runs, for the cross-vendor rule
+roles   = ["review"]
+run     = "revtool --markdown -b {base}"  # {base} = orq agent -b; it reads the diff itself
+write   = false
+ok_exit = [0, 1]                         # exit 1 = findings, still a verdict
+no_review = "Nothing to review"          # matched on the answer's first line (or a short answer): not a verdict, status=fail
+# commit = false                         # can't git commit: orq commits a write run's changes
+# network = false                        # no network: orq fetches origin before a write run
+# base_commit = false                    # can't review `-b <sha>` (default for a tool): pick skips it on a round delta, agent falls back to the branch base
+# filter = "jq -r '...'"                 # optional: its output → [blocker]/[suggestion] lines
+
 [conductor]
 handoff_at = 85                          # % da janela → o orq handoff move o conductor para outra conta
 max_per_account = 2                      # conta que já tem esse tanto de conductors nunca é alvo do handoff
@@ -160,7 +172,8 @@ reset_grace_min = 15                     # toda janela acima do gatilho renova d
 issue_pattern = "(?<![a-z0-9])(?<issue>[a-z][a-z0-9]*-\\d+)(?![a-z0-9])"   # Nome de branch/worktree → ID da issue, para `orq gc` e `orq ci` — padrão mostrado; regex, grupo nomeado `issue` (senão o grupo 1)
 
 [policy]
-quota_limit = 90                         # caps the 5h pick limit; also sets ! in `orq quota --line`
+quota_week = 95                          # ≥ 95% of the week → agent out
+quota_5h = { simple = 90, medium = 85, heavy = 80 }  # same for the 5h window, by task level
 pacing_penalty = 0.3                     # score penalty when usage at the current pace would pass the pick limit (5h by level, week: quota_week) by the reset (0 = off)
 # [agents.claude] headroom = 25          # points kept for conductors: children leave the account at limit − 25
 [policy.weights]
@@ -170,18 +183,19 @@ speed    = 0.15
 rotation = 0.20                          # penalty for having been picked recently
 ```
 
-### Como o `orq-pick` escolhe
-1. **Filtros:** só agentes com aquele papel, abaixo do limite de quota, não bloqueados (`orq-block`) e, para reviews,
-   de um vendor diferente do implementador. Com várias contas, prefere uma cujo ritmo fique dentro do limite e, como
+### Como o `orq pick` escolhe
+1. **Filtros:** só agentes com aquele papel cuja CLI está no PATH, abaixo do limite de quota, não bloqueados
+   (`orq block`) e, para reviews, de um vendor diferente do implementador (e, para o delta de uma rodada, capazes de
+   revisar um commit: `base_commit`). Com várias contas, prefere uma cujo ritmo fique dentro do limite e, como
    desempate, a menos usada.
 2. **Pontuação:** `quality × delivery + tokens × economy + speed × quickness − rotation × recent picks`. Os números vêm
-   do histórico (`orq-stats`); um agente com poucas execuções usa o `prior` da config e ganha um bônus de exploração.
+   do histórico (`orq stats`); um agente com poucas execuções usa o `prior` da config e ganha um bônus de exploração.
 3. **Agentes com `reserve = true`** (ex.: Claude, que divide quota com o conductor) só entram quando nada mais serve.
 
 ```bash
-orq-pick review --impl-agent codex --explain     # every candidate's score and who was left out, and why
-orq-stats --days 30                              # scoreboard: delivery, approval, time and tokens per agent and model
-orq-block antigravity --days 3                   # out of the picks (e.g. weekly quota gone, no collector for it)
+orq pick review --impl-agent codex --explain     # every candidate's score and who was left out, and why
+orq stats --days 30                              # scoreboard per agent and model: delivery, approval, time (to the first turn), tokens
+orq block antigravity --days 3                   # out of the picks (e.g. weekly quota gone, no collector for it)
 orq pick fix --same .orquestra/<ID>/impl-<repo>.pick   # a fix round: the implementer's agent/model/account, effort +1
 ```
 
@@ -189,7 +203,7 @@ orq pick fix --same .orquestra/<ID>/impl-<repo>.pick   # a fix round: the implem
 O orq fala inglês e português: mensagens da CLI, `orq board`, avisos e `install.sh`. Ele segue `[ui] lang` na sua
 config (`"auto"` = idioma do sistema, `"en"`, `"pt"`) ou a variável de ambiente `ORQ_LANG`. Para trocar a qualquer
 momento:
-- `orq-lang pt` / `orq-lang en` / `orq-lang toggle` (`orq-lang` sozinho mostra o atual);
+- `orq lang pt` / `orq lang en` / `orq lang toggle` (`orq lang` sozinho mostra o atual);
 - a tecla `l` dentro do `orq board`;
 - no herdr, uma tecla para isso: veja [Com o herdr](#com-o-herdr).
 
@@ -205,7 +219,9 @@ Abra o conductor em qualquer terminal, na pasta do seu workspace (a que o `orq s
 ```bash
 cd ~/Code/<workspace> && orq conductor [conta] [modelo]   # qualquer terminal: carrega as instruções do conductor, o CLAUDE.md do workspace e a skill /issue
 ```
-Com vários conductors, dê a cada um um nome fixo (`export ORQ_CONDUCTOR_ID=<nome>`) para o `orq claim` distingui-los.
+Com vários conductors, dê a cada um um nome fixo (`export ORQ_CONDUCTOR_ID=<nome>`; no herdr, vale o label do
+workspace) para o `orq claim` distingui-los: a sessão do Claude se chama `conductor-<workspace>:<nome>`, e o
+`orq claim -l` termina cada linha com esse `session=`, para os conductors conseguirem se falar.
 Variantes:
 - **herdr:** rode `herdr` (o servidor roda como serviço) e, num pane, o mesmo `orq conductor` (o `herdr-conductor` continua funcionando).
 - **tmux:** rode `orq conductor` num pane; os filhos abrem como janelas do tmux.
@@ -293,6 +309,7 @@ Dia a dia, atalhos e várias issues ao mesmo tempo: [docs/pt-BR/herdr.md](docs/p
 - [docs/pt-BR/omarchy.md](docs/pt-BR/omarchy.md) — extras para quem usa Omarchy
 - [docs/pt-BR/portability.md](docs/pt-BR/portability.md) — o roadmap: Linux, macOS e Windows nativo, qualquer agente como conductor, papéis definidos pelo usuário, setup guiado
 - [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md) — o que mudou, versão a versão
+- [CONTRIBUTING.md](CONTRIBUTING.md) — branches, títulos de PR, como sai uma versão (em inglês)
 - `examples/` — configurações reais para copiar
 
 ## Licença

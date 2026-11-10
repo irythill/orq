@@ -8,7 +8,7 @@ personal ~/.claude-personal
 ```
 Conta nova = mais uma linha + um alias no `~/.bashrc` (`alias claude-x='CLAUDE_CONFIG_DIR="$HOME/.claude-x" claude'`)
 + fazer login uma vez com `claude-x`. Confira com `claude-accounts` e `agent-quota`. No `~/.config/orq/config.toml`,
-liste os nomes em `[agents.claude] quota = [...]`: aí o `orq-pick` entrega aos filhos uma conta cujo ritmo fique dentro
+liste os nomes em `[agents.claude] quota = [...]`: aí o `orq pick` entrega aos filhos uma conta cujo ritmo fique dentro
 do limite (ou, como desempate, a menos usada).
 
 **Pegadinha do `CLAUDE_CONFIG_DIR`:** com `CLAUDE_CONFIG_DIR=X`, o Claude lê **`X/.claude.json`** (MCPs, projetos,
