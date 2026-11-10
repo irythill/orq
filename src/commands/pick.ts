@@ -5,7 +5,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isCommitBase } from "../agents.js";
+import { isCommitBase, missingBinary } from "../agents.js";
 import { loadConfig, type Obj } from "../config.js";
 import { m } from "../i18n.js";
 import { asArgs, escalate, parseQuota, modelFor, parseWindows, pick as choose } from "../pick.js";
@@ -65,7 +65,7 @@ export async function pick(argv: string[]): Promise<number> {
     // Eligible, not just declared: an agent that is excluded, blocked or has no model for this role/level can't be picked.
     const blocked = loadBlocks();
     const declared = r.mode === "auto"
-      ? r.pool.filter((n) => agents[n] && !exclude.has(n) && !(n in blocked) && modelFor(agents[n], role, level)) : [];
+      ? r.pool.filter((n) => agents[n] && !exclude.has(n) && !(n in blocked) && !missingBinary(cfg, n) && modelFor(agents[n], role, level)) : [];
     if (declared.length > 1) {
       console.error(`orq pick: ${m(`more than one agent eligible for ${role} (${declared.join(", ")}) before quota checks: pass --impl-agent or --impl-vendor`,
         `mais de um agente elegível para ${role} (${declared.join(", ")}) antes da checagem de quota: informe --impl-agent ou --impl-vendor`)}`);
@@ -82,7 +82,10 @@ export async function pick(argv: string[]): Promise<number> {
   const qt = await quotaText(cfg);
   // A review of a commit base (a round delta) leaves out agents that can't diff against one (agents.<name>.base_commit).
   const commitBase = role === "review" && Boolean(base) && isCommitBase((ws ?? cfg._workspace ?? process.cwd()) as string, base!);
-  const res = choose({ cfg, role, level, implVendor, implAgent, exclude, commitBase, stats, quota: parseQuota(qt), windows: parseWindows(qt),
+  const r0 = resolveRole(cfg, role);
+  const missing = new Map<string, string>();
+  for (const n of r0.mode === "fixed" ? r0.order : r0.pool) { const why = agents[n] && missingBinary(cfg, n); if (why) missing.set(n, why); }
+  const res = choose({ cfg, role, level, implVendor, implAgent, exclude, commitBase, missing, stats, quota: parseQuota(qt), windows: parseWindows(qt),
     blocks: new Set(Object.keys(loadBlocks())), recent });
   if (!res.best) {
     console.error(`orq pick: ${m("no candidate for ", "nenhum candidato para ")}${role}`

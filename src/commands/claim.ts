@@ -17,6 +17,13 @@ import { handoffFile } from "../notice.js";
 export const USAGE = `orq claim [-w <workspace>] <ID> | -f <ID> | -r <ID> | -l | --register   issue owner among conductors (exit 1 = someone else's)
 orq claim [-w <workspace>] --from <name> [-f]   a conductor's issues by its name (part of it is enough); -f takes them all`;
 
+/** The Claude session name of a conductor of `ws` (what ListAgents shows): conductor-<workspace folder>, plus
+ *  :<name> (its herdr label or ORQ_CONDUCTOR_ID, slugged) so several conductors on one workspace can be told apart. */
+export function sessionName(ws: string, name = ""): string {
+  const slug = name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return `conductor-${basename(ws)}${slug ? `:${slug}` : ""}`;
+}
+
 const field = (text: string, k: string) => new RegExp(`${k}=(\\S+)`).exec(text)?.[1] ?? "";
 export const nameOf = (text: string) => / name=(.*)$/m.exec(text)?.[1].trim() ?? "";
 
@@ -107,7 +114,8 @@ export async function claim(argv: string[]): Promise<number> {
       // The herdr workspace's current label while the pane is alive; the name stored at claim time otherwise
       // (the user may have renamed the workspace since, or it may not be a herdr conductor at all).
       const n = (alive && (field(t, "kind") || "herdr") === "herdr" ? names.get(field(t, "pane")) ?? "" : "") || nameOf(t);
-      console.log(`${d} ${n ? `"${n}" ` : ""}${t.replace(/ name=.*$/, "")} (${alive ? "alive" : "dead"})`);
+      console.log(`${d} ${n ? `"${n}" ` : ""}${t.replace(/ name=.*$/, "")} (${alive ? "alive" : "dead"})`
+        + ` session=${sessionName(ws, n)}`);
     }
     return 0;
   }

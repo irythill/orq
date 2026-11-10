@@ -5,7 +5,7 @@
 //     quality * delivery + tokens * economy + speed * quickness − rotation * (picks in the last `window`)
 //     − reserve (agents with reserve = true) + explore (fewer than `min_samples` runs, fading with n, none after
 //     `explore_streak` picks in a row). Each axis is (prior·k + observed·n)/(k + n), k = min_samples.
-// Filters: --exclude-agent, orq block, nobody reviews their own code (unless no other agent can), cross-vendor rule, a model for the role/level,
+// Filters: --exclude-agent, orq block, a CLI that doesn't resolve on PATH, nobody reviews their own code (unless no other agent can), cross-vendor rule, a model for the role/level,
 // quota under the limits: policy.quota_week (95) on the weekly window, and on the 5h one policy.quota_5h per level
 // (simple 90, medium 85, heavy 80): a heavy task needs more room left to finish.
 // An agent's `headroom` (points) lowers both limits for it: that share of its accounts stays for the conductors.
@@ -31,6 +31,7 @@ export type WindowMap = Record<string, { five?: number; week?: number; resetFive
 export interface PickInput {
   commitBase?: boolean; // the review base is a commit (a round delta): agents with base_commit = false are out
   cfg: Obj; role: PickRole; level: string; implVendor?: string; implAgent?: string; exclude: Set<string>;
+  missing?: Map<string, string> /* agent → why its CLI does not resolve */;
   stats: Row[]; quota: QuotaMap; windows?: WindowMap; blocks: Set<string>; recent: { agent: string }[]; now?: number /* epoch s */;
 }
 export interface Candidate {
@@ -169,6 +170,8 @@ export function pick(inp: PickInput): PickResult {
     if (!a) { out(name, m("not declared in [agents]", "não declarado em [agents]")); continue; }
     if (inp.exclude.has(name)) { out(name, m("excluded (--exclude-agent)", "excluído (--exclude-agent)")); continue; }
     if (inp.blocks.has(name)) { out(name, m("blocked (orq block -l)", "bloqueado (orq block -l)")); continue; }
+    const gone = inp.missing?.get(name);
+    if (gone) { out(name, gone); continue; }
     if ((role === "review" || role === "opinion" || role === "watchdog") && name === inp.implAgent && someoneElse) {
       out(name, m("it implemented this code", "foi quem implementou")); continue;
     }
@@ -282,7 +285,7 @@ export function pick(inp: PickInput): PickResult {
     return use.length ? Math.min(...use.map((x) => x.v)) : undefined;
   };
   const refTok = best(pass.filter((c) => c.st?.new).map((c) => ({ v: c.st!.new!, solid: !few(c.st) })));
-  const refMin = best(pass.filter((c) => c.st?.min).map((c) => ({ v: Math.max(c.st!.min, 0.1), solid: !few(c.st) })));
+  const refMin = best(pass.filter((c) => c.st?.min).map((c) => ({ v: Math.max(c.st!.min!, 0.1), solid: !few(c.st) })));
   const axis = (label: string, prior: number, obs: number | undefined, n: number) => {
     const v = blend(prior, obs, n);
     return { v, txt: `${label}=${v.toFixed(2)}` + (obs === undefined ? "" : `(${prior.toFixed(2)}→${obs.toFixed(2)})`) };

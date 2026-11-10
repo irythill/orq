@@ -3,30 +3,60 @@
 // duration, tokens. "New" tokens = excluding cache reads (what actually weighs on quota); Codex without a session
 // file only reports the total. Implementation delivery = the first review of the same repo in the issue said APPROVED.
 // Limitation: follow-ups (-R) reuse the implementation prefix, so the "impl" row shows the last round of that prefix.
+// Agent and model come from the job (<prefix>.job.json argv), then the pick (<prefix>.pick), then the log; a tool
+// without models (a review CLI) has model "-". Time runs to the first turn on a screen run (<prefix>.turns): later
+// turns wait on a person. Killed runs and older screen runs without .turns are counted but left out of the time median.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { argvModel, tokenize } from "./agents.js";
 import { doneStatus } from "./process.js";
 
 export interface Run {
   issue: string; name: string; agent: string; model: string; role: string; ok: boolean;
-  secs: number; new: number; tot: number; repo: string; approved?: boolean;
+  secs: number; timed: boolean; new: number; tot: number; repo: string; approved?: boolean;
 }
 export interface Row {
   role: string; agent: string; model: string; n: number; ok: number; approved: number | null; n_appr: number;
-  min: number; new: number | null; tot: number | null;
+  min: number | null; new: number | null; tot: number | null;
 }
 
 const ROLE = /^(impl|fix\d*|review\d*|[a-z]+-review\d*|watchdog\d*)-?/;
 const read = (f: string) => { try { return readFileSync(f, "utf8"); } catch { return ""; } };
 
-export function agentModel(run: string, log: string): [string, string] {
-  const a = /\b(codex exec|codex resume|codex|claude -p|claude|opencode run|opencode|agy)\b/.exec(run);
-  const first = a ? a[1].split(" ")[0] : "?";
-  const agent = first === "agy" ? "antigravity" : first;
-  let model = /(?:\s-m|--model)\s+'?([^\s']+)/.exec(run)?.[1];
-  if (agent === "codex" && !model) model = /^model: (\S+)/m.exec(log)?.[1] ?? "default";
-  return [agent, (model ?? "default").split("/").pop()!];
+const BINS = /^(codex|claude|opencode|agy|copilot)$/;
+
+/** The model a log says was used: Claude's init event, Codex's banner, opencode's step events. */
+function logModel(log: string): string | undefined {
+  return /"type"\s*:\s*"system"[^\n]*?"model"\s*:\s*"([^"]+)"/.exec(log)?.[1] ?? /^model: (\S+)/m.exec(log)?.[1]
+    ?? /"modelID"\s*:\s*"([^"]+)"/.exec(log)?.[1];
+}
+
+/** The argv of a generated .run.sh: its command, shell-tokenized (quotes span lines), without leading VAR=value words. */
+function runArgv(run: string): string[] {
+  const body = run.split("\n").filter((l) => !l.startsWith("#") && !l.startsWith("cd ")).join("\n");
+  const words = tokenize(body.replace(/\s<\s\S+\s*$/, "")).map((w) => w.text);
+  while (words.length && /^\w+=/.test(words[0])) words.shift();
+  return words;
+}
+
+/** [agent, model] of a run. `job` is <prefix>.job.json (argv + agent), `pick` the `-a … -m …` line it was dispatched with
+ *  (used only when it names the same agent). */
+export function agentModel(run: string, log: string, job?: { agent?: string; argv?: string[]; env?: Record<string, string> }, pick = ""): [string, string] {
+  let argv = job?.argv ?? runArgv(run);
+  const base = (w: string) => w.split(/[\\/]/).pop()!;
+  // Older runs wrap the agent (systemd-run …, git worktree … && codex): start at the first agent CLI found.
+  const at = job ? 0 : argv.findIndex((w) => BINS.test(base(w)));
+  if (at > 0) argv = argv.slice(at);
+  const bin = base(argv[0] ?? "");
+  let agent = job?.agent || bin || "?";
+  if (agent === "agy") agent = "antigravity";
+  const picked = / -a (\S+)/.exec(` ${pick}`)?.[1] === agent ? / -m (\S+)/.exec(pick)?.[1] : undefined;
+  // opencode's screen takes the model in its config env, not -m.
+  const envModel = /"model":"([^"]+)"/.exec(job?.env?.OPENCODE_CONFIG_CONTENT ?? "")?.[1];
+  const model = argvModel(argv) ?? envModel ?? picked ?? logModel(log);
+  if (model) return [agent, model.split("/").pop()!];
+  return [agent, /^(codex|claude|opencode|agy)$/.test(bin) ? "default" : "-"];
 }
 
 function codexSession(sid: string): string | undefined {
@@ -65,8 +95,10 @@ export function tokens(agent: string, log: string, sid = ""): [number, number] {
       [neu, tot] = [n, n + (u.cache_read_input_tokens ?? 0)];
     } else if (agent === "opencode" && e.type === "step_finish") {
       const t = e.part?.tokens ?? {};
-      neu += (t.total ?? 0) - (t.cache?.read ?? 0);
-      tot += t.total ?? 0;
+      // Newer opencode has no total: input + output + reasoning + cache.
+      const all = t.total ?? (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0);
+      neu += all - (t.cache?.read ?? 0);
+      tot += all;
     } else if (agent === "antigravity" && e.event === "result") {
       const u = e.result?.usage ?? {};
       [neu, tot] = [u.total_tokens ?? 0, (u.total_tokens ?? 0) + (u.cache_read_tokens ?? 0)]; // agy's total excludes cache
@@ -91,7 +123,13 @@ export function collectRuns(ws: string, days: number): Run[] {
       const txt = read(runF);
       if (txt.includes("herdr-verify") || txt.includes("herdr-baseline")) continue;
       const log = read(`${pre}.log`);
-      const [agent, model] = agentModel(txt, log);
+      let job: { agent?: string; argv?: string[]; env?: Record<string, string> } | undefined;
+      try { job = JSON.parse(read(`${pre}.job.json`)); } catch { /* older run */ }
+      const [agent, model] = agentModel(txt, log, job, read(`${pre}.pick`));
+      const dt = read(done), turns = read(`${pre}.turns`).split("\n").filter(Boolean);
+      const first = turns.length ? Date.parse(turns[0]) : NaN;
+      const end = Number.isFinite(first) ? first : statSync(done).mtimeMs;
+      const timed = Number.isFinite(first) || (!/\bmode=tui\b/.test(dt) && doneStatus(dt) !== "killed");
       const name = basename(pre);
       const rm = ROLE.exec(name);
       const role = rm && rm[1].includes("review") ? "review"
@@ -100,8 +138,8 @@ export function collectRuns(ws: string, days: number): Run[] {
           : name.startsWith("impl") ? "impl" : "other";
       const out = read(`${pre}.out.md`);
       const [neu, tot] = tokens(agent, log, read(`${pre}.id`).trim());
-      runs.push({ issue, name, agent, model, role, ok: doneStatus(read(done)) === "ok" && out.trim() !== "",
-        secs: Math.max(0, Math.floor((statSync(done).mtimeMs - rs.mtimeMs) / 1000)), new: neu, tot,
+      runs.push({ issue, name, agent, model, role, ok: doneStatus(dt) === "ok" && out.trim() !== "",
+        secs: Math.max(0, Math.floor((end - rs.mtimeMs) / 1000)), timed, new: neu, tot,
         repo: name.includes("-") ? name.slice(name.indexOf("-") + 1) : "" });
     }
   }
@@ -133,7 +171,7 @@ export function rows(runs: Run[]): Row[] {
     const withTok = rs.filter((r) => r.tot), appr = rs.filter((r) => r.approved !== undefined).map((r) => r.approved!);
     return { role, agent, model, n: rs.length, ok: Math.round(100 * rs.filter((r) => r.ok).length / rs.length),
       approved: appr.length ? Math.round(100 * appr.filter(Boolean).length / appr.length) : null, n_appr: appr.length,
-      min: Math.round(median(rs.map((r) => r.secs)) / 6) / 10,
+      min: rs.some((r) => r.timed) ? Math.round(median(rs.filter((r) => r.timed).map((r) => r.secs)) / 6) / 10 : null,
       new: withTok.length ? Math.floor(median(withTok.map((r) => r.new))) : null,
       tot: withTok.length ? Math.floor(median(withTok.map((r) => r.tot))) : null };
   });

@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { merge } from "./config.js";
@@ -984,7 +984,7 @@ esac
   mkdirSync(join(root, ".orquestra", "X-1"), { recursive: true });
   writeFileSync(join(root, ".orquestra", "X-1", "owner"), `pane=w1:p1 kind=herdr account=work at=${new Date().toISOString()} name=stored-name\n`);
   const list = spawnSync(process.execPath, [CLI, "claim", "-w", root, "-l"], { env: testEnv, encoding: "utf8" });
-  assert.match(list.stdout, /X-1 "emp: orq-cms" pane=w1:p1/);
+  assert.match(list.stdout, /X-1 "emp: orq-cms" pane=w1:p1 .*\(alive\) session=conductor-[^:]+:emp-orq-cms$/m);
   const from = spawnSync(process.execPath, [CLI, "claim", "-w", root, "--from", "orq-cms"], { env: testEnv, encoding: "utf8" });
   assert.equal(from.status, 0, from.stdout + from.stderr);
   assert.match(from.stdout, /X-1 "emp: orq-cms" \(alive\)/);
@@ -2363,6 +2363,8 @@ test("conductor: model aliases map to the exact ids, anything else passes throug
   assert.equal(modelId("haiku"), "claude-haiku-4-5-20251001");
   assert.equal(modelId("claude-foo-1"), "claude-foo-1");
   assert.deepEqual(claudeArgs(join("x", "ws-abc"), { model: "", resume: "" }, "P"), ["-n", "conductor-ws-abc", "--append-system-prompt-file", "P"]);
+  assert.deepEqual(claudeArgs(join("x", "crm"), { model: "", resume: "" }, "P", "emp: Theme UI"),
+    ["-n", "conductor-crm:emp-theme-ui", "--append-system-prompt-file", "P"]); // #79: one name per conductor
   assert.deepEqual(claudeArgs(join("x", "ws"), { model: "opus", resume: "s1" }, "P"),
     ["--resume", "s1", "-n", "conductor-ws", "--model", "claude-opus-5-5", "--append-system-prompt-file", "P"]);
 });
@@ -2590,7 +2592,10 @@ test("pick review --base: resolves the commit from the workspace root, not the b
   git(ws, "init", "-q"); git(ws, "commit", "-q", "--allow-empty", "-m", "x");
   const sha = git(ws, "rev-parse", "HEAD").stdout.trim();
   mkdirSync(other); git(other, "init", "-q"); git(other, "commit", "-q", "--allow-empty", "-m", "y");
-  const r = spawnSync(process.execPath, [CLI, "pick", "review", "--base", sha, "--no-record"], { env, cwd: other, encoding: "utf8" });
+  const bin = join(root, "bin");
+  mkdirSync(bin); writeFileSync(join(bin, process.platform === "win32" ? "revtool.cmd" : "revtool"), "#!/bin/sh\n", { mode: 0o755 });
+  const r = spawnSync(process.execPath, [CLI, "pick", "review", "--base", sha, "--no-record"],
+    { env: { ...env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }, cwd: other, encoding: "utf8" });
   assert.equal(r.status, 3, r.stderr);
   assert.match(r.stderr, /revtool: can't review a commit base/);
 });
@@ -2764,4 +2769,65 @@ test("writeAtomic: creates parent directories, writes UTF-8, overwrites existing
     assert.equal(readFileSync(file, "utf8"), "overwritten\n");
     assert.deepEqual(readdirSync(dir), ["data.txt"]);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("pick: an agent whose CLI doesn't resolve is out, with a reinstall hint (#77)", async () => {
+  const { missingBinary } = await import("./agents.js");
+  const dir = mkdtempSync(join(tmpdir(), "orq-bin-"));
+  const ext = process.platform === "win32" ? ".cmd" : "";
+  writeFileSync(join(dir, `acme${ext}`), "#!/bin/sh\n", { mode: 0o755 });
+  const cfg = { agents: { acme: { run: "acme -p {prompt_text}" }, gone: { run: "gone-cli -p {prompt_text}" },
+    abs: { run: `${join(dir, `acme${ext}`)} -p` } } };
+  const path = process.env.PATH;
+  process.env.PATH = dir;
+  try {
+    assert.equal(missingBinary(cfg, "acme"), undefined);
+    assert.equal(missingBinary(cfg, "abs"), undefined);
+    assert.match(missingBinary(cfg, "gone") ?? "", /gone-cli.*(reinstall|reinstale)/);
+    assert.equal(missingBinary(cfg, "nope"), undefined); // undeclared: pick reports it elsewhere
+  } finally { process.env.PATH = path; rmSync(dir, { recursive: true, force: true }); }
+  const agents = { a: { models: { impl: { default: "ma" } } }, b: { models: { impl: { default: "mb" } } } };
+  const r = pickAgent({ cfg: { agents, roles: { primary: { agent: "a", fallback: ["b"] } } }, role: "impl", level: "medium",
+    exclude: new Set(), stats: [], quota: {}, blocks: new Set(), recent: [], missing: new Map([["a", "`a` not found on PATH"]]) });
+  assert.equal(r.best?.agent, "b");
+  assert.deepEqual(r.notes, ["a: `a` not found on PATH"]);
+});
+
+test("stats: agent and model always named; screen runs time to the first turn (#59)", async () => {
+  const { agentModel, collectRuns, rows } = await import("./stats.js");
+  // A review tool from the job: named, model "-"; a prompt's "-m 'feat(ui): …'" is never the model.
+  assert.deepEqual(agentModel("", "", { agent: "revtool", argv: ["revtool", "--markdown", "-b", "dev"] }), ["revtool", "-"]);
+  assert.deepEqual(agentModel("", "", { agent: "opencode", argv: ["opencode", "run", "-m", "minimax/MiniMax-M3", "git commit -m \"feat(ui): x\""] }),
+    ["opencode", "MiniMax-M3"]);
+  // opencode's screen: the model is in its config env; the pick only counts when it names the same agent.
+  assert.deepEqual(agentModel("", "", { agent: "opencode", argv: ["opencode", "--standalone"],
+    env: { OPENCODE_CONFIG_CONTENT: '{"model":"minimax/MiniMax-M3"}' } }, "-a claude -m claude-sonnet-5"), ["opencode", "MiniMax-M3"]);
+  assert.deepEqual(agentModel("", "", { agent: "copilot", argv: ["copilot", "-p", "x"] }, "-a copilot -m auto"), ["copilot", "auto"]);
+  // An older run without a job: past the wrapper, quotes respected.
+  assert.deepEqual(agentModel("#!/usr/bin/env bash\ncd /x\nX='{\"a\":\"b -p c\"}' systemd-run --user --pty codex exec -m gpt-6-sol -s x -", ""),
+    ["codex", "gpt-6-sol"]);
+  assert.deepEqual(agentModel("", '{"type":"system","subtype":"init","model":"claude-sonnet-5"}', { agent: "claude", argv: ["claude", "-p"] }),
+    ["claude", "claude-sonnet-5"]);
+  assert.deepEqual(agentModel("", "", { agent: "claude", argv: ["claude", "-p"] }), ["claude", "default"]);
+
+  const ws = mkdtempSync(join(tmpdir(), "orq-stats-")), d = join(ws, ".orquestra", "X-1");
+  mkdirSync(d, { recursive: true });
+  const run = (name: string, done: string, turns?: string[]) => {
+    writeFileSync(join(d, `${name}.run.sh`), "#!/usr/bin/env bash\n");
+    writeFileSync(join(d, `${name}.job.json`), JSON.stringify({ agent: "codex", argv: ["codex", "-m", "gpt-6-sol"] }));
+    writeFileSync(join(d, `${name}.out.md`), "ok");
+    writeFileSync(join(d, `${name}.done`), done);
+    if (turns) writeFileSync(join(d, `${name}.turns`), turns.join("\n") + "\n");
+  };
+  const t0 = Date.now();
+  run("impl-a", "status=ok rc=0 mode=tui\n", [new Date(t0 + 120_000).toISOString(), new Date(t0 + 86_400_000).toISOString()]);
+  run("impl-b", "status=ok rc=0 mode=tui\n"); // older screen run: no .turns → untimed
+  run("impl-c", "status=killed rc=137\n");
+  try {
+    const rs = collectRuns(ws, 30);
+    assert.deepEqual(rs.map((r) => [r.name, r.timed]).sort(), [["impl-a", true], ["impl-b", false], ["impl-c", false]]);
+    const a = rs.find((r) => r.name === "impl-a")!;
+    assert.ok(a.secs >= 110 && a.secs <= 130, `${a.secs}`); // the first turn, not the next day's
+    assert.equal(rows(rs)[0].min, 2);
+  } finally { rmSync(ws, { recursive: true, force: true }); }
 });
