@@ -1,5 +1,5 @@
 // Stop processes whose current working directory is inside a worktree before git removes its files.
-import { readFileSync, readdirSync, readlinkSync } from "node:fs";
+import { readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 
 function inside(dir: string, path: string): boolean {
@@ -10,7 +10,9 @@ function inside(dir: string, path: string): boolean {
 /** Processes whose cwd is under `dir`; other platforms skip this check. */
 export function worktreeProcesses(dir: string): number[] {
   if (process.platform !== "linux") return [];
-  const root = resolve(dir), pids: number[] = [];
+  let root: string;
+  try { root = realpathSync(dir); } catch { root = resolve(dir); }
+  const pids: number[] = [];
   let entries: string[];
   try { entries = readdirSync("/proc"); } catch { return []; }
   for (const entry of entries) {

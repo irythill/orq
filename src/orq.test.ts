@@ -182,14 +182,23 @@ console.log(/--head work\\/plane-merged .*--state merged/.test(a) ? '[{"number":
   if (process.platform === "linux") {
     child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { cwd: squash.path, stdio: "ignore" });
     await new Promise<void>((resolve, reject) => { child!.once("spawn", resolve); child!.once("error", reject); });
-    const preview = run("gc", "-w", ws, "--json");
-    assert.match((JSON.parse(preview.stdout) as { branch: string; reason: string }[]).find((r) => r.branch === squash.branch)!.reason, new RegExp(String(child.pid)));
   }
-  const removed = run("gc", "-w", ws, "--yes", "--json"); assert.equal(removed.status, 0, removed.stderr);
-  if (child) { await new Promise<void>((resolve) => child!.once("exit", () => resolve())); assert.match((JSON.parse(removed.stdout) as { branch: string; reason: string }[]).find((r) => r.branch === squash.branch)!.reason, new RegExp(String(child.pid))); }
-  assert.equal(existsSync(squash.path), false); assert.equal(existsSync(merged.path), false);
-  assert.equal(git(repo, "branch", "--list", squash.branch), ""); assert.equal(git(repo, "branch", "--list", merged.branch), "");
-  assert.equal(existsSync(dirty.path), true); assert.equal(existsSync(unpushed.path), true); assert.equal(existsSync(stale.path), true);
+  try {
+    if (child) {
+      const preview = run("gc", "-w", ws, "--json");
+      assert.match((JSON.parse(preview.stdout) as { branch: string; reason: string }[]).find((r) => r.branch === squash.branch)!.reason, new RegExp(String(child.pid)));
+    }
+    const removed = run("gc", "-w", ws, "--yes", "--json"); assert.equal(removed.status, 0, removed.stderr);
+    if (child) {
+      if (child.exitCode === null && child.signalCode === null) await new Promise<void>((resolve) => child!.once("exit", () => resolve()));
+      assert.match((JSON.parse(removed.stdout) as { branch: string; reason: string }[]).find((r) => r.branch === squash.branch)!.reason, new RegExp(String(child.pid)));
+    }
+    assert.equal(existsSync(squash.path), false); assert.equal(existsSync(merged.path), false);
+    assert.equal(git(repo, "branch", "--list", squash.branch), ""); assert.equal(git(repo, "branch", "--list", merged.branch), "");
+    assert.equal(existsSync(dirty.path), true); assert.equal(existsSync(unpushed.path), true); assert.equal(existsSync(stale.path), true);
+  } finally {
+    child?.kill("SIGKILL");
+  }
 });
 
 test("issueFromName: <PROJ>-<N> with any trailing suffix ignored", () => {
