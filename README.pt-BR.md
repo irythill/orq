@@ -138,7 +138,7 @@ roles  = ["impl", "fix", "review"]
 quota  = ["codex"]                       # name in agent-quota's output
 [agents.codex.models.impl]
 simple = "gpt-6-sol@low"                 # model@effort, per issue level
-medium = "gpt-6-sol@medium"
+medium = ["gpt-6-sol@medium", "gpt-6-luna@medium"]  # several: each (agent, model) pair is scored on its own history
 heavy  = "gpt-6.1-sol@high"
 [agents.codex.models.review]
 simple  = "gpt-6-sol@low"                # reviews scale with the issue too

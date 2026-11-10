@@ -745,6 +745,28 @@ test("pick: priors blend with few observations and exploration is bounded", asyn
   assert.match(streak.cands.find((x) => x.agent === "c")!.why, /explore capped\(2x\)/);
 });
 
+test("pick: a level listing several models scores each (agent, model) pair on its own stats (#103)", async () => {
+  const { pick, modelFor, modelsFor } = await import("./pick.js");
+  const agents = { codex: { models: { impl: { medium: ["luna@medium", "sol@medium"] } } } };
+  assert.deepEqual(modelsFor(agents.codex, "impl", "medium"), [["luna", "medium"], ["sol", "medium"]]);
+  assert.deepEqual(modelFor(agents.codex, "impl", "medium"), ["luna", "medium"]);
+  const row = (model: string, n: number, approved: number) =>
+    ({ role: "impl", agent: "codex", model, n, ok: 90, approved, n_appr: n, min: 10, new: 1_000_000, tot: 1_000_000 });
+  const base = { level: "medium", exclude: new Set<string>(), blocks: new Set<string>(), quota: {}, recent: [] };
+  const r = pick({ ...base, cfg: { agents, roles: { primary: { pool: ["codex"] } } }, role: "impl",
+    stats: [row("luna", 28, 18), row("sol", 7, 86)] });
+  assert.deepEqual(r.cands.map((c) => c.model), ["sol", "luna"]);
+  assert.match(r.cands[0].why, /explore=/); // n=7 < min_samples: still explored
+  // a fixed role takes the first model, unscored
+  const f = pick({ ...base, cfg: { agents, roles: { primary: { agent: "codex" } } }, role: "impl", stats: [] });
+  assert.deepEqual(f.cands.map((c) => c.model), ["luna"]);
+  // the explore streak is per pair: two luna picks don't cap sol
+  const s = pick({ ...base, cfg: { agents, roles: { primary: { pool: ["codex"] } } }, role: "impl", stats: [],
+    recent: [{ agent: "codex", model: "luna" }, { agent: "codex", model: "luna" }] });
+  assert.match(s.cands.find((c) => c.model === "luna")!.why, /explore capped/);
+  assert.doesNotMatch(s.cands.find((c) => c.model === "sol")!.why, /explore capped/);
+});
+
 test("pick: an out-of-quota account's note says when it comes back", async () => {
   const { pick, parseQuota, parseWindows } = await import("./pick.js");
   const agents = { codex: { quota: ["codex"], models: { impl: { default: "gpt-6-sol@low" } } } };
