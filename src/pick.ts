@@ -285,7 +285,7 @@ export function pick(inp: PickInput): PickResult {
     return use.length ? Math.min(...use.map((x) => x.v)) : undefined;
   };
   const refTok = best(pass.filter((c) => c.st?.new).map((c) => ({ v: c.st!.new!, solid: !few(c.st) })));
-  const refMin = best(pass.filter((c) => c.st?.min).map((c) => ({ v: Math.max(c.st!.min, 0.1), solid: !few(c.st) })));
+  const refMin = best(pass.filter((c) => c.st?.min).map((c) => ({ v: Math.max(c.st!.min!, 0.1), solid: !few(c.st) })));
   const axis = (label: string, prior: number, obs: number | undefined, n: number) => {
     const v = blend(prior, obs, n);
     return { v, txt: `${label}=${v.toFixed(2)}` + (obs === undefined ? "" : `(${prior.toFixed(2)}→${obs.toFixed(2)})`) };
