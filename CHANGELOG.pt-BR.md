@@ -35,6 +35,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
 - `orq stats` nomeia todo agente e modelo: pelo argv do job, depois o pick, depois o log (ferramentas de review rodadas como CLI não aparecem mais como `?`; um `-m` dentro do prompt não vira mais o modelo; o modelo da tela do opencode vem da config dele). O tempo de uma execução em tela para no primeiro turno (`<prefixo>.turns`), então uma tela esquecida aberta não infla mais; execuções mortas e telas antigas ficam fora da mediana de tempo (`-`). Os tokens do opencode voltam a ser contados no formato novo de eventos (#59).
 - `orq pick` pula um agente cuja CLI não está no PATH (ex.: instalada sob outra versão do Node), com dica para reinstalar, em vez de falhar depois do despacho (#77).
 - Vários conductors no mesmo workspace ganham nomes de sessão distintos, `conductor-<workspace>:<label do herdr ou ORQ_CONDUCTOR_ID>`, para poderem se endereçar; `orq claim -l` termina cada linha com esse `session=` (#79).
+- `orq gc` e a limpeza de worktrees temporárias de teste encerram processos Linux cujo cwd está dentro da worktree
+  (SIGTERM e, após cinco segundos, SIGKILL) antes de remover os arquivos; a simulação lista os PIDs que seriam encerrados.
 - `orq agent -T` com Codex às vezes nunca sinalizava o fim do turno (#62): um `.id` deixado no prefixo por uma execução
   anterior (outro agente ou sessão) fazia o `--turn codex` descartar todo turno real como thread paralela. Um novo
   lançamento agora o apaga (`-R` grava a sessão retomada). No herdr, um turno cujo hook ainda não dispara (tela vista

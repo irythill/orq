@@ -14,6 +14,7 @@ import { acquire, release } from "./lock.js";
 import { handoffFile, notify } from "./notice.js";
 import { killTree, type MemMode, parseSize, runCapped } from "./process.js";
 import { closeOwnTab, detectHost, type Host, launch } from "./terminal.js";
+import { stopWorktreeProcesses } from "./worktree-processes.js";
 
 export type Runner = "jest" | "vitest";
 export const JS_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/;
@@ -102,6 +103,7 @@ export function linkModules(from: string, to: string): void {
  * (and must never walk into the main clone's node_modules through it).
  */
 export function dropWorktree(repo: string, dir: string): void {
+  stopWorktreeProcesses(dir);
   const nm = join(dir, "node_modules");
   try { if (lstatSync(nm).isSymbolicLink() || process.platform === "win32") unlinkSync(nm); } catch { try { rmdirSync(nm); } catch { /* none */ } }
   if (git(repo, "worktree", "remove", "--force", dir) === undefined && existsSync(dir)) {
