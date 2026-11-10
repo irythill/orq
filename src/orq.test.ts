@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { merge } from "./config.js";
@@ -2590,7 +2590,10 @@ test("pick review --base: resolves the commit from the workspace root, not the b
   git(ws, "init", "-q"); git(ws, "commit", "-q", "--allow-empty", "-m", "x");
   const sha = git(ws, "rev-parse", "HEAD").stdout.trim();
   mkdirSync(other); git(other, "init", "-q"); git(other, "commit", "-q", "--allow-empty", "-m", "y");
-  const r = spawnSync(process.execPath, [CLI, "pick", "review", "--base", sha, "--no-record"], { env, cwd: other, encoding: "utf8" });
+  const bin = join(root, "bin");
+  mkdirSync(bin); writeFileSync(join(bin, "revtool"), "#!/bin/sh\n", { mode: 0o755 });
+  const r = spawnSync(process.execPath, [CLI, "pick", "review", "--base", sha, "--no-record"],
+    { env: { ...env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }, cwd: other, encoding: "utf8" });
   assert.equal(r.status, 3, r.stderr);
   assert.match(r.stderr, /revtool: can't review a commit base/);
 });
@@ -2764,4 +2767,25 @@ test("writeAtomic: creates parent directories, writes UTF-8, overwrites existing
     assert.equal(readFileSync(file, "utf8"), "overwritten\n");
     assert.deepEqual(readdirSync(dir), ["data.txt"]);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("pick: an agent whose CLI doesn't resolve is out, with a reinstall hint (#77)", async () => {
+  const { missingBinary } = await import("./agents.js");
+  const dir = mkdtempSync(join(tmpdir(), "orq-bin-"));
+  writeFileSync(join(dir, "acme"), "#!/bin/sh\n", { mode: 0o755 });
+  const cfg = { agents: { acme: { run: "acme -p {prompt_text}" }, gone: { run: "gone-cli -p {prompt_text}" },
+    abs: { run: `${join(dir, "acme")} -p` } } };
+  const path = process.env.PATH;
+  process.env.PATH = dir;
+  try {
+    assert.equal(missingBinary(cfg, "acme"), undefined);
+    assert.equal(missingBinary(cfg, "abs"), undefined);
+    assert.match(missingBinary(cfg, "gone") ?? "", /gone-cli.*(reinstall|reinstale)/);
+    assert.equal(missingBinary(cfg, "nope"), undefined); // undeclared: pick reports it elsewhere
+  } finally { process.env.PATH = path; rmSync(dir, { recursive: true, force: true }); }
+  const agents = { a: { models: { impl: { default: "ma" } } }, b: { models: { impl: { default: "mb" } } } };
+  const r = pickAgent({ cfg: { agents, roles: { primary: { agent: "a", fallback: ["b"] } } }, role: "impl", level: "medium",
+    exclude: new Set(), stats: [], quota: {}, blocks: new Set(), recent: [], missing: new Map([["a", "`a` not found on PATH"]]) });
+  assert.equal(r.best?.agent, "b");
+  assert.deepEqual(r.notes, ["a: `a` not found on PATH"]);
 });

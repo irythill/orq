@@ -9,8 +9,9 @@
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir, totalmem } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { onPath } from "../agents.js";
 import { writeAtomic } from "../fsutil.js";
 import { banner, infoLines } from "../banner.js";
 import { getPath, loadConfig } from "../config.js";
@@ -31,11 +32,6 @@ const CLIS: Record<string, { bin: string; test: string }> = {
   copilot: { bin: "copilot", test: 'copilot -p "reply ok" -s' },
 };
 
-/** Is `bin` on PATH? (PATHEXT on Windows: claude.cmd, codex.exe…) */
-export function onPath(bin: string): boolean {
-  const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
-  return (process.env.PATH ?? "").split(delimiter).some((d) => d && exts.some((e) => existsSync(join(d, bin + e))));
-}
 
 export const detect = () => Object.keys(CLIS).filter((n) => onPath(CLIS[n].bin));
 

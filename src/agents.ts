@@ -29,6 +29,8 @@
 // stdin), codex (notify JSON as the last argument), opencode (<session id> <answer file>, from orq's plugin) or text
 // (the answer on stdin, the session id as an argument).
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import type { Obj } from "./config.js";
 import { m } from "./i18n.js";
 
@@ -159,6 +161,22 @@ export function agentDef(cfg: Obj, name: string): AgentDef {
     throw new Error(m(`unknown agent: ${name} (built in: ${Object.keys(BUILTIN_AGENTS).join(", ")}; others need agents.${name}.run in the config)`,
       `agente desconhecido: ${name} (embutidos: ${Object.keys(BUILTIN_AGENTS).join(", ")}; outros precisam de agents.${name}.run no config)`));
   return def;
+}
+
+/** Is `bin` on PATH? (PATHEXT on Windows: claude.cmd, codex.exe…) A path (with a slash) must exist itself. */
+export function onPath(bin: string): boolean {
+  if (/[\\/]/.test(bin)) return existsSync(bin);
+  const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
+  return (process.env.PATH ?? "").split(delimiter).some((d) => d && exts.some((e) => existsSync(join(d, bin + e))));
+}
+
+/** Why `name` can't start here (its CLI doesn't resolve on the PATH the child inherits), or undefined when it can. */
+export function missingBinary(cfg: Obj, name: string): string | undefined {
+  let bin: string | undefined;
+  try { bin = tokenize(agentDef(cfg, name).run)[0]?.text; } catch { return undefined; }
+  if (!bin || onPath(bin)) return undefined;
+  return m(`\`${bin}\` not found on PATH (installed for another Node version? reinstall it)`,
+    `\`${bin}\` não está no PATH (instalado para outra versão do Node? reinstale)`);
 }
 
 export type Vars = Record<string, string | string[] | undefined>;
