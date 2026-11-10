@@ -21,6 +21,11 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   and 26.
 
 ### Fixed
+- `orq agent -T` with Codex sometimes never signalled the end of a turn (#62): a `.id` left on the prefix by an earlier
+  run (another agent or session) made `--turn codex` drop every real turn as a side thread. A new launch now clears it
+  (`-R` writes the resumed session). On herdr, a turn whose hook still doesn't fire (screen seen busy, then idle for
+  60 s, `.done` not rewritten) is signalled by the runner as `status=fail reason=no-hook`, with the screen's last lines
+  as the answer.
 - `policy.max_rounds` counts only review rounds: `orq agent -R --reason verify|unblock` (default `review`) neither
   counts nor is refused; every follow-up goes to `.rounds-<session>.log` and `orq rounds` shows them per reason. The
   round is counted at launch, so a dispatch refused later costs none. `/issue` names verify fixes `verify-fix-<n>.md` (#75).
