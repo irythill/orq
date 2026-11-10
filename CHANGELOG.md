@@ -5,6 +5,8 @@ What changed in orq, newest first. Dates are when it landed on `main`. Format in
 Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
+
+## [0.8.0] — 2026-11-10
 ### Added
 - `orq pick` scores (agent, model) pairs: a level in `models.<role>` may list several candidate models (`medium = ["a@medium", "b@medium"]`; a string stays valid). Each pair is scored on its own stats row, with its own exploration and per-model quota check; `--explain` shows one line per pair. Fixed roles take the first model (#103).
 
