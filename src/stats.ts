@@ -24,7 +24,7 @@ export interface Row {
 const ROLE = /^(impl|fix\d*|review\d*|[a-z]+-review\d*|watchdog\d*)-?/;
 const read = (f: string) => { try { return readFileSync(f, "utf8"); } catch { return ""; } };
 
-const BINS = /^(codex|claude|opencode|agy|copilot|corvus)$/;
+const BINS = /^(codex|claude|opencode|agy|copilot)$/;
 
 /** The model a log says was used: Claude's init event, Codex's banner, opencode's step events. */
 function logModel(log: string): string | undefined {

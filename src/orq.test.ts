@@ -2796,7 +2796,7 @@ test("pick: an agent whose CLI doesn't resolve is out, with a reinstall hint (#7
 test("stats: agent and model always named; screen runs time to the first turn (#59)", async () => {
   const { agentModel, collectRuns, rows } = await import("./stats.js");
   // A review tool from the job: named, model "-"; a prompt's "-m 'feat(ui): …'" is never the model.
-  assert.deepEqual(agentModel("", "", { agent: "corvus", argv: ["corvus", "--markdown", "-b", "dev"] }), ["corvus", "-"]);
+  assert.deepEqual(agentModel("", "", { agent: "revtool", argv: ["revtool", "--markdown", "-b", "dev"] }), ["revtool", "-"]);
   assert.deepEqual(agentModel("", "", { agent: "opencode", argv: ["opencode", "run", "-m", "minimax/MiniMax-M3", "git commit -m \"feat(ui): x\""] }),
     ["opencode", "MiniMax-M3"]);
   // opencode's screen: the model is in its config env; the pick only counts when it names the same agent.

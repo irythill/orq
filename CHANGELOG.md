@@ -21,7 +21,7 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
   and 26.
 
 ### Fixed
-- `orq stats` names every agent and model: from the job's argv, then the pick, then the log (review tools like corvus/copilot no longer show as `?`; a `-m` inside a prompt is no longer read as the model; opencode's screen model comes from its config). Time on a screen run stops at the first turn (`<prefix>.turns`), so a screen left open no longer inflates it; killed runs and older screen runs are left out of the time median (`-`). opencode tokens are counted again on its newer event format (#59).
+- `orq stats` names every agent and model: from the job's argv, then the pick, then the log (review tools run as plain CLIs no longer show as `?`; a `-m` inside a prompt is no longer read as the model; opencode's screen model comes from its config). Time on a screen run stops at the first turn (`<prefix>.turns`), so a screen left open no longer inflates it; killed runs and older screen runs are left out of the time median (`-`). opencode tokens are counted again on its newer event format (#59).
 - `orq pick` skips an agent whose CLI doesn't resolve on PATH (e.g. installed under another Node version), with a reinstall hint, instead of failing after dispatch (#77).
 - Several conductors on one workspace get distinct session names, `conductor-<workspace>:<herdr label or ORQ_CONDUCTOR_ID>`, so they can address each other; `orq claim -l` ends each line with that `session=` (#79).
 - `orq agent -T` with Codex sometimes never signalled the end of a turn (#62): a `.id` left on the prefix by an earlier
