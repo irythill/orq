@@ -2992,3 +2992,44 @@ test("release: version from conventional commits; check wants package, lock and 
   const bad = problems("0.7.0", { ...ok, pkg: { version: "0.6.1" }, pt: log("0.6.1", "### Fixed\n- y\n") });
   assert.equal(bad.length, 3, bad.join("\n"));
 });
+
+test("harness: wait strategy follows capabilities, not background-process support (#119)", async () => {
+  const { capabilities, strategy, strategyText, loopTimeout } = await import("./harness.js");
+  // native completion-triggered task
+  assert.equal(strategy(capabilities("claude")), "background-task");
+  // background processes without wake-up
+  const bgNoWake = capabilities("codex", { agents: { codex: { conductor: { capabilities: { background: true } } } } });
+  assert.equal(bgNoWake.background, true);
+  assert.equal(strategy(bgNoWake), "foreground-loop");
+  // foreground-only, custom limit
+  const fg = capabilities("mine", { agents: { mine: { conductor: { capabilities: { foreground_timeout: 100 } } } } });
+  assert.equal(strategy(fg), "foreground-loop");
+  assert.equal(loopTimeout(fg), 70);
+  // external delivery unavailable outside herdr, available inside
+  assert.equal(capabilities("codex", {}, {}).promptDelivery, false);
+  assert.equal(capabilities("codex", {}, { HERDR_ENV: "1" }).promptDelivery, true);
+  // unknown harness never promises a wake-up
+  const t = strategyText("x", capabilities("x"));
+  assert.match(t, /foreground loop/);
+  assert.match(t, /--timeout 210/);
+  assert.match(t, /never dispatch the same child again/);
+  assert.match(t, /will \*\*not\*\* continue by yourself/);
+  assert.match(strategyText("claude", capabilities("claude")), /background task.*end your\nturn/s);
+});
+
+test("instructions: strategy diagnostics and per-conductor AGENTS.md block (#119)", () => {
+  const { root, run } = sandbox();
+  const ws = join(root, "ws");
+  mkdirSync(ws, { recursive: true });
+  const j = JSON.parse(run("instructions", "strategy", "-w", ws, "--conductor", "codex", "--json").stdout);
+  assert.equal(j.strategy, "foreground-loop");
+  assert.equal(j.fallback, "none");
+  assert.equal(JSON.parse(run("instructions", "strategy", "-w", ws, "--conductor", "claude", "--json").stdout).strategy, "background-task");
+  assert.equal(run("instructions", "agents", "-w", ws, "--conductor", "codex").status, 0);
+  const a = readFileSync(join(ws, "AGENTS.md"), "utf8");
+  assert.match(a, /Waiting strategy: foreground loop \(codex\)/);
+  assert.doesNotMatch(a, /Waiting strategy: background task/);
+  // without --conductor, a Claude default must not leak the background wake-up into AGENTS.md
+  assert.equal(run("instructions", "agents", "-w", ws).status, 0);
+  assert.doesNotMatch(readFileSync(join(ws, "AGENTS.md"), "utf8"), /Waiting strategy: background task/);
+});

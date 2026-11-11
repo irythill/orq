@@ -7,6 +7,7 @@ English: [CHANGELOG.md](CHANGELOG.md).
 ## [Unreleased]
 
 ### Adicionado
+- Estratégia de espera/retomada do conductor pela capacidade do harness: só um harness cuja tarefa em background, ao terminar, inicia um novo turno (Claude Code) encerra o turno após o dispatch; Codex, OpenCode, Copilot, Antigravity e harnesses desconhecidos ficam ativos num loop `orq wait --any --timeout` e nunca redisparam por timeout. As instruções do conductor e o bloco do AGENTS.md trazem a estratégia escolhida; `orq instructions strategy [--conductor <agente>] [--json]` a mostra; `agents.<agente>.conductor.capabilities` a ajusta (#119).
 - Qualquer CLI de agente configurada pode conduzir: `orq conductor [agente] [conta|-] [modelo]`, com templates interativos de abertura/retomada, aliases de modelos e ambientes de conta por agente. O setup grava a escolha, migra o mapa do workspace para `ORQ.md` sem sobrescrever instruções próprias e fornece o playbook para Codex e outros conductors. Reserva e `[conductor].headroom` opcional acompanham o conductor ativo; os comandos antigos do Claude continuam funcionando (#67).
 
 ## [0.8.0] — 2026-11-10

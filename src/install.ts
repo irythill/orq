@@ -11,8 +11,9 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "./accounts.js";
-import { type Obj } from "./config.js";
+import { loadConfig, type Obj } from "./config.js";
 import { writeAtomic } from "./fsutil.js";
+import { capabilities, strategyText } from "./harness.js";
 import { m } from "./i18n.js";
 import { backend } from "./keyring.js";
 import { hasKernelCap } from "./process.js";
@@ -61,7 +62,7 @@ export function installSkills(roots = skillRoots()): string[] {
 }
 
 /** Prepare a conductor's workspace folder; `fmt` = claude (SKILL.md) | agents (AGENTS.md). */
-export function prepareWorkspace(dir: string, fmt: "claude" | "agents", name = basename(resolve(dir))): string[] {
+export function prepareWorkspace(dir: string, fmt: "claude" | "agents", name = basename(resolve(dir)), conductor = fmt === "claude" ? "claude" : "unknown"): string[] {
   const ws = resolve(dir), out: string[] = [];
   for (const d of [".orquestra", ".worktrees"]) mkdirSync(join(ws, d), { recursive: true });
   const map = join(ws, "ORQ.md"), legacy = join(ws, "CLAUDE.md");
@@ -76,10 +77,14 @@ export function prepareWorkspace(dir: string, fmt: "claude" | "agents", name = b
   // The conductor's instructions (what `orq conductor` looks for): regenerated on every run.
   const ci = join(ws, ".orquestra-conductor.md");
   const t = readFileSync(join(PKG, "templates", "conductor.instructions.md"), "utf8");
-  writeAtomic(ci, t.split("{{WORKSPACE}}").join(ws).split("{{NAME}}").join(name));
+  let cfg: Obj = {};
+  try { cfg = loadConfig(ws).cfg; } catch { /* no config yet */ }
+  const waiting = strategyText(conductor, capabilities(conductor, cfg, process.env));
+  writeAtomic(ci, t.split("{{WORKSPACE}}").join(ws).split("{{NAME}}").join(name).split("{{WAIT_STRATEGY}}").join(waiting));
   out.push(`  ${m("wrote", "escrevi")}   ${ci}`);
   for (const format of fmt === "claude" ? ["agents", "claude"] : ["agents"]) {
-    const r = spawnSync(process.execPath, [join(PKG, "dist", "cli.js"), "instructions", format, "-w", ws], { encoding: "utf8" });
+    const r = spawnSync(process.execPath, [join(PKG, "dist", "cli.js"), "instructions", format, "-w", ws,
+      ...(format === "agents" && conductor !== "claude" && conductor !== "unknown" ? ["--conductor", conductor] : [])], { encoding: "utf8" });
     if (r.status !== 0) throw new Error(r.stderr || `orq instructions ${format} failed`);
     out.push(`  ${r.stdout.trim()}`);
   }
