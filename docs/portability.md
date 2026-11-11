@@ -89,11 +89,11 @@ The current `agents.<name>.roles = [...]` format keeps working: it is read as `a
 the role in its pool.
 
 ### Notifier — telling the conductor a child finished
-Children already run headless, so the only thing that tied orq to herdr was the notice typed into the conductor's pane.
-- **`orq wait <prefix>`** (default, any conductor): blocks until `.done`, prints the summary. `orq status --json` for
-  conductors that prefer polling.
-- **herdr**: the `[ORQ AGENT DONE]` line in the conductor's pane, as today.
-- **Claude Code**: run `orq wait` as a background task, which wakes the conductor when it exits.
+`orq wait <prefix>` observes the existing protocol files and prints completion. Execution in the background does
+not itself establish a conversation wake-up channel. `orq wait --strategy --json` resolves explicitly declared
+harness capabilities independently of agent, OS and terminal. It defaults to bounded foreground waiting in the
+active turn; native task completion and external prompt delivery require a verified, armed channel before turn end.
+A harness with neither mechanism reports manual recovery. See [continuation contract](conductor-continuation.md).
 
 ### Conductor instructions — one source, several formats
 One generic instruction text (the `/issue` flow, protocol, rules). `orq setup` writes it in the chosen conductor's

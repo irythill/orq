@@ -2309,6 +2309,101 @@ test("orq wait --timeout returns 124 while the agent has not finished", () => {
   assert.equal(r.status, 124);
 });
 
+test("wait strategy: background processes, agent names and terminal markers never imply wake-up", async () => {
+  const { waitStrategy } = await import("./conductor-wait.js");
+  const cfg = (c: unknown) => ({ conductor: { capabilities: c } });
+  for (const agent of ["claude", "codex", "custom"]) {
+    const s = waitStrategy({ roles: { conductor: { agent } } }, { HERDR_PANE_ID: "p1", TMUX: "yes" });
+    assert.equal(s.mode, "foreground");
+    assert.equal(s.can_end_turn, false);
+  }
+  assert.equal(waitStrategy(cfg({ background: true }), {}).mode, "foreground");
+  assert.equal(waitStrategy(cfg({ completion_wakeup: true }), {}).mode, "foreground");
+  const native = waitStrategy(cfg({ background: true, completion_wakeup: true }), {});
+  assert.equal(native.mode, "native");
+  assert.equal(native.can_end_turn, true);
+  assert.match(native.reason, /arm/);
+  const external = waitStrategy(cfg({ external_prompt: true, foreground_wait: false }), {});
+  assert.equal(external.mode, "external");
+  assert.match(external.reason, /establish delivery/);
+  assert.equal(waitStrategy(cfg({ background: true, foreground_wait: false }), {}).mode, "manual");
+  const fallback = waitStrategy(cfg({ external_prompt: true, background: true, completion_wakeup: true }), {
+    ORQ_HARNESS_CAPABILITIES: '{"external_prompt":false,"completion_wakeup":false}',
+  });
+  assert.equal(fallback.mode, "foreground");
+  assert.equal(fallback.source, "environment");
+  for (const invalid of [null, [], { background: "true" }, { completions: true }]) {
+    assert.throws(() => waitStrategy(cfg(invalid), {}), /capabilit/);
+  }
+  assert.throws(() => waitStrategy({}, { ORQ_HARNESS_CAPABILITIES: "{" }), /valid JSON/);
+  assert.throws(() => waitStrategy({}, { ORQ_HARNESS_CAPABILITIES: "null" }), /capabilit/);
+});
+
+test("orq wait --strategy: read-only diagnostics honor workspace configuration and runtime overrides", () => {
+  const { root, env, run } = sandbox();
+  delete (env as NodeJS.ProcessEnv).ORQ_HARNESS_CAPABILITIES;
+  const dir = join(root, ".orq"); mkdirSync(dir);
+  writeFileSync(join(dir, "workspace.toml"), "[conductor.capabilities]\nbackground = true\ncompletion_wakeup = true\n");
+  const before = readdirSync(root);
+  const native = run("wait", "--strategy", "--json");
+  assert.equal(native.status, 0, native.stderr);
+  assert.equal(JSON.parse(native.stdout).mode, "native");
+  assert.match(run("wait", "--strategy").stdout, /^native \(config\)/);
+  (env as NodeJS.ProcessEnv).ORQ_HARNESS_CAPABILITIES = '{"completion_wakeup":false}';
+  const fallback = JSON.parse(run("wait", "--strategy", "--json").stdout);
+  assert.equal(fallback.mode, "foreground");
+  assert.equal(fallback.source, "environment");
+  assert.deepEqual(readdirSync(root), before);
+  assert.equal(run("wait", "--strategy", "a-child").status, 2);
+  assert.equal(run("wait", "--json", "a-child").status, 2);
+  for (const timeout of ["-1", "Infinity", "NaN"]) assert.equal(run("wait", "--timeout", timeout, "a-child").status, 2);
+});
+
+test("conductor playbooks: all formats retain one continuation contract without unconditional turn end", () => {
+  const { root, run } = sandbox();
+  assert.equal(run("setup", "--workspace", root, "--conductor", "codex").status, 0);
+  assert.equal(run("instructions", "claude", "-w", root).status, 0);
+  const files = [join(root, "AGENTS.md"), join(root, ".claude", "skills", "issue", "SKILL.md"), join(root, ".orquestra-conductor.md")];
+  for (const file of files) {
+    const text = readFileSync(file, "utf8");
+    assert.match(text, /orq wait --strategy --json/);
+    assert.match(text, /--any --timeout 30/);
+    assert.match(text, /124/);
+    assert.doesNotMatch(text, /report in one line and end|end your turn until then|Never block waiting|its exit wakes you/);
+  }
+});
+
+test("foreground harness: timeout re-arms existing children, then consumes each result once without user input", async () => {
+  const { root, env, run } = sandbox();
+  delete (env as NodeJS.ProcessEnv).ORQ_HARNESS_CAPABILITIES;
+  assert.equal(JSON.parse(run("wait", "--strategy", "--json").stdout).mode, "foreground");
+  const prefixes = [join(root, "impl"), join(root, "other")];
+  assert.equal(run("wait", "--any", "--timeout", "0.01", ...prefixes).status, 124);
+  for (const [i, prefix] of prefixes.entries()) {
+    writeFileSync(`${prefix}.done`, `status=${i ? "fail" : "ok"} rc=${i}\n`);
+    writeFileSync(`${prefix}.out.md`, i ? "failure details" : "implementation ready");
+  }
+  const seen: string[] = [];
+  while (prefixes.length) {
+    const r = run("wait", "--any", "--timeout", "1", "--answer", ...prefixes);
+    assert.equal(r.status, seen.length ? 1 : 0);
+    assert.equal(r.stdout.split("[ORQ AGENT DONE]").length, 2);
+    const prefix = prefixes.shift()!;
+    assert.ok(r.stdout.includes(`${prefix}.out.md`));
+    seen.push(prefix);
+  }
+  assert.equal(new Set(seen).size, 2);
+  for (const phase of ["verify", "review"]) {
+    const prefix = join(root, phase);
+    const producer = spawn(process.execPath, ["-e", "setTimeout(() => require('node:fs').writeFileSync(process.argv[1], 'status=ok rc=0'), 100)", `${prefix}.done`], { env, stdio: "ignore" });
+    const finished = new Promise<number | null>((resolve, reject) => { producer.once("exit", resolve); producer.once("error", reject); });
+    const result = run("wait", "--any", "--timeout", "5", prefix);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(await finished, 0);
+  }
+  assert.deepEqual(readdirSync(root).filter((f) => f.endsWith(".job.json")), []);
+});
+
 test("watchdog pool: built-ins declared without run stay in; unknown agents without run drop out", () => {
   const ag = { claude: { roles: ["watchdog"], models: { watchdog: { default: "m" } } }, mytool: { vendor: "v2", roles: ["watchdog"] } };
   const r = pickAgent({ cfg: { agents: ag }, role: "watchdog", level: "simple", implVendor: "v1", exclude: new Set(), stats: [], quota: {}, blocks: new Set(), recent: [] });

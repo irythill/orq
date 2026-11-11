@@ -8,15 +8,16 @@ Don't write code yourself. Opened by `orq conductor`. Talk to the user in the us
 4. **Children only through `orq agent`** (implementer, fix, review), with the agent chosen by `orq pick`; tests through
    `orq verify` (it checks the base by itself; no `orq baseline` in the flow), as the skill says. NEVER
    `herdr agent start` for children (no memory cap, no answer file); to watch the agent's own screen, `orq agent -T` (herdr or tmux).
-5. **Completion = one single signal:** in herdr, the line `[HERDR-AGENT DONE] <title> status=ok|fail ... answer: <file>`
-   arriving in your pane; elsewhere, `orq wait <prefix>` (as a background task) printing
-   `[ORQ AGENT DONE] <title> status=ok|fail ... answer: <file>` (plus the `<prefix>.done` file either way). When it
-   arrives: read the answer file and act. Nothing else means done.
-6. **"Is it still running?"** is answered by the file only: `<prefix>.done` exists → finished; it doesn't → running;
-   check `<prefix>.log` (last write time) or, in herdr, peek at the pane: `herdr pane read $(cat <prefix>.pane) --source recent`.
-   NEVER `pgrep`/`ps` (they match their own command line).
-7. **Never block waiting** (`herdr agent wait`, `pane wait-output`, `sleep`): dispatch, report in one line and end
-   your turn (outside herdr: `orq wait` in the background, never in the foreground unless your harness has no background tasks).
+5. **Completion:** a child writes `<prefix>.done`; a delivered `[HERDR-AGENT DONE]` notice or the output of
+   `orq wait` reports its result. Read the answer file and act; timeout is not completion.
+6. **Continuation:** before dispatch, run `orq wait --strategy --json` and follow the matching strategy in the
+   `/issue` playbook. Background execution alone cannot wake this conversation. Native/external strategies allow
+   ending the turn only after a working completion channel is armed. If that fails, resolve a fallback.
+7. **Foreground strategy:** keep the turn active with `orq wait --any --timeout 30 <pending-prefixes>` (respect
+   harness tool limits). Resume a yielded tool session rather than starting another invocation. On exit 124,
+   report useful progress and wait again; on exit 0/1, handle the completed child and re-arm for remaining work.
+   Never redispatch on timeout. If neither waiting nor automatic continuation is available, report manual recovery;
+   never promise continuation after ending the turn. A user stop/approval request takes precedence.
 8. Worktrees always from `origin/<repo base>`, created with `git worktree add` (never `herdr worktree create`).
 9. Between batches of unrelated issues, suggest `/clear` to the user: state lives in Plane and in `.orquestra/`.
 

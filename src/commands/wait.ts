@@ -1,15 +1,18 @@
 // orq wait — Notifier for any conductor: block until children started by `orq agent` (or orq verify/baseline) write
 // <prefix>.done, then print one line each: "[ORQ AGENT DONE] <title> status=ok rc=0 ... answer: <file>".
 // Exit 0 = all ok, 1 = some failed (or its runner died without .done), 124 = timeout. With --any, returns at the first.
-// Claude Code: run it as a background task; it wakes the conductor when it exits.
+// Continuation depends on harness capabilities; --strategy diagnoses the contract without waiting.
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { m } from "../i18n.js";
 import { alive } from "../lock.js";
 import { ackPrefix } from "../notice.js";
 import { doneStatus } from "../process.js";
+import { loadConfig } from "../config.js";
+import { waitStrategy } from "../conductor-wait.js";
 
-export const USAGE = "orq wait [--any] [--timeout <s>] [--answer] <prefix>...   block until child agents finish (exit 1 = one failed)";
+export const USAGE = `orq wait [--any] [--timeout <s>] [--answer] <prefix>...   block until child agents finish (exit 1 = one failed)
+orq wait --strategy [--json]   diagnose how this harness should wait and resume (read only)`;
 
 const read = (f: string) => { try { return readFileSync(f, "utf8"); } catch { return undefined; } };
 
@@ -30,6 +33,12 @@ export function doneLine(prefix: string): { line: string; ok: boolean } | undefi
 }
 
 export async function wait(argv: string[]): Promise<number> {
+  if (argv.includes("--strategy")) {
+    if (argv.some((a) => a !== "--strategy" && a !== "--json")) { console.error(USAGE); return 2; }
+    const strategy = waitStrategy(loadConfig().cfg);
+    console.log(argv.includes("--json") ? JSON.stringify(strategy) : `${strategy.mode} (${strategy.source}): ${strategy.reason}`);
+    return 0;
+  }
   let any = false, timeout = 0, answer = false;
   const pending: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -39,7 +48,7 @@ export async function wait(argv: string[]): Promise<number> {
     else if (!a.startsWith("-")) pending.push(a.replace(/\.(done|out\.md)$/, ""));
     else { console.error(USAGE); return 2; }
   }
-  if (!pending.length || Number.isNaN(timeout)) { console.error(USAGE); return 2; }
+  if (!pending.length || !Number.isFinite(timeout) || timeout < 0) { console.error(USAGE); return 2; }
   const end = timeout > 0 ? Date.now() + timeout * 1000 : Infinity;
   let failed = false;
   for (;;) {

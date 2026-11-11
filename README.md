@@ -225,9 +225,10 @@ Variants:
 - **tmux:** run `orq conductor` in a pane; children open as tmux windows.
 - **Neither:** children run in the background and the conductor waits with `orq wait`.
 
-In the conductor: **`/issue DEMO-123`**. It answers in one line and moves on by itself at every completion signal
-(`[HERDR-AGENT DONE]` in a herdr pane, otherwise the `[ORQ AGENT DONE]` line printed by `orq wait`).
-You only come back when it asks for a decision or says it's done.
+In the conductor: **`/issue DEMO-123`**. Before dispatch, it checks `orq wait --strategy --json`.
+The default keeps the turn active with bounded waits and advances on each completion without another user message.
+Ending the turn requires a verified native task wake-up or external prompt channel; a detached process alone cannot
+resume a conversation. See [conductor continuation](docs/conductor-continuation.md) for capabilities and limits.
 
 To see everything at once, keep **`orq board`** open in a tab or window (any terminal, any OS; `herdr-board` calls it):
 test queue, running agents (model, memory against the cap, last action), conductors and their issues, memory, quota,

@@ -227,9 +227,10 @@ Variantes:
 - **tmux:** rode `orq conductor` num pane; os filhos abrem como janelas do tmux.
 - **Nenhum dos dois:** os filhos rodam em segundo plano e o conductor espera com `orq wait`.
 
-No conductor: **`/issue DEMO-123`**. Ele responde numa linha e segue sozinho a cada sinal de conclusão
-(`[HERDR-AGENT DONE]` num pane do herdr; fora dele, a linha `[ORQ AGENT DONE]` impressa pelo `orq wait`). Você só volta
-quando ele pede uma decisão ou avisa que terminou.
+No conductor: **`/issue DEMO-123`**. Antes de despachar, ele consulta `orq wait --strategy --json`.
+O padrão mantém o turno ativo com esperas limitadas e avança a cada conclusão sem outra mensagem sua.
+Encerrar o turno exige retomada confirmada por tarefa nativa ou canal externo; um processo em segundo plano sozinho
+não retoma a conversa. Veja [continuidade do conductor](docs/conductor-continuation.md) para capacidades e limites.
 
 Para ver tudo de uma vez, deixe o **`orq board`** aberto numa aba ou janela (qualquer terminal, qualquer SO; o
 `herdr-board` o chama): fila de testes, agentes rodando (modelo, memória contra o limite, última ação), conductors e
