@@ -1,7 +1,7 @@
 import { issueFromName } from "./issue.js";
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -2447,9 +2447,9 @@ test("conductor: custom interactive CLI receives literal argv, instructions, acc
   const r = start();
   assert.equal(r.status, 0, r.stderr);
   const got = JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1)!);
-  assert.deepEqual(got.argv.slice(0, 3), ["--model", model, join(ws, ".orquestra-conductor.md")]);
+  assert.deepEqual(got.argv.slice(0, 3), ["--model", model, join(realpathSync(ws), ".orquestra-conductor.md")]);
   assert.equal(got.agent, "custom"); assert.equal(got.account, "work");
-  assert.equal(got.custom, "account work"); assert.equal(got.cwd, ws);
+  assert.equal(got.custom, "account work"); assert.equal(got.cwd, realpathSync(ws));
   const resumed = start("-r", "session-1");
   assert.equal(resumed.status, 0, resumed.stderr);
   assert.deepEqual(JSON.parse(resumed.stdout.trim().split(/\r?\n/).at(-1)!).argv.slice(0, 2), ["--resume", "session-1"]);
