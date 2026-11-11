@@ -1,6 +1,6 @@
 import { issueFromName } from "./issue.js";
 import { strict as assert } from "node:assert";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -123,7 +123,7 @@ test("unknown command exits 2", () => {
   assert.equal(sandbox().run("nope").status, 2);
 });
 
-test("gc classifies issue worktrees and removes only removable ones", () => {
+test("gc classifies issue worktrees and removes only removable ones", async () => {
   const { root, env, run } = sandbox(), ws = join(root, "ws"), repo = join(ws, "demo"), origin = join(root, "origin.git");
   const git = (cwd: string, ...args: string[]) => {
     const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
@@ -178,10 +178,27 @@ console.log(/--head work\\/plane-merged .*--state merged/.test(a) ? '[{"number":
   assert.equal(byId("own-1-api-2").verdict, "KEEP"); assert.match(byId("own-1-api-2").reason, /live owner/);
   assert.equal(byId("run-2-x").verdict, "KEEP"); assert.match(byId("run-2-x").reason, /child agent/);
   assert.notEqual(byId("gone-3").verdict, "KEEP");
-  const removed = run("gc", "-w", ws, "--yes", "--json"); assert.equal(removed.status, 0, removed.stderr);
-  assert.equal(existsSync(squash.path), false); assert.equal(existsSync(merged.path), false);
-  assert.equal(git(repo, "branch", "--list", squash.branch), ""); assert.equal(git(repo, "branch", "--list", merged.branch), "");
-  assert.equal(existsSync(dirty.path), true); assert.equal(existsSync(unpushed.path), true); assert.equal(existsSync(stale.path), true);
+  let child: ReturnType<typeof spawn> | undefined;
+  if (process.platform === "linux") {
+    child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { cwd: squash.path, stdio: "ignore" });
+    await new Promise<void>((resolve, reject) => { child!.once("spawn", resolve); child!.once("error", reject); });
+  }
+  try {
+    if (child) {
+      const preview = run("gc", "-w", ws, "--json");
+      assert.match((JSON.parse(preview.stdout) as { branch: string; reason: string }[]).find((r) => r.branch === squash.branch)!.reason, new RegExp(String(child.pid)));
+    }
+    const removed = run("gc", "-w", ws, "--yes", "--json"); assert.equal(removed.status, 0, removed.stderr);
+    if (child) {
+      if (child.exitCode === null && child.signalCode === null) await new Promise<void>((resolve) => child!.once("exit", () => resolve()));
+      assert.match((JSON.parse(removed.stdout) as { branch: string; reason: string }[]).find((r) => r.branch === squash.branch)!.reason, new RegExp(String(child.pid)));
+    }
+    assert.equal(existsSync(squash.path), false); assert.equal(existsSync(merged.path), false);
+    assert.equal(git(repo, "branch", "--list", squash.branch), ""); assert.equal(git(repo, "branch", "--list", merged.branch), "");
+    assert.equal(existsSync(dirty.path), true); assert.equal(existsSync(unpushed.path), true); assert.equal(existsSync(stale.path), true);
+  } finally {
+    child?.kill("SIGKILL");
+  }
 });
 
 test("issueFromName: <PROJ>-<N> with any trailing suffix ignored", () => {
