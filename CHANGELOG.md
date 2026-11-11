@@ -6,6 +6,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 
+### Added
+- Any configured agent CLI can conduct: `orq conductor [agent] [account|-] [model]`, with per-agent interactive launch/resume templates, model aliases and account environments. Setup saves the conductor choice, migrates the workspace map to `ORQ.md` without overwriting user instructions, and supplies the issue playbook for Codex and other conductors. Reserve and optional `[conductor].headroom` follow the active conductor; legacy Claude launches remain supported (#67).
+
 ## [0.8.0] — 2026-11-10
 ### Added
 - `orq pick` scores (agent, model) pairs: a level in `models.<role>` may list several candidate models (`medium = ["a@medium", "b@medium"]`; a string stays valid). Each pair is scored on its own stats row, with its own exploration and per-model quota check; `--explain` shows one line per pair. Fixed roles take the first model (#103).

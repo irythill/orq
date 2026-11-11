@@ -55,6 +55,7 @@ export async function pick(argv: string[]): Promise<number> {
     else { console.error(USAGE); return 2; }
   }
   const { cfg } = loadConfig(ws);
+  if (process.env.ORQ_CONDUCTOR_AGENT) cfg._conductorAgent = process.env.ORQ_CONDUCTOR_AGENT;
   const agents = (cfg.agents ?? {}) as Record<string, Obj>;
   if (implAgent && !implVendor) implVendor = vendorOf(implAgent, agents[implAgent]);
   // review/opinion with an auto pool of more than one declared agent: --impl-agent/--impl-vendor is required so the
