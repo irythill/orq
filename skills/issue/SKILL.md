@@ -8,7 +8,7 @@ description: Runs a Plane issue end to end by orchestrating coding agents in her
 You are the **orchestrator**: you plan, dispatch, follow up and report. **Do not implement anything yourself** (it
 burns the conductor's model). Talk to the user in the user's language.
 
-**Ecosystem configuration:** the **workspace** `CLAUDE.md` (the folder named in your conductor instructions) defines
+**Ecosystem configuration:** in the folder named in your conductor instructions, read `ORQ.md` (legacy: `CLAUDE.md`). It defines
 the repositories and their groups (= herdr workspace or just a label, `-g`), **each repo's base branch**, verification commands,
 Plane projects (identifier → project_id), default assignee, labels/modules and MCP limitations. Read it before you
 start. Below, `$WS` = workspace.
@@ -18,7 +18,7 @@ still `<prefix>.out.md`; `-T`, the agent's own screen, needs herdr or tmux). Set
 conductor outside herdr.
 - **Completion signal:** in herdr, one line `[HERDR-AGENT DONE] <title> status=ok|fail ... answer: <file>` is typed into
   your pane after each child. Anywhere else no line arrives: after dispatching, run `orq wait <prefix>` **as a background
-  task** (Claude Code: Bash with `run_in_background`); its exit wakes you and its output is the line
+  task** (when the harness supports background commands); its exit wakes you and its output is the line
   `[ORQ AGENT DONE] <title> status=ok|fail ... answer: <file>`. Treat both lines the same. Several children in parallel:
   `orq wait --any <prefix1> <prefix2>` (one wake-up per finish; wait again for the rest). No background tasks in your
   harness → run `orq wait` in the foreground; that is the one allowed blocking wait.
@@ -42,7 +42,7 @@ Issue artifacts (prompts, notes) live in `$WS/.orquestra/<ID>/`.
 - `mcp__plane__workitem` `retrieve_by_identifier` with `workitem_identifier: "<ID>"`; then `workitem_comment list`.
 - Extract: goal, **acceptance criteria**, affected repos, links. No acceptance criteria → write a short proposal and
   **ask the user** before dispatching.
-- Issue missing assignee, priority, labels or module → **fill them in** following the workspace `CLAUDE.md` "Issue
+- Issue missing assignee, priority, labels or module → **fill them in** following the workspace `ORQ.md` "Issue
   standard". The same standard applies to any new issue you create.
 - Move it to **In Progress** (`workitem update` with the state_id from `state list`).
 
@@ -93,7 +93,7 @@ Write the prompt to `$WS/.orquestra/<ID>/impl-<repo>.md` (short: goal, acceptanc
 verification commands, "base: origin/<BASE>; don't rebase/merge other branches; local commits, no push; commit
 messages following <path of the repo's commit conventions, see step 7>").
 Always include:
-- **Repo checklist:** copy the repo's "Checklist" column from the workspace `CLAUDE.md`.
+- **Repo checklist:** copy the repo's "Checklist" column from the workspace `ORQ.md`.
 - **Decisions:** "end your final answer with a `## Decisions` section, at most 10 lines: what you chose and what you
   ruled out, trade-offs, and what you left out on purpose and why". The reviewer reads it (step 5), so a deliberate
   choice doesn't come back as a blocker.
@@ -102,7 +102,7 @@ Always include:
   and report; after the rebase repeat lint/tsc". An agent without network (Codex) can't fetch: `orq agent` fetches before
   the run and adds a note to its prompt, so it only rebases locally.
 
-**Base = the repo's base branch from the workspace `CLAUDE.md`, always from the updated remote (`origin/<BASE>`).**
+**Base = the repo's base branch from the workspace `ORQ.md`, always from the updated remote (`origin/<BASE>`).**
 Worktree with `git worktree add` (not `herdr worktree create`: that opens a separate herdr workspace per worktree, and
 children are grouped by the repo's `-g`).
 ```bash
@@ -139,7 +139,7 @@ orq agent $(cat $O/impl-<repo>.pick) -g <group> -t "<ID> impl <repo>" -d $WT -o 
 - Every child prompt ends with: "Don't try to talk to the conductor or use herdr; finish with your complete final
   answer (that is what I read)."
 - **Verification in the child: lint and tsc only, one command at a time** (the cap is 4 GB per agent and jest/vitest
-  blow it; tests are yours, step 4b): use the Verification column of the workspace `CLAUDE.md` and put in the prompt
+  blow it; tests are yours, step 4b): use the Verification column of the workspace `ORQ.md` and put in the prompt
   "verify sequentially, never in parallel or watch mode: (1) lint only the changed files (`git diff --name-only
   origin/<BASE>...HEAD`); (2) `NODE_OPTIONS=--max-old-space-size=2048 tsc --noEmit` for the project. Don't run tests".
   Full suite only in CI (or a manual `orq baseline` if the user asks).
@@ -279,4 +279,4 @@ rules live) commits and writes the PR. Find and cite in the prompt, by path, wha
 ## Saving tokens
 Short prompts (never paste the whole `CLAUDE.md` — the agent reads the repo's own). Reviews judge only the diff, but the prompt must say the reviewer **may open files for context** (cat, rg, git
 show — read only): Codex read "review only the diff" as "use only the attached diff" and returned an empty review. Don't re-read
-the whole issue at every step. Respect the MCP limitations listed in the workspace `CLAUDE.md`.
+the whole issue at every step. Respect the MCP limitations listed in the workspace `ORQ.md`.
