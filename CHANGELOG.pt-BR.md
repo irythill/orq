@@ -36,7 +36,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
 - `orq pick` pula um agente cuja CLI não está no PATH (ex.: instalada sob outra versão do Node), com dica para reinstalar, em vez de falhar depois do despacho (#77).
 - Vários conductors no mesmo workspace ganham nomes de sessão distintos, `conductor-<workspace>:<label do herdr ou ORQ_CONDUCTOR_ID>`, para poderem se endereçar; `orq claim -l` termina cada linha com esse `session=` (#79).
 - `orq gc` e a limpeza de worktrees temporárias de teste encerram processos Linux cujo cwd está dentro da worktree
-  (SIGTERM e, após cinco segundos, SIGKILL) antes de remover os arquivos; a simulação lista os PIDs que seriam encerrados.
+  (SIGTERM e, após cinco segundos, SIGKILL) antes de remover os arquivos; a simulação lista os PIDs e nomes que seriam encerrados. O orq
+  e o shell que o lançou nunca são encerrados; outras plataformas pulam isso.
 - `orq agent -T` com Codex às vezes nunca sinalizava o fim do turno (#62): um `.id` deixado no prefixo por uma execução
   anterior (outro agente ou sessão) fazia o `--turn codex` descartar todo turno real como thread paralela. Um novo
   lançamento agora o apaga (`-R` grava a sessão retomada). No herdr, um turno cujo hook ainda não dispara (tela vista
