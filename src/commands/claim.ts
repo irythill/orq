@@ -122,7 +122,9 @@ export async function claim(argv: string[]): Promise<number> {
   const kind = process.env.HERDR_PANE_ID ? "herdr" : "id";
   const me = process.env.HERDR_PANE_ID || process.env.ORQ_CONDUCTOR_ID || `${userInfo().username}@${hostname()}`;
   const myName = (kind === "herdr" ? herdrName(me) : "") || process.env.ORQ_CONDUCTOR_ID || "";
-  const account = basename(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"));
+  const account = process.env.ORQ_CONDUCTOR_AGENT && process.env.ORQ_CONDUCTOR_AGENT !== "claude"
+    ? `${process.env.ORQ_CONDUCTOR_AGENT}:${process.env.ORQ_CONDUCTOR_ACCOUNT || "default"}`
+    : basename(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"));
   const ownerLine = () => `pane=${me} kind=${kind} account=${account} at=${new Date().toISOString()}`
     + (myName ? ` name=${myName}` : "") + "\n";
   if (mode === "register") {

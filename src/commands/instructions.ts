@@ -21,7 +21,7 @@ export function agentsBlock(skill: string): string {
   return `${BEGIN}
 When the user says "/issue <ID>", "take issue X" or "run ABC-123", follow this playbook.
 Choose the continuation strategy described below before dispatching; background execution alone does not resume a conversation.
-
+Read `ORQ.md` for the workspace map and orchestration settings (legacy workspaces: `CLAUDE.md`).
 ${body}
 ${END}
 `;

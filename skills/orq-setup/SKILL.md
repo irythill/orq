@@ -1,6 +1,6 @@
 ---
 name: orq-setup
-description: Guided first-time setup of orq for a new developer — detects and smoke-tests the installed agent CLIs, asks which agents take which roles, models, Claude accounts and pick weights, writes ~/.config/orq/config.toml, then prepares a conductor workspace (orq setup --workspace + workspace CLAUDE.md) and checks Plane. Use when the user says "/orq-setup", "set up orq", "configure orq" or just installed orq (npm i -g @irythill/orq, or install.sh).
+description: Guided first-time setup of orq for a new developer — detects and smoke-tests the installed agent CLIs, asks which agents take which roles, models, Claude accounts and pick weights, writes ~/.config/orq/config.toml, then prepares a conductor workspace (orq setup --workspace + workspace ORQ.md) and checks Plane. Use when the user says "/orq-setup", "set up orq", "configure orq" or just installed orq (npm i -g @irythill/orq, or install.sh).
 ---
 
 # /orq-setup — configure orq for this developer
@@ -85,10 +85,10 @@ Explain simply, then suggest the example's values and ask if they want to change
 ## 6. Workspace
 - Ask for the folder that groups their repos (e.g. `~/Code/acme-platform`). After the OK:
   `orq setup --workspace <folder> --conductor <the conductor agent>` — `.orquestra/`, `.worktrees/`, the map
-  `<folder>/CLAUDE.md` from the template (never overwrites one) and the `/issue` playbook in the conductor's format
+  `<folder>/ORQ.md` from the template (never overwrites one) and the `/issue` playbook in the conductor's format
   (`.claude/skills/issue/SKILL.md` for Claude Code, `AGENTS.md` for the others). Conductor in herdr (clone only):
   `$ORQ/setup/new-conductor.sh <name> <folder>` also writes its instructions and permissions.
-- Fill the repo table in `<folder>/CLAUDE.md` by inspecting each git repo inside it:
+- Fill the repo table in `<folder>/ORQ.md` by inspecting each git repo inside it:
   - base branch: `git -C <repo> symbolic-ref --short refs/remotes/origin/HEAD` (strip `origin/`); ask if the team
     branches from another one (e.g. `dev`).
   - group: the repo folder name in lower case (the herdr workspace or tmux group for its children).

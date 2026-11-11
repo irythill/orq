@@ -165,6 +165,8 @@ function takesPrompt(cfg: Obj, name: string): boolean {
 export function pick(inp: PickInput): PickResult {
   const { cfg, role, level } = inp;
   const agents = (cfg.agents ?? {}) as Record<string, Obj>;
+  const conductor = String(cfg._conductorAgent ?? ((cfg.roles as Obj | undefined)?.conductor as Obj | undefined)?.agent ?? "");
+  const conductorHeadroom = Number((cfg.conductor as Obj | undefined)?.headroom ?? 0);
   const pol = (cfg.policy ?? {}) as Obj;
   const [base5, baseWeek] = limitsFor(pol, level);
   const w = weights(cfg);
@@ -201,7 +203,7 @@ export function pick(inp: PickInput): PickResult {
     if (!mfs) { out(name, m(`no model for ${role}/${level}`, `sem modelo para ${role}/${level}`)); continue; }
     // Quota: an agent with several accounts (claude) prefers one not projecting past the limit, then the least used.
     const qn = (a.quota as string[] | undefined) ?? [];
-    const headroom = Math.max(0, Number(a.headroom ?? 0));
+    const headroom = Math.max(0, Number(a.headroom ?? (name === conductor ? conductorHeadroom : 0)));
     const limit5 = base5 - headroom, limitWeek = baseWeek - headroom;
     const accs = qn.filter((n) => !inp.blocks.has(n)).map((n) => [n, n in inp.quota ? inp.quota[n] : -1] as const);
     if (qn.length && !accs.length) { out(name, m("all accounts blocked", "todas as contas bloqueadas")); continue; }
@@ -310,7 +312,7 @@ export function pick(inp: PickInput): PickResult {
     return { v, txt: `${label}=${v.toFixed(2)}` + (obs === undefined ? "" : `(${prior.toFixed(2)}→${obs.toFixed(2)})`) };
   };
   const cands: Candidate[] = pass.map((c) => {
-    const prior = Number(c.a.prior ?? 0.6), n = c.st?.n ?? 0, reserve = Boolean(c.a.reserve);
+    const prior = Number(c.a.prior ?? 0.6), n = c.st?.n ?? 0, reserve = Boolean(c.a.reserve ?? c.agent === conductor);
     const appr = role === "impl" && c.st?.approved != null && c.st.n_appr >= 3;
     const deliv = appr ? c.st!.approved! / 100 : c.st ? c.st.ok / 100 : undefined;
     const d = axis(m("delivery", "entrega"), prior, deliv, appr ? c.st!.n_appr : n);

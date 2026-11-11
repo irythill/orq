@@ -4,7 +4,7 @@
 
 # orq — orquestrando agentes de código
 
-Você descreve o trabalho numa issue do Plane. Um **conductor** (Claude, de preferência Opus) lê a issue, escolhe o
+Você descreve o trabalho numa issue do Plane. Um **conductor** (qualquer agente que execute comandos) lê a issue, escolhe o
 agente certo para cada etapa, despacha o **implementador**, os **testes** e uma **review cross-vendor** (cada um
 em sua própria aba ou janela no [herdr](https://herdr.dev) ou no tmux, ou em segundo plano), e devolve a issue
 *In Review* com um resumo no Plane. Merge, PR e deploy continuam com você.
@@ -20,7 +20,7 @@ trabalhar. Tudo isso fica na sua config.
 ## Como funciona
 
 ```
-You ── "/issue DEMO-123" ──► conductor (Claude, in any terminal)
+You ── "/issue DEMO-123" ──► conductor (any agent CLI, in any terminal)
                                 │  orq pick impl ──► which agent/model implements (config + history + quota)
                                 ├─► implementer   orq agent  own tab/window or background · worktree from origin/<base> · memory cap
                                 ├─► tests         orq verify  only the diff's tests · queue of one suite at a time
@@ -49,9 +49,9 @@ You ── "/issue DEMO-123" ──► conductor (Claude, in any terminal)
 
 | Agente | CLI | Papéis possíveis | Observações |
 |---|---|---|---|
-| Claude Code | `claude` | conductor, implement, review | várias contas (`claude-accounts`); Opus como conductor |
-| Codex | `codex` | implement, review | sandbox sem rede: o orq roda o `git fetch` antes de uma execução de escrita (`network = false`); cota lida dos arquivos de sessão (inclusive a janela de 30 dias do plano free) |
-| OpenCode | `opencode` | implement, review | qualquer provider (ex.: MiniMax); na MiniMax, cota pela API do Token Plan com a sua chave |
+| Claude Code | `claude` | conductor, implement, review | várias contas (`claude-accounts`); Claude como conductor |
+| Codex | `codex` | conductor, implement, review | sandbox sem rede: o orq roda o `git fetch` antes de uma execução de escrita (`network = false`); cota lida dos arquivos de sessão (inclusive a janela de 30 dias do plano free) |
+| OpenCode | `opencode` | conductor, implement, review | qualquer provider (ex.: MiniMax); na MiniMax, cota pela API do Token Plan com a sua chave |
 | Antigravity | `agy` | review (implement com allowlist) | em modo headless nega comandos fora da allowlist: faz a review lendo o diff anexado; não consegue commitar, então o orq commita as execuções de escrita dele (`commit = false`) |
 | GitHub Copilot | `copilot` | segunda opinião | cota pequena em alguns planos: uso ocasional |
 
@@ -73,7 +73,7 @@ O `orq setup` mostra o que encontrou (git, terminal, como a memória é limitada
 do orq em `~/.claude/skills/` e em cada pasta de conta do `claude-accounts` (uma junction no Windows; nunca por cima
 de uma pasta sua), pergunta sobre seus agentes e planos, escreve o `~/.config/orq/config.toml`
 (`%APPDATA%\orq\config.toml` no Windows) e prepara a pasta que agrupa seus repos para o conductor: `.orquestra/`, o
-mapa `CLAUDE.md` e o playbook do `/issue` no formato do conductor. Partes avulsas: `orq setup --install` (sem
+mapa `ORQ.md` e o playbook do `/issue` no formato do conductor. Partes avulsas: `orq setup --install` (sem
 perguntas), `orq setup --workspace <pasta> --conductor <agente>`. Dentro do Claude, o **`/orq-setup`** faz o mesmo
 como conversa e ainda preenche a tabela de repos. Plane: [docs/pt-BR/plane.md](docs/pt-BR/plane.md).
 
@@ -175,7 +175,7 @@ issue_pattern = "(?<![a-z0-9])(?<issue>[a-z][a-z0-9]*-\\d+)(?![a-z0-9])"   # Nom
 quota_week = 95                          # ≥ 95% of the week → agent out
 quota_5h = { simple = 90, medium = 85, heavy = 80 }  # same for the 5h window, by task level
 pacing_penalty = 0.3                     # score penalty when usage at the current pace would pass the pick limit (5h by level, week: quota_week) by the reset (0 = off)
-# [agents.claude] headroom = 25          # points kept for conductors: children leave the account at limit − 25
+# [conductor] headroom = 25             # pontos reservados para o conductor ativo: filhos param em limite − 25
 [policy.weights]
 quality  = 0.40                          # did it deliver? (impl: approved on the first review)
 tokens   = 0.45                          # did it spend little?
@@ -190,7 +190,7 @@ rotation = 0.20                          # penalty for having been picked recent
    desempate, a menos usada.
 2. **Pontuação:** `quality × delivery + tokens × economy + speed × quickness − rotation × recent picks`. Os números vêm
    do histórico (`orq stats`); um agente com poucas execuções usa o `prior` da config e ganha um bônus de exploração.
-3. **Agentes com `reserve = true`** (ex.: Claude, que divide quota com o conductor) só entram quando nada mais serve.
+3. **Agentes reservados** (`reserve = true`, ou o conductor ativo por padrão) recebem uma penalidade na pontuação para preservar cota para a orquestração.
 
 ```bash
 orq pick review --impl-agent codex --explain     # every candidate's score and who was left out, and why
@@ -217,8 +217,37 @@ O que já está rodando continua no idioma em que começou. Os conductors sempre
 
 Abra o conductor em qualquer terminal, na pasta do seu workspace (a que o `orq setup` preparou):
 ```bash
-cd ~/Code/<workspace> && orq conductor [conta] [modelo]   # qualquer terminal: carrega as instruções do conductor, o CLAUDE.md do workspace e a skill /issue
+cd ~/Code/<workspace> && orq conductor [agente] [conta|-] [modelo]   # qualquer terminal: carrega as instruções do conductor, o ORQ.md do workspace e a skill /issue
 ```
+Escolha o conductor com `orq setup --workspace <pasta> --conductor codex` e rode `orq conductor` nessa pasta.
+`orq conductor codex - <modelo>` troca o agente só nessa sessão; `-r <id>` a retoma. Claude Code também é um
+conductor testado; a sintaxe antiga `orq conductor <conta Claude> <modelo>` continua funcionando. Se uma conta e um
+agente têm o mesmo nome, use `--agent <nome>` para selecionar o agente explicitamente. O wrapper `herdr-conductor` continua abrindo Claude.
+
+`ORQ.md` guarda o mapa do workspace. O setup preserva um `CLAUDE.md` existente e copia seu conteúdo para `ORQ.md`
+na migração; se ele não existe, cria um `CLAUDE.md` apontando para o mapa. `AGENTS.md` aponta para o mapa e contém o
+playbook gerado, preservando o texto fora do bloco gerado. Depois da migração, edite `ORQ.md`. Sem comandos em segundo
+plano, o conductor usa `orq wait` em primeiro plano. `orq handoff` continua transferindo apenas contas Claude.
+
+Os padrões ficam em `[roles.conductor]` (`agent`, `account`, `model`). Os templates interativos são separados dos
+templates dos filhos, mantendo MCPs e os pedidos normais de permissão. Sobrescreva um agente embutido ou adicione outra CLI:
+
+```toml
+[agents.codex.conductor]
+run = "codex [-m {model}] -C {dir} {prompt_text}"
+resume = "codex resume {session} [-m {model}] -C {dir} {prompt_text}"
+models = { fast = "id-do-seu-modelo" }
+accounts = { work = { CODEX_HOME = "/caminho/codex-work" } }
+
+[conductor]
+headroom = 25 # pontos percentuais reservados para o agente que estiver conduzindo
+```
+
+Os templates aceitam `{dir}`, `{instructions}` (caminho do arquivo), `{prompt_text}` (prompt para ler as instruções),
+`{model}`, `{account}`, `{session}` e `{name}`. Contas e `env` são mapas de variáveis de ambiente. O conductor exporta
+`ORQ_CONDUCTOR_AGENT`, então o `orq pick` aplica a penalidade de reserva e `[conductor].headroom` ao agente em uso,
+inclusive após uma troca só nessa sessão. Valores explícitos de `agents.<nome>.reserve` e `headroom` têm precedência.
+
 Com vários conductors, dê a cada um um nome fixo (`export ORQ_CONDUCTOR_ID=<nome>`; no herdr, vale o label do
 workspace) para o `orq claim` distingui-los: a sessão do Claude se chama `conductor-<workspace>:<nome>`, e o
 `orq claim -l` termina cada linha com esse `session=`, para os conductors conseguirem se falar.
@@ -284,7 +313,7 @@ Dia a dia, atalhos e várias issues ao mesmo tempo: [docs/pt-BR/herdr.md](docs/p
 | `orq wait <prefixo>...` | Bloqueia até esses agentes terminarem; imprime `status=` e o arquivo da resposta (qualquer conductor, qualquer terminal) |
 | `orq verify ...` (`herdr-verify`) | Testes relacionados ao diff, em fila e com limite de memória; falhas que também falham na base contam como pré-existentes |
 | `orq board` (`herdr-board`) | Painel ao vivo: fila, agentes, conductors, cota, bloqueios, placar |
-| `orq conductor [conta] [modelo] [-r <id>]` (`herdr-conductor`) | Abre o conductor (Claude) no terminal atual com as instruções, conta e modelo; `-r` retoma uma sessão |
+| `orq conductor [agente] [conta|-] [modelo] [-r <id>]` (`herdr-conductor`) | Abre o conductor configurado no terminal atual com as instruções, conta e modelo; `-r` retoma uma sessão |
 | `orq claim` (`herdr-claim`) | Dono de cada issue entre os conductors |
 | `orq deps` (`herdr-deps`) | Liga as dependências do worktree às do repo principal (sem reinstalar) |
 | `orq baseline ...` (`herdr-baseline`) | Snapshot manual dos testes que falham na base (fora do fluxo) |

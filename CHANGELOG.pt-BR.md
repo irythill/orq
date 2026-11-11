@@ -9,6 +9,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 ### Corrigido
 - Conductors escolhem a estratégia de espera/retomada pelas capacidades declaradas do ambiente, com diagnóstico somente leitura em `orq wait --strategy [--json]`. Rodar em segundo plano não implica retomada automática; os playbooks mantêm o turno ativo com esperas limitadas quando necessário (#119).
 
+### Adicionado
+- Qualquer CLI de agente configurada pode conduzir: `orq conductor [agente] [conta|-] [modelo]`, com templates interativos de abertura/retomada, aliases de modelos e ambientes de conta por agente. O setup grava a escolha, migra o mapa do workspace para `ORQ.md` sem sobrescrever instruções próprias e fornece o playbook para Codex e outros conductors. Reserva e `[conductor].headroom` opcional acompanham o conductor ativo; os comandos antigos do Claude continuam funcionando (#67).
+
 ## [0.8.0] — 2026-11-10
 ### Adicionado
 - `orq pick` pontua pares (agente, modelo): um nível em `models.<papel>` pode listar vários modelos candidatos (`medium = ["a@medium", "b@medium"]`; uma string continua valendo). Cada par é pontuado pelo seu próprio histórico, com exploração e checagem de cota por modelo próprias; `--explain` mostra uma linha por par. Papéis fixos usam o primeiro modelo (#103).
