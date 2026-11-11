@@ -7,6 +7,7 @@ import { m } from "../i18n.js";
 import { issueFromName, issuePattern, issuesWithLiveAgent } from "../issue.js";
 import { alive } from "../lock.js";
 import { stateDir } from "../paths.js";
+import { describe, stopWorktreeProcesses, worktreeProcesses } from "../worktree-processes.js";
 import { aliveOwner } from "./claim.js";
 
 export const USAGE = "orq gc [-w <workspace>] [--yes] [--days N] [--json]   remove merged issue worktrees and stale agent state";
@@ -121,7 +122,10 @@ export async function gc(argv: string[], clock: () => number = Date.now): Promis
   }
   if (ghUnavailable) console.error(m("NOTE: gh unavailable or failed; PR signals were skipped", "NOTA: gh indisponível ou falhou; sinais de PR ignorados"));
   let failed = false;
-  if (yes) for (const row of rows.filter((r) => r.verdict === "REMOVABLE")) {
+  for (const row of rows.filter((r) => r.verdict === "REMOVABLE")) {
+    const pids = yes ? stopWorktreeProcesses(row.path) : worktreeProcesses(row.path).map(describe);
+    if (pids.length) row.reason += `; ${yes ? m("stopped processes", "processos encerrados") : m("processes to stop", "processos a encerrar")}: ${pids.join(", ")}`;
+    if (!yes) continue;
     const removed = git(join(ws, row.repo), "worktree", "remove", row.path);
     if (removed.status !== 0) { failed = true; row.reason += `; ${m("worktree removal failed", "falha ao remover worktree")}`; continue; }
     if (git(join(ws, row.repo), "branch", "-D", row.branch).status !== 0) { failed = true; row.reason += `; ${m("branch deletion failed", "falha ao excluir branch")}`; }
