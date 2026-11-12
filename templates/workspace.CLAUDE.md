@@ -1,11 +1,11 @@
-# CLAUDE.md — {{NAME}} ecosystem ({{WORKSPACE}})
+# ORQ.md — {{NAME}} ecosystem ({{WORKSPACE}})
 
 This folder groups the ecosystem's repositories. Each repo has its own `CLAUDE.md`/`AGENTS.md` with commands and
 rules — read the repo's own before touching it. This file only holds the map and the orchestration settings.
 
 ## Orchestration (read by the `/issue` skill)
 - **Workspace:** `{{WORKSPACE}}`
-- **Conductor:** opened with `orq conductor [account] [model] [-r <session-id>]` in this folder, in any terminal (inside a
+- **Conductor:** opened with `orq conductor [agent] [account|-] [model] [-r <session-id>]` in this folder, in any terminal (inside a
   herdr pane too; `herdr-conductor` still works there). Instructions in `.orquestra-conductor.md`; the **Group** in the
   table below is the herdr workspace (`-g`) or just a label outside herdr.
   Tests from the Verification column (jest/vitest) **don't run in the child**: the conductor runs `orq verify`

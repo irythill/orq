@@ -20,6 +20,7 @@ export function agentsBlock(skill: string): string {
   const body = skill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "").trim();
   return `${BEGIN}
 When the user says "/issue <ID>", "take issue X" or "run ABC-123", follow this playbook.
+Read \`ORQ.md\` for the workspace map and orchestration settings (legacy workspaces: \`CLAUDE.md\`).
 If your harness cannot run a command in the background, wait for children with \`orq wait\` in the foreground
 (\`orq wait --any <prefix>...\`): it is the one allowed blocking wait.
 

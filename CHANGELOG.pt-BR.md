@@ -6,6 +6,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+### Adicionado
+- Qualquer CLI de agente configurada pode conduzir: `orq conductor [agente] [conta|-] [modelo]`, com templates interativos de abertura/retomada, aliases de modelos e ambientes de conta por agente. O setup grava a escolha, migra o mapa do workspace para `ORQ.md` sem sobrescrever instruções próprias e fornece o playbook para Codex e outros conductors. Reserva e `[conductor].headroom` opcional acompanham o conductor ativo; os comandos antigos do Claude continuam funcionando (#67).
+
 ## [0.8.1] — 2026-11-11
 ### Corrigido
 - A limpeza de worktrees para os processos que rodam dentro delas antes da remoção, inclusive quando o diretório de trabalho é a raiz da worktree; o orq e seus próprios processos ancestrais são preservados (#116).

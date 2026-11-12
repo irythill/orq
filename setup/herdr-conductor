@@ -5,4 +5,4 @@
 #   herdr-conductor [account|-] [model] [-r <session-id>]
 . "$(dirname "$(realpath "$0")")/orq-i18n.sh"
 [ "${HERDR_ENV:-}" = 1 ] || { echo "$(m "run it inside a herdr pane (open 'herdr' and call herdr-conductor there; elsewhere use: orq conductor)" "rode dentro de um pane do herdr (abra o 'herdr' e chame o herdr-conductor lá; fora dele use: orq conductor)")"; exit 2; }
-exec node "$(dirname "$(realpath "$0")")/../dist/cli.js" conductor "$@"
+exec node "$(dirname "$(realpath "$0")")/../dist/cli.js" conductor --agent claude "$@"
