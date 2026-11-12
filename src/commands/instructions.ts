@@ -67,10 +67,13 @@ export async function instructions(argv: string[]): Promise<number> {
     const fallback = s === "background-task" ? "foreground-loop" : "none";
     if (json) { console.log(JSON.stringify({ conductor: agent, strategy: s, fallback, waitTimeout: loopTimeout(caps), capabilities: caps })); return 0; }
     console.log(`conductor ${agent}: ${s}`);
-    console.log(`  background=${caps.background} resume_on_completion=${caps.resumeOnCompletion} prompt_delivery=${caps.promptDelivery} foreground_timeout=${caps.foregroundTimeout}s`);
+    console.log(`  background=${caps.background} resume_on_completion=${caps.resumeOnCompletion} foreground_wait=${caps.foregroundWait} prompt_delivery=${caps.promptDelivery} foreground_timeout=${caps.foregroundTimeout}s`);
     console.log(s === "background-task"
       ? m("  ends its turn after dispatch; orq wait in the background wakes it (fallback: foreground loop)",
         "  encerra o turno após o dispatch; o orq wait em background o acorda (fallback: loop em foreground)")
+      : s === "manual"
+      ? m("  cannot continue by itself: reports pending prefixes and waits for the user's message",
+        "  não continua sozinho: informa os prefixos pendentes e espera a mensagem do usuário")
       : m(`  stays active: orq wait --any --timeout ${loopTimeout(caps)} in a loop; it does NOT resume by itself after ending a turn`,
         `  fica ativo: orq wait --any --timeout ${loopTimeout(caps)} em loop; NÃO retoma sozinho depois de encerrar o turno`));
     console.log(m(`  override: agents.${agent}.conductor.capabilities`, `  ajuste: agents.${agent}.conductor.capabilities`));
