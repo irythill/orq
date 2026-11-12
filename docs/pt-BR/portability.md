@@ -95,6 +95,8 @@ Os filhos já rodam headless; a única coisa que prendia o orq ao herdr era o av
 - **herdr**: a linha `[ORQ AGENT DONE]` no painel do conductor, como hoje.
 - **Claude Code**: rodar `orq wait` como tarefa em segundo plano, que acorda o conductor quando termina.
 
+O que cada conductor pode usar depende do harness, não do nome: veja [Continuação do conductor](conductor-continuation.md).
+
 ### Instruções do conductor — uma fonte, vários formatos
 Um texto genérico de instruções (o fluxo do `/issue`, protocolo, regras). O `orq setup` escreve no formato do conductor
 escolhido: `SKILL.md` + `CLAUDE.md` (Claude Code), `AGENTS.md` (Codex, OpenCode), o arquivo de instruções do Copilot.

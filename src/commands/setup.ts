@@ -4,7 +4,7 @@
 //   orq setup --detect                      installed agent CLIs, as JSON (for a conductor driving the setup)
 //   orq setup --answers <file|-> [--write]  proposal from answers JSON (see Answers in src/suggest.ts); --write saves it
 //   orq setup --install                     no questions: what orq found, and the skills linked for Claude Code
-//   orq setup --workspace <dir> [--conductor <agent>]   .orquestra, CLAUDE.md map, /issue playbook in its format
+//   orq setup --workspace <dir> [--conductor <agent>]   .orquestra, ORQ.md map, /issue playbook in its format
 //   --preset economy|quality|single-agent
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
@@ -18,6 +18,7 @@ import { getPath, loadConfig } from "../config.js";
 import { m } from "../i18n.js";
 import { environment, installSkills, prepareWorkspace } from "../install.js";
 import { expand, userConfigFile } from "../paths.js";
+import { setTomlString } from "../toml-set.js";
 import { type Answers, type Plan, suggestRoles, toToml } from "../suggest.js";
 
 export const USAGE = `orq setup [--preset economy|quality|single-agent]   guided first configuration (roles, weights, memory)
@@ -123,16 +124,26 @@ function skills(): void {
 /** claude → .claude/skills/issue/SKILL.md; any other conductor → AGENTS.md. */
 function workspace(dir: string, conductor?: string): void {
   let c = conductor;
-  if (!c) { try { c = getPath(loadConfig().cfg, "roles.conductor.agent") as string | undefined; } catch { /* none */ } }
-  c ??= onPath("claude") ? "claude" : "agents";
+  if (!c) { try { c = getPath(loadConfig(expand(dir)).cfg, "roles.conductor.agent") as string | undefined; } catch { /* none */ } }
+  c ??= detect()[0] ?? "claude";
   const d = expand(dir); // typed at the prompt: ~ is not expanded by any shell
   console.log(`Workspace ${d}`);
-  for (const l of prepareWorkspace(d, c === "claude" ? "claude" : "agents")) console.log(l);
+  for (const l of prepareWorkspace(d, c === "claude" ? "claude" : "agents", undefined, c)) console.log(l);
+  if (c !== "agents") {
+    const toml = join(d, ".orq", "workspace.toml"), json = join(d, ".orq", "workspace.json");
+    const file = existsSync(toml) || !existsSync(json) ? toml : json;
+    const text = existsSync(file) ? readFileSync(file, "utf8") : "";
+    if (file.endsWith(".json")) {
+      const cfg = text ? JSON.parse(text) : {};
+      cfg.roles = { ...cfg.roles, conductor: { ...cfg.roles?.conductor, agent: c } };
+      writeAtomic(file, JSON.stringify(cfg, null, 2) + "\n");
+    } else writeAtomic(file, setTomlString(text, "roles.conductor", "agent", c));
+  }
 }
 
-const next = () => console.log(m(`Next: fill in the workspace CLAUDE.md, open your conductor in that folder and say "/issue <ID>".
+const next = () => console.log(m(`Next: fill in the workspace ORQ.md, open your conductor in that folder and say "/issue <ID>".
 Board: orq board · quota: orq quota · completion: orq completion <shell>`,
-`Próximo: preencha o CLAUDE.md do workspace, abra o seu conductor nessa pasta e diga "/issue <ID>".
+`Próximo: preencha o ORQ.md do workspace, abra o seu conductor nessa pasta e diga "/issue <ID>".
 Painel: orq board · cota: orq quota · autocompletar: orq completion <shell>`));
 
 export async function setup(argv: string[]): Promise<number> {

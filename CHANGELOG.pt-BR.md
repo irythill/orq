@@ -6,6 +6,17 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-12
+
+### Adicionado
+- Estratégia de espera manual para harnesses de conductor que não são acordados por uma tarefa em background nem conseguem manter uma espera em foreground (`agents.<agente>.conductor.capabilities.foreground_wait = false`): o conductor informa os prefixos pendentes e avisa que não vai continuar sozinho. O loop em foreground agora consulta a sessão de shell em execução devolvida pelo harness em vez de abrir outro `orq wait`. Novo guia: `docs/pt-BR/conductor-continuation.md` (#119).
+- Estratégia de espera/retomada do conductor pela capacidade do harness: só um harness cuja tarefa em background, ao terminar, inicia um novo turno (Claude Code) encerra o turno após o dispatch; Codex, OpenCode, Copilot, Antigravity e harnesses desconhecidos ficam ativos num loop `orq wait --any --timeout` e nunca redisparam por timeout. As instruções do conductor e o bloco do AGENTS.md trazem a estratégia escolhida; `orq instructions strategy [--conductor <agente>] [--json]` a mostra; `agents.<agente>.conductor.capabilities` a ajusta (#119).
+- Qualquer CLI de agente configurada pode conduzir: `orq conductor [agente] [conta|-] [modelo]`, com templates interativos de abertura/retomada, aliases de modelos e ambientes de conta por agente. O setup grava a escolha, migra o mapa do workspace para `ORQ.md` sem sobrescrever instruções próprias e fornece o playbook para Codex e outros conductors. Reserva e `[conductor].headroom` opcional acompanham o conductor ativo; os comandos antigos do Claude continuam funcionando (#67).
+
+### Corrigido
+- A limpeza de worktrees para os processos que rodam dentro delas antes da remoção, inclusive quando o diretório de trabalho é a raiz da worktree; o orq e seus próprios processos ancestrais são preservados (#116).
+- O planejamento de release reconhece a árvore original da dev representada por uma tag de release com squash, evitando contar novamente funcionalidades já publicadas na próxima versão e nas notas (#118).
+
 ## [0.8.0] — 2026-11-10
 ### Adicionado
 - `orq pick` pontua pares (agente, modelo): um nível em `models.<papel>` pode listar vários modelos candidatos (`medium = ["a@medium", "b@medium"]`; uma string continua valendo). Cada par é pontuado pelo seu próprio histórico, com exploração e checagem de cota por modelo próprias; `--explain` mostra uma linha por par. Papéis fixos usam o primeiro modelo (#103).
@@ -35,6 +46,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 - `orq stats` nomeia todo agente e modelo: pelo argv do job, depois o pick, depois o log (ferramentas de review rodadas como CLI não aparecem mais como `?`; um `-m` dentro do prompt não vira mais o modelo; o modelo da tela do opencode vem da config dele). O tempo de uma execução em tela para no primeiro turno (`<prefixo>.turns`), então uma tela esquecida aberta não infla mais; execuções mortas e telas antigas ficam fora da mediana de tempo (`-`). Os tokens do opencode voltam a ser contados no formato novo de eventos (#59).
 - `orq pick` pula um agente cuja CLI não está no PATH (ex.: instalada sob outra versão do Node), com dica para reinstalar, em vez de falhar depois do despacho (#77).
 - Vários conductors no mesmo workspace ganham nomes de sessão distintos, `conductor-<workspace>:<label do herdr ou ORQ_CONDUCTOR_ID>`, para poderem se endereçar; `orq claim -l` termina cada linha com esse `session=` (#79).
+- `orq gc` e a limpeza de worktrees temporárias de teste encerram processos Linux cujo cwd está dentro da worktree
+  (SIGTERM e, após cinco segundos, SIGKILL) antes de remover os arquivos; a simulação lista os PIDs e nomes que seriam encerrados. O orq
+  e o shell que o lançou nunca são encerrados; outras plataformas pulam isso.
 - `orq agent -T` com Codex às vezes nunca sinalizava o fim do turno (#62): um `.id` deixado no prefixo por uma execução
   anterior (outro agente ou sessão) fazia o `--turn codex` descartar todo turno real como thread paralela. Um novo
   lançamento agora o apaga (`-R` grava a sessão retomada). No herdr, um turno cujo hook ainda não dispara (tela vista

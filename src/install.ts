@@ -2,7 +2,7 @@
 //   skills      orq's skills (skills/*/SKILL.md, shipped in the package) linked into ~/.claude/skills and each Claude
 //               account's skills folder — a junction on Windows (no admin rights), a copy if linking fails. A real
 //               folder, or a link to another live copy (a clone of the repo), is never touched.
-//   workspace   <folder>/.orquestra, .worktrees, CLAUDE.md from the template (only if missing) and the /issue playbook
+//   workspace   <folder>/.orquestra, .worktrees, ORQ.md map, pointers and the /issue playbook
 //               in the conductor's format (orq instructions)
 //   environment what orq found: git, terminal host, memory cap, keyring, the shell's completion line
 import { spawnSync } from "node:child_process";
@@ -11,8 +11,9 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "./accounts.js";
-import { type Obj } from "./config.js";
+import { loadConfig, type Obj } from "./config.js";
 import { writeAtomic } from "./fsutil.js";
+import { capabilities, strategyText } from "./harness.js";
 import { m } from "./i18n.js";
 import { backend } from "./keyring.js";
 import { hasKernelCap } from "./process.js";
@@ -61,23 +62,32 @@ export function installSkills(roots = skillRoots()): string[] {
 }
 
 /** Prepare a conductor's workspace folder; `fmt` = claude (SKILL.md) | agents (AGENTS.md). */
-export function prepareWorkspace(dir: string, fmt: "claude" | "agents", name = basename(resolve(dir))): string[] {
+export function prepareWorkspace(dir: string, fmt: "claude" | "agents", name = basename(resolve(dir)), conductor = fmt === "claude" ? "claude" : "unknown"): string[] {
   const ws = resolve(dir), out: string[] = [];
   for (const d of [".orquestra", ".worktrees"]) mkdirSync(join(ws, d), { recursive: true });
-  const map = join(ws, "CLAUDE.md");
+  const map = join(ws, "ORQ.md"), legacy = join(ws, "CLAUDE.md");
   if (!existsSync(map)) {
-    const t = readFileSync(join(PKG, "templates", "workspace.CLAUDE.md"), "utf8");
-    writeAtomic(map, t.split("{{WORKSPACE}}").join(ws).split("{{NAME}}").join(name));
+    const t = existsSync(legacy) ? readFileSync(legacy, "utf8") :
+      readFileSync(join(PKG, "templates", "workspace.CLAUDE.md"), "utf8").split("{{WORKSPACE}}").join(ws).split("{{NAME}}").join(name);
+    writeAtomic(map, t);
     out.push(m(`  created ${map} — fill in repos, group, base branch, Plane and issue standard`,
       `  criado ${map} — preencha repos, grupo, branch base, Plane e padrão de issue`));
   } else out.push(m(`  ok      ${map} (kept)`, `  ok      ${map} (mantido)`));
+  if (!existsSync(legacy)) writeAtomic(legacy, "# orq workspace\n\nRead `ORQ.md` for the workspace map and orchestration settings.\n");
   // The conductor's instructions (what `orq conductor` looks for): regenerated on every run.
   const ci = join(ws, ".orquestra-conductor.md");
   const t = readFileSync(join(PKG, "templates", "conductor.instructions.md"), "utf8");
-  writeAtomic(ci, t.split("{{WORKSPACE}}").join(ws).split("{{NAME}}").join(name));
+  let cfg: Obj = {};
+  try { cfg = loadConfig(ws).cfg; } catch { /* no config yet */ }
+  const waiting = strategyText(conductor, capabilities(conductor, cfg, process.env));
+  writeAtomic(ci, t.split("{{WORKSPACE}}").join(ws).split("{{NAME}}").join(name).split("{{WAIT_STRATEGY}}").join(waiting));
   out.push(`  ${m("wrote", "escrevi")}   ${ci}`);
-  const r =spawnSync(process.execPath, [join(PKG, "dist", "cli.js"), "instructions", fmt, "-w", ws], { encoding: "utf8" });
-  out.push(`  ${(r.stdout || r.stderr).trim()}`);
+  for (const format of fmt === "claude" ? ["agents", "claude"] : ["agents"]) {
+    const r = spawnSync(process.execPath, [join(PKG, "dist", "cli.js"), "instructions", format, "-w", ws,
+      ...(format === "agents" && conductor !== "claude" && conductor !== "unknown" ? ["--conductor", conductor] : [])], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(r.stderr || `orq instructions ${format} failed`);
+    out.push(`  ${r.stdout.trim()}`);
+  }
   return out;
 }
 

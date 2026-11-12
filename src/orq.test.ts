@@ -1,7 +1,7 @@
 import { issueFromName } from "./issue.js";
 import { strict as assert } from "node:assert";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -123,7 +123,7 @@ test("unknown command exits 2", () => {
   assert.equal(sandbox().run("nope").status, 2);
 });
 
-test("gc classifies issue worktrees and removes only removable ones", () => {
+test("gc classifies issue worktrees and removes only removable ones", async () => {
   const { root, env, run } = sandbox(), ws = join(root, "ws"), repo = join(ws, "demo"), origin = join(root, "origin.git");
   const git = (cwd: string, ...args: string[]) => {
     const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
@@ -178,10 +178,27 @@ console.log(/--head work\\/plane-merged .*--state merged/.test(a) ? '[{"number":
   assert.equal(byId("own-1-api-2").verdict, "KEEP"); assert.match(byId("own-1-api-2").reason, /live owner/);
   assert.equal(byId("run-2-x").verdict, "KEEP"); assert.match(byId("run-2-x").reason, /child agent/);
   assert.notEqual(byId("gone-3").verdict, "KEEP");
-  const removed = run("gc", "-w", ws, "--yes", "--json"); assert.equal(removed.status, 0, removed.stderr);
-  assert.equal(existsSync(squash.path), false); assert.equal(existsSync(merged.path), false);
-  assert.equal(git(repo, "branch", "--list", squash.branch), ""); assert.equal(git(repo, "branch", "--list", merged.branch), "");
-  assert.equal(existsSync(dirty.path), true); assert.equal(existsSync(unpushed.path), true); assert.equal(existsSync(stale.path), true);
+  let child: ReturnType<typeof spawn> | undefined;
+  if (process.platform === "linux") {
+    child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { cwd: squash.path, stdio: "ignore" });
+    await new Promise<void>((resolve, reject) => { child!.once("spawn", resolve); child!.once("error", reject); });
+  }
+  try {
+    if (child) {
+      const preview = run("gc", "-w", ws, "--json");
+      assert.match((JSON.parse(preview.stdout) as { branch: string; reason: string }[]).find((r) => r.branch === squash.branch)!.reason, new RegExp(String(child.pid)));
+    }
+    const removed = run("gc", "-w", ws, "--yes", "--json"); assert.equal(removed.status, 0, removed.stderr);
+    if (child) {
+      if (child.exitCode === null && child.signalCode === null) await new Promise<void>((resolve) => child!.once("exit", () => resolve()));
+      assert.match((JSON.parse(removed.stdout) as { branch: string; reason: string }[]).find((r) => r.branch === squash.branch)!.reason, new RegExp(String(child.pid)));
+    }
+    assert.equal(existsSync(squash.path), false); assert.equal(existsSync(merged.path), false);
+    assert.equal(git(repo, "branch", "--list", squash.branch), ""); assert.equal(git(repo, "branch", "--list", merged.branch), "");
+    assert.equal(existsSync(dirty.path), true); assert.equal(existsSync(unpushed.path), true); assert.equal(existsSync(stale.path), true);
+  } finally {
+    child?.kill("SIGKILL");
+  }
 });
 
 test("issueFromName: <PROJ>-<N> with any trailing suffix ignored", () => {
@@ -1659,11 +1676,33 @@ test("setup --install: skills linked into each Claude account, kept when they ar
   mkdirSync(ws);
   assert.equal(run("setup", "--workspace", ws, "--conductor", "codex").status, 0);
   assert.match(readFileSync(join(ws, "AGENTS.md"), "utf8"), /orq:issue begin/);
-  assert.match(readFileSync(join(ws, "CLAUDE.md"), "utf8"), new RegExp(`ws ecosystem \\(${ws.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}\\)`));
+  assert.match(readFileSync(join(ws, "ORQ.md"), "utf8"), new RegExp(`ws ecosystem \\(${ws.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}\\)`));
+  assert.match(readFileSync(join(ws, "CLAUDE.md"), "utf8"), /Read `ORQ.md`/);
+  assert.equal(run("config", "-w", ws, "get", "roles.conductor.agent").stdout.trim(), "codex");
   writeFileSync(join(ws, "CLAUDE.md"), "mine\n");
   assert.equal(run("setup", "--workspace", ws, "--conductor", "claude").status, 0);
   assert.equal(readFileSync(join(ws, "CLAUDE.md"), "utf8"), "mine\n"); // never overwritten
   assert.ok(existsSync(join(ws, ".claude", "skills", "issue", "SKILL.md")) && existsSync(join(ws, ".orquestra")));
+});
+
+test("setup: migrate a legacy map, preserve user instructions, keep JSON workspace settings", () => {
+  const { root, run } = sandbox(), ws = join(root, "ws");
+  mkdirSync(join(ws, ".orq"), { recursive: true });
+  writeFileSync(join(ws, "CLAUDE.md"), "# My repos\n\n| api | dev |\n");
+  writeFileSync(join(ws, "AGENTS.md"), "My instructions\n");
+  writeFileSync(join(ws, ".orq", "workspace.json"), JSON.stringify({ repos: { api: { base: "dev" } }, roles: { conductor: { model: "my-model" } } }));
+  let r = run("setup", "--workspace", ws, "--conductor", "codex");
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(join(ws, "ORQ.md"), "utf8"), readFileSync(join(ws, "CLAUDE.md"), "utf8"));
+  assert.match(readFileSync(join(ws, "AGENTS.md"), "utf8"), /^My instructions\n/);
+  const cfg = JSON.parse(readFileSync(join(ws, ".orq", "workspace.json"), "utf8"));
+  assert.deepEqual(cfg, { repos: { api: { base: "dev" } }, roles: { conductor: { agent: "codex", model: "my-model" } } });
+  writeFileSync(join(ws, "ORQ.md"), "Updated map\n");
+  r = run("setup", "--workspace", ws);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(join(ws, "ORQ.md"), "utf8"), "Updated map\n");
+  assert.equal((readFileSync(join(ws, "AGENTS.md"), "utf8").match(/orq:issue begin/g) ?? []).length, 1);
+  assert.ok(!existsSync(join(ws, ".orq", "workspace.toml")));
 });
 
 test("completion: scripts per shell, each one checked by its own shell when it is installed", () => {
@@ -2376,6 +2415,85 @@ test("conductor: args are [account] [model] [-r id]; '-' keeps the account slot;
   assert.equal(parseArgs(["work", "--resume", "x", "opus"]).model, "opus");
   assert.ok(parseArgs(["-r"]).error);
   assert.equal(parseArgs(["--help"]).help, true);
+  assert.deepEqual(parseArgs(["codex", "-", "my-model", "-r", "s1"]),
+    { agent: "codex", account: "-", model: "my-model", resume: "s1", help: false });
+  assert.equal(parseArgs(["-r", "s1", "agy"]).agent, "antigravity");
+  assert.ok(parseArgs(["codex", "a", "m", "unexpected"]).error);
+  assert.deepEqual(parseArgs(["claude", "opus"], ["claude"], ["claude"]),
+    { agent: "claude", account: "claude", model: "opus", resume: "", help: false });
+  assert.deepEqual(parseArgs(["--agent", "claude", "work"], ["claude"], ["claude"]),
+    { agent: "claude", account: "work", model: "", resume: "", help: false });
+  assert.ok(parseArgs(["--agent"]).error);
+});
+
+test("conductor: configured agent, aliases, accounts and resume; worker restrictions stay out", async () => {
+  const { launch, parseArgs } = await import("./commands/conductor.js");
+  const cfg = { roles: { conductor: { agent: "codex", model: "fast", account: "work" } }, agents: {
+    codex: { conductor: { models: { fast: "my-codex-model" }, accounts: { work: { CODEX_HOME: "/accounts/work" } } } } } };
+  const c = launch(cfg, parseArgs([]), "/ws with spaces", "/ws with spaces/instructions.md");
+  assert.deepEqual(c.argv.slice(0, 5), ["codex", "-m", "my-codex-model", "-C", "/ws with spaces"]);
+  assert.match(c.argv[5], /instructions\.md/);
+  assert.equal(c.env.CODEX_HOME, "/accounts/work");
+  assert.equal(c.env.ORQ_CONDUCTOR_AGENT, "codex");
+  assert.doesNotMatch(c.argv.join(" "), /mcp_servers|strict-mcp|never|bypass/);
+  const resumed = launch(cfg, parseArgs(["-r", "s1"]), "/ws", "P");
+  assert.deepEqual(resumed.argv.slice(0, 3), ["codex", "resume", "s1"]);
+  const other = launch(cfg, parseArgs(["copilot", "-", "custom"]), "/ws", "P");
+  assert.equal(other.argv[0], "copilot");
+  assert.ok(other.argv.includes("custom"));
+  assert.ok(!other.argv.includes("my-codex-model"));
+  assert.throws(() => launch(cfg, parseArgs(["codex", "missing"]), "/ws", "P"), /account 'missing'/);
+  assert.throws(() => launch({ roles: { conductor: { agent: "unknown" } } }, parseArgs([]), "/ws", "P"), /conductor.run/);
+  assert.throws(() => launch({ agents: { custom: { conductor: { run: "custom {prompt_text}" } } } },
+    parseArgs(["custom", "-r", "s1"], ["custom"]), "/ws", "P"), /conductor.resume/);
+});
+
+test("conductor: custom interactive CLI receives literal argv, instructions, account and active agent", () => {
+  const { root, env, run } = sandbox(), ws = join(root, "ws with spaces"), fake = join(root, "fake.mjs");
+  const model = "literal-$()-model";
+  writeFileSync(fake, `console.log(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(),
+    agent: process.env.ORQ_CONDUCTOR_AGENT, account: process.env.ORQ_CONDUCTOR_ACCOUNT, custom: process.env.ORQ_TEST_ACCOUNT }));`);
+  assert.equal(run("setup", "--workspace", ws, "--conductor", "custom").status, 0);
+  const config = join(root, "conductor.json");
+  writeFileSync(config, JSON.stringify({ roles: { conductor: { model, account: "work" } }, agents: {
+    custom: { conductor: { run: `"${process.execPath}" "${fake}" [--model {model}] {instructions} {prompt_text}`,
+      resume: `"${process.execPath}" "${fake}" --resume {session} [--model {model}] {instructions} {prompt_text}`,
+      accounts: { work: { ORQ_TEST_ACCOUNT: "account work" } } } } } }));
+  const start = (...args: string[]) => spawnSync(process.execPath, [CLI, "conductor", ...args],
+    { env: { ...env, ORQ_CONFIG: config }, cwd: ws, encoding: "utf8" });
+  const r = start();
+  assert.equal(r.status, 0, r.stderr);
+  const got = JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1)!);
+  assert.deepEqual(got.argv.slice(0, 3), ["--model", model, join(realpathSync(ws), ".orquestra-conductor.md")]);
+  assert.equal(got.agent, "custom"); assert.equal(got.account, "work");
+  assert.equal(got.custom, "account work"); assert.equal(got.cwd, realpathSync(ws));
+  const resumed = start("-r", "session-1");
+  assert.equal(resumed.status, 0, resumed.stderr);
+  assert.deepEqual(JSON.parse(resumed.stdout.trim().split(/\r?\n/).at(-1)!).argv.slice(0, 2), ["--resume", "session-1"]);
+});
+
+test("pick: reserve and headroom follow the configured or active conductor, with explicit overrides", () => {
+  const agents = Object.fromEntries(["codex", "claude"].map((name) => [name,
+    { roles: ["impl"], quota: [name], models: { impl: { default: "m" } } }]));
+  const cfg = { agents, roles: { conductor: { agent: "codex" } }, conductor: { headroom: 25 } };
+  const base = { role: "impl" as const, level: "medium", exclude: new Set<string>(), stats: [], blocks: new Set<string>(), recent: [], quota: { codex: 65, claude: 65 } };
+  assert.equal(pickAgent({ ...base, cfg }).best?.agent, "claude");
+  assert.equal(pickAgent({ ...base, cfg: { ...cfg, _conductorAgent: "claude" } }).best?.agent, "codex");
+  const quota = { codex: 10, claude: 10 };
+  const reserved = pickAgent({ ...base, cfg, quota });
+  assert.equal(reserved.best?.agent, "claude");
+  assert.match(reserved.cands.find((c) => c.agent === "codex")!.why, /reserve/);
+  const explicit = pickAgent({ ...base, quota, cfg: { ...cfg, agents: { ...agents,
+    codex: { ...agents.codex, reserve: false, headroom: 0 } } } });
+  assert.doesNotMatch(explicit.cands.find((c) => c.agent === "codex")!.why, /reserve/);
+});
+
+test("claim: a non-Claude conductor is not registered as an inherited Claude account", () => {
+  const { root, env } = sandbox();
+  const r = spawnSync(process.execPath, [CLI, "claim", "-w", root, "TEST-67"], { cwd: root, encoding: "utf8",
+    env: { ...env, ORQ_CONDUCTOR_ID: "test", ORQ_CONDUCTOR_AGENT: "codex", ORQ_CONDUCTOR_ACCOUNT: "work", CLAUDE_CONFIG_DIR: "/claude/old" } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(readFileSync(join(root, ".orquestra", "TEST-67", "owner"), "utf8"), /account=codex:work /);
 });
 
 test("conductor: model aliases map to the exact ids, anything else passes through", async () => {
@@ -2873,4 +2991,90 @@ test("release: version from conventional commits; check wants package, lock and 
   assert.deepEqual(problems("0.7.0", ok), []);
   const bad = problems("0.7.0", { ...ok, pkg: { version: "0.6.1" }, pt: log("0.6.1", "### Fixed\n- y\n") });
   assert.equal(bad.length, 3, bad.join("\n"));
+});
+
+test("harness: wait strategy follows capabilities, not background-process support (#119)", async () => {
+  const { capabilities, strategy, strategyText, loopTimeout } = await import("./harness.js");
+  // native completion-triggered task
+  assert.equal(strategy(capabilities("claude")), "background-task");
+  // background processes without wake-up
+  const bgNoWake = capabilities("codex", { agents: { codex: { conductor: { capabilities: { background: true } } } } });
+  assert.equal(bgNoWake.background, true);
+  assert.equal(strategy(bgNoWake), "foreground-loop");
+  // foreground-only, custom limit
+  const fg = capabilities("mine", { agents: { mine: { conductor: { capabilities: { foreground_timeout: 100 } } } } });
+  assert.equal(strategy(fg), "foreground-loop");
+  assert.equal(loopTimeout(fg), 70);
+  // external delivery unavailable outside herdr, available inside
+  assert.equal(capabilities("codex", {}, {}).promptDelivery, false);
+  assert.equal(capabilities("codex", {}, { HERDR_ENV: "1" }).promptDelivery, true);
+  // unknown harness never promises a wake-up
+  const t = strategyText("x", capabilities("x"));
+  assert.match(t, /foreground loop/);
+  assert.match(t, /--timeout 210/);
+  assert.match(t, /never dispatch the same child again/);
+  assert.match(t, /will \*\*not\*\* continue by yourself/);
+  assert.match(strategyText("claude", capabilities("claude")), /background task.*end your\nturn/s);
+  // a yielded tool session is polled, not duplicated
+  assert.match(t, /keep polling \*\*that same\*\* session/);
+  // no wake-up and no foreground wait: manual, never promises continuation
+  const man = capabilities("x", { agents: { x: { conductor: { capabilities: { foreground_wait: false } } } } });
+  assert.equal(strategy(man), "manual");
+  assert.match(strategyText("x", man), /will \*\*not\*\* continue/);
+  // a real wake-up still wins without foreground waits
+  assert.equal(strategy(capabilities("claude", { agents: { claude: { conductor: { capabilities: { foreground_wait: false } } } } })), "background-task");
+});
+
+test("instructions: strategy diagnostics and per-conductor AGENTS.md block (#119)", () => {
+  const { root, run } = sandbox();
+  const ws = join(root, "ws");
+  mkdirSync(ws, { recursive: true });
+  const j = JSON.parse(run("instructions", "strategy", "-w", ws, "--conductor", "codex", "--json").stdout);
+  assert.equal(j.strategy, "foreground-loop");
+  assert.equal(j.fallback, "none");
+  assert.equal(JSON.parse(run("instructions", "strategy", "-w", ws, "--conductor", "claude", "--json").stdout).strategy, "background-task");
+  assert.equal(run("instructions", "agents", "-w", ws, "--conductor", "codex").status, 0);
+  const a = readFileSync(join(ws, "AGENTS.md"), "utf8");
+  assert.match(a, /Waiting strategy: foreground loop \(codex\)/);
+  assert.doesNotMatch(a, /Waiting strategy: background task/);
+  // without --conductor, a Claude default must not leak the background wake-up into AGENTS.md
+  assert.equal(run("instructions", "agents", "-w", ws).status, 0);
+  assert.doesNotMatch(readFileSync(join(ws, "AGENTS.md"), "utf8"), /Waiting strategy: background task/);
+});
+
+test("release: a squash release excludes already published commits when calculating the next version", async () => {
+  const mod = "../scripts/release.mjs";
+  const { commits, releaseBase, next } = await import(mod);
+  const { root, env } = sandbox(), cwd = process.cwd();
+  const git = (...args: string[]) => {
+    const r = spawnSync("git", ["-C", root, "-c", "user.name=Test", "-c", "user.email=t@t", ...args], { env, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  const commit = (name: string, text: string, message: string) => {
+    writeFileSync(join(root, name), text); git("add", name); git("commit", "-m", message);
+  };
+  try {
+    git("init", "-b", "main");
+    commit("base", "base\n", "chore: initial tree");
+    git("checkout", "-b", "dev");
+    commit("feature", "feature\n", "feat: already released");
+    commit("version", "0.8.0\n", "chore(release): 0.8.0");
+    const prepared = git("rev-parse", "HEAD");
+    git("checkout", "main"); git("merge", "--squash", "dev"); git("commit", "-m", "Release v0.8.0"); git("tag", "v0.8.0");
+    git("checkout", "dev");
+    process.chdir(root);
+    assert.equal(releaseBase("v0.8.0"), prepared);
+    assert.deepEqual(commits("v0.8.0"), []);
+    commit("fix", "fix\n", "fix: new fix");
+    const fixes = commits("v0.8.0");
+    assert.deepEqual(fixes.map((c: { subject: string }) => c.subject), ["fix: new fix"]);
+    assert.equal(next("v0.8.0", fixes).next, "0.8.1");
+    commit("new-feature", "new\n", "feat: new feature");
+    assert.equal(next("v0.8.0", commits("v0.8.0")).next, "0.9.0");
+    git("tag", "v0.9.0");
+    commit("later-fix", "later\n", "fix: after a normal tag");
+    assert.equal(releaseBase("v0.9.0"), "v0.9.0");
+    assert.deepEqual(commits("v0.9.0").map((c: { subject: string }) => c.subject), ["fix: after a normal tag"]);
+  } finally { process.chdir(cwd); rmSync(root, { recursive: true, force: true }); }
 });

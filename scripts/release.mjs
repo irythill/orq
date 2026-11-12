@@ -16,9 +16,17 @@ export function lastTag() {
   try { return git("tag", "--list", "v[0-9]*.[0-9]*.[0-9]*", "--sort=-v:refname").split("\n")[0] || undefined; } catch { return undefined; }
 }
 
-/** [{subject, body}] of the non-merge commits after `tag` up to `ref`. */
+/** Match a squashed release to its original tree on the target branch; otherwise retain the tag as the base. */
+export function releaseBase(tag, ref = "HEAD") {
+  const tree = git("rev-parse", `${tag}^{tree}`);
+  const match = git("log", "--first-parent", "--format=%H %T", `${tag}..${ref}`).split("\n")
+    .find((line) => line.split(" ")[1] === tree);
+  return match?.split(" ")[0] ?? tag;
+}
+
+/** [{subject, body}] of the non-merge commits not yet included in the tagged release. */
 export function commits(tag, ref = "HEAD") {
-  const out = git("log", "--no-merges", "--format=%s%x1f%b%x1e", tag ? `${tag}..${ref}` : ref);
+  const out = git("log", "--no-merges", "--format=%s%x1f%b%x1e", tag ? `${releaseBase(tag, ref)}..${ref}` : ref);
   return out.split("\x1e").map((c) => c.trim()).filter(Boolean).map((c) => {
     const [subject, body = ""] = c.split("\x1f");
     return { subject, body };

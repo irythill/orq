@@ -6,6 +6,17 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-12
+
+### Added
+- Manual waiting strategy for conductor harnesses that can neither be woken by a finished background task nor keep a foreground wait open (`agents.<agent>.conductor.capabilities.foreground_wait = false`): the conductor reports the pending prefixes and says it will not continue by itself. The foreground loop now polls a running shell session handed back by the harness instead of starting a duplicate `orq wait`. New guide: `docs/conductor-continuation.md` (#119).
+- Conductor wait/resume strategy by harness capability: only a harness whose finished background task starts a new turn (Claude Code) ends its turn after dispatch; Codex, OpenCode, Copilot, Antigravity and unknown harnesses stay active in an `orq wait --any --timeout` loop and never re-dispatch on a timeout. The conductor instructions and the AGENTS.md block carry the selected strategy; `orq instructions strategy [--conductor <agent>] [--json]` reports it; `agents.<agent>.conductor.capabilities` overrides it (#119).
+- Any configured agent CLI can conduct: `orq conductor [agent] [account|-] [model]`, with per-agent interactive launch/resume templates, model aliases and account environments. Setup saves the conductor choice, migrates the workspace map to `ORQ.md` without overwriting user instructions, and supplies the issue playbook for Codex and other conductors. Reserve and optional `[conductor].headroom` follow the active conductor; legacy Claude launches remain supported (#67).
+
+### Fixed
+- Worktree cleanup stops processes running inside the worktree before removing it, including processes whose working directory is the worktree root; orq and its own ancestors are preserved (#116).
+- Release planning recognizes the original dev tree represented by a squashed release tag, so previously published features are not counted again in the next version or release notes (#118).
+
 ## [0.8.0] — 2026-11-10
 ### Added
 - `orq pick` scores (agent, model) pairs: a level in `models.<role>` may list several candidate models (`medium = ["a@medium", "b@medium"]`; a string stays valid). Each pair is scored on its own stats row, with its own exploration and per-model quota check; `--explain` shows one line per pair. Fixed roles take the first model (#103).
@@ -35,6 +46,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 - `orq stats` names every agent and model: from the job's argv, then the pick, then the log (review tools run as plain CLIs no longer show as `?`; a `-m` inside a prompt is no longer read as the model; opencode's screen model comes from its config). Time on a screen run stops at the first turn (`<prefix>.turns`), so a screen left open no longer inflates it; killed runs and older screen runs are left out of the time median (`-`). opencode tokens are counted again on its newer event format (#59).
 - `orq pick` skips an agent whose CLI doesn't resolve on PATH (e.g. installed under another Node version), with a reinstall hint, instead of failing after dispatch (#77).
 - Several conductors on one workspace get distinct session names, `conductor-<workspace>:<herdr label or ORQ_CONDUCTOR_ID>`, so they can address each other; `orq claim -l` ends each line with that `session=` (#79).
+- `orq gc` and temporary test worktree cleanup stop Linux processes whose cwd is inside the worktree (SIGTERM, then SIGKILL
+  after five seconds) before removing its files; dry runs list the PIDs and names that would be stopped. orq and
+  the shell that launched it are never stopped; other platforms skip this.
 - `orq agent -T` with Codex sometimes never signalled the end of a turn (#62): a `.id` left on the prefix by an earlier
   run (another agent or session) made `--turn codex` drop every real turn as a side thread. A new launch now clears it
   (`-R` writes the resumed session). On herdr, a turn whose hook still doesn't fire (screen seen busy, then idle for

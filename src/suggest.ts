@@ -117,7 +117,7 @@ export function toToml(p: Proposal): string {
   for (const [n, a] of Object.entries(p.agents)) {
     out.push(`[agents.${n}]`, `vendor = ${q(a.vendor)}`, `roles  = ${list(a.roles)}`);
     if (a.quota) out.push(`quota  = ${list(a.quota)}`);
-    if (a.reserve) out.push("reserve = true");
+    if (a.reserve) out.push("# reserve follows roles.conductor.agent (or the running conductor)");
     out.push("# models.<role>.<level> = \"model[@effort]\" — without models, the CLI's default model is used", "");
   }
   for (const [r, v] of Object.entries(p.roles)) {
