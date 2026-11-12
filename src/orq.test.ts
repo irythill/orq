@@ -11,6 +11,7 @@ import { limitsFor, parseWindows, pick as pickAgent } from "./pick.js";
 import { parseLocal, quotaUntil } from "./commands/block.js";
 import { handoffPrompt, owners, plan, tighter, trimHandoffContext } from "./commands/handoff.js";
 import { setTomlString } from "./toml-set.js";
+import { reviewStem } from "./commands/agent.js";
 import { FORMATS, parseResetIn, usesPrompt, useThrowaway } from "./agents.js";
 import { buildPrompt, diagnosisGate, recommendation, trim } from "./diagnose.js";
 import { resolveRole } from "./roles.js";
@@ -2819,6 +2820,37 @@ test("agent: refuses a prefix whose previous run is alive; a dead one has its st
   assert.equal(w.status, 0, w.stdout + w.stderr);
   assert.ok(!w.stdout.includes("at=old"));
   assert.match(readFileSync(`${O}.out.md`, "utf8"), /fresh answer/);
+});
+
+test("reviewStem: rounds and redos of a repo's review share a stem", () => {
+  for (const n of ["review-api", "review-api-1", "review-api-2", "review-api-2b", "review-api-b"]) assert.equal(reviewStem(n), "review-api");
+  assert.equal(reviewStem("review-sys-svg"), "review-sys-svg");
+  assert.notEqual(reviewStem("review-sys-icons"), reviewStem("review-sys-svg"));
+  assert.equal(reviewStem("impl-api"), undefined);
+});
+
+test("agent: refuses a review while another review of the same repo in the issue is alive", () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  (env as Record<string, string>).ORQ_TERMINAL = "plain";
+  const repo = join(root, "repo"), fake = join(root, "ok.mjs"), dir = join(root, ".orquestra", "X-1");
+  mkdirSync(repo); mkdirSync(dir, { recursive: true });
+  writeFileSync(fake, 'console.log("APPROVED");\n');
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({ agents: { fake: { run: `'${process.execPath}' '${fake}'`, readonly: "ro", write: "w", mem_max: "off" } } }));
+  writeFileSync(join(root, "p.md"), "hi\n");
+  const go = (name: string) => run("agent", "-a", "fake", "-t", name, "-d", repo, "-o", join(dir, name), "-r", "--", join(root, "p.md"));
+  writeFileSync(join(dir, "review-api.pid"), String(process.pid));
+  const refused = go("review-api-1");
+  assert.equal(refused.status, 3);
+  assert.match(refused.stderr, /review-api is still reviewing/);
+  assert.ok(!existsSync(join(dir, "review-api-1.job.json")), "nothing started");
+  assert.equal(go("review-web").status, 0, "another repo is fine");
+  assert.equal(run("wait", "--timeout", "60", join(dir, "review-web")).status, 0);
+  writeFileSync(join(dir, "review-api.pid"), String(spawnSync(process.execPath, ["-e", ""]).pid!));
+  writeFileSync(join(dir, "review-api.done"), "status=ok rc=0 at=x\n");
+  assert.equal(go("review-api-1").status, 0, "the earlier review ended");
+  assert.equal(run("wait", "--timeout", "60", join(dir, "review-api-1")).status, 0);
 });
 
 const agyStream = (events: object[], stderr: string[] = []) => [...events.map((e) => JSON.stringify(e)), ...stderr].join("\n");

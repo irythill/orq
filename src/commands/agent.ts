@@ -10,7 +10,7 @@
 // the follow-up into it; with the screen closed it reopens the session (tui_resume).
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, copyFileSync, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, createWriteStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "../accounts.js";
@@ -100,6 +100,12 @@ export async function agent(argv: string[]): Promise<number> {
   if (!typed && runLive(O, pid)) {
     console.error(m(`${basename(O)} still has a live run (${pid ? `pid ${pid}` : "unit active"}): wait for it (orq wait ${O}) or stop it, or use another prefix. Nothing started.`,
       `${basename(O)} ainda tem uma execução viva (${pid ? `pid ${pid}` : "unit ativa"}): espere (orq wait ${O}) ou pare, ou use outro prefixo. Nada foi iniciado.`));
+    return 3;
+  }
+  const sibling = !resume ? liveSiblingReview(O) : undefined;
+  if (sibling) {
+    console.error(m(`${sibling} is still reviewing the same repo: wait for it (orq wait ${join(dirname(O), sibling)}) or stop it before starting ${basename(O)}. Nothing started.`,
+      `${sibling} ainda está revisando o mesmo repo: espere (orq wait ${join(dirname(O), sibling)}) ou pare antes de iniciar ${basename(O)}. Nada foi iniciado.`));
     return 3;
   }
   // Fix rounds: every -R on the same session counts, whatever the prefix is called. policy.max_rounds is enforced here,
@@ -267,6 +273,27 @@ function runLive(O: string, pid: number): boolean {
     const unit = (JSON.parse(readFileSync(`${O}.job.json`, "utf8")) as Job).unit;
     return Boolean(unit) && spawnSync("systemctl", ["--user", "is-active", "--quiet", `${unit}.scope`], { timeout: 5_000 }).status === 0;
   } catch { return false; }
+}
+
+/** review-<repo>, its rounds (-<n>) and redos (-<n>b, -b) share one stem: one live reviewer per repo per issue. */
+export const reviewStem = (name: string): string | undefined =>
+  /^review-/.test(name) ? name.replace(/-(\d+[a-z]?|[a-z])$/, "") : undefined;
+
+/** A live review run in the same issue folder on the same repo as prefix O, by its prefix name. */
+function liveSiblingReview(O: string): string | undefined {
+  const stem = reviewStem(basename(O));
+  if (!stem) return undefined;
+  let names: string[] = [];
+  try { names = readdirSync(dirname(O)); } catch { return undefined; }
+  for (const f of names) {
+    if (!f.endsWith(".pid")) continue;
+    const n = f.slice(0, -4), P = join(dirname(O), n);
+    if (P === O || reviewStem(n) !== stem) continue;
+    let pid = 0;
+    try { pid = Number(readFileSync(`${P}.pid`, "utf8")); } catch { continue; }
+    if (runLive(P, pid)) return n;
+  }
+  return undefined;
 }
 
 /** OpenCode (v2) plugin for -T: when the main session's run ends, its last answer goes to `orq agent --turn`. */

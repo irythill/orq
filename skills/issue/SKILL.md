@@ -185,7 +185,7 @@ orq agent $(cat $O/review-<repo>.pick) -b $BASE \
   -i $O/verify-<repo>.txt \
   -- $O/review-<repo>.md
 ```
-`-b $BASE` attaches the diff (`origin/$BASE...HEAD`): always use it. The review prompt works for any reviewer and says
+`-b $BASE` attaches the diff (`origin/$BASE...HEAD`): always use it. One live review per repo per issue: `orq agent` refuses (exit 3) a `review-<repo>*` prefix while another one for that repo is still running — `orq wait` for it, never start a parallel one. The review prompt works for any reviewer and says
 "the diff is attached; for context, open files with your file-reading tool; don't run lint, tsc or tests (the results
 are in the attached verify)". If the reviewer ends with `status=fail` and no verdict (empty answer, or a
 `jetski: ... permission` line), that is not a rejection: run `orq pick review ... --exclude-agent <it>` and redo it.
