@@ -9,7 +9,6 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 ### Added
 - Any configured agent CLI can conduct: `orq conductor [agent] [account|-] [model]`, with per-agent interactive launch/resume templates, model aliases and account environments. Setup saves the conductor choice, migrates the workspace map to `ORQ.md` without overwriting user instructions, and supplies the issue playbook for Codex and other conductors. Reserve and optional `[conductor].headroom` follow the active conductor; legacy Claude launches remain supported (#67).
 
-## [0.8.1] — 2026-11-11
 ### Fixed
 - Worktree cleanup stops processes running inside the worktree before removing it, including processes whose working directory is the worktree root; orq and its own ancestors are preserved (#116).
 - Release planning recognizes the original dev tree represented by a squashed release tag, so previously published features are not counted again in the next version or release notes (#118).
