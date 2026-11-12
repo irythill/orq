@@ -6,6 +6,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-12
+
 ### Adicionado
 - Estratégia de espera manual para harnesses de conductor que não são acordados por uma tarefa em background nem conseguem manter uma espera em foreground (`agents.<agente>.conductor.capabilities.foreground_wait = false`): o conductor informa os prefixos pendentes e avisa que não vai continuar sozinho. O loop em foreground agora consulta a sessão de shell em execução devolvida pelo harness em vez de abrir outro `orq wait`. Novo guia: `docs/pt-BR/conductor-continuation.md` (#119).
 - Estratégia de espera/retomada do conductor pela capacidade do harness: só um harness cuja tarefa em background, ao terminar, inicia um novo turno (Claude Code) encerra o turno após o dispatch; Codex, OpenCode, Copilot, Antigravity e harnesses desconhecidos ficam ativos num loop `orq wait --any --timeout` e nunca redisparam por timeout. As instruções do conductor e o bloco do AGENTS.md trazem a estratégia escolhida; `orq instructions strategy [--conductor <agente>] [--json]` a mostra; `agents.<agente>.conductor.capabilities` a ajusta (#119).
