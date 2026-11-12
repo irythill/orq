@@ -3033,3 +3033,40 @@ test("instructions: strategy diagnostics and per-conductor AGENTS.md block (#119
   assert.equal(run("instructions", "agents", "-w", ws).status, 0);
   assert.doesNotMatch(readFileSync(join(ws, "AGENTS.md"), "utf8"), /Waiting strategy: background task/);
 });
+
+test("release: a squash release excludes already published commits when calculating the next version", async () => {
+  const mod = "../scripts/release.mjs";
+  const { commits, releaseBase, next } = await import(mod);
+  const { root, env } = sandbox(), cwd = process.cwd();
+  const git = (...args: string[]) => {
+    const r = spawnSync("git", ["-C", root, "-c", "user.name=Test", "-c", "user.email=t@t", ...args], { env, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  const commit = (name: string, text: string, message: string) => {
+    writeFileSync(join(root, name), text); git("add", name); git("commit", "-m", message);
+  };
+  try {
+    git("init", "-b", "main");
+    commit("base", "base\n", "chore: initial tree");
+    git("checkout", "-b", "dev");
+    commit("feature", "feature\n", "feat: already released");
+    commit("version", "0.8.0\n", "chore(release): 0.8.0");
+    const prepared = git("rev-parse", "HEAD");
+    git("checkout", "main"); git("merge", "--squash", "dev"); git("commit", "-m", "Release v0.8.0"); git("tag", "v0.8.0");
+    git("checkout", "dev");
+    process.chdir(root);
+    assert.equal(releaseBase("v0.8.0"), prepared);
+    assert.deepEqual(commits("v0.8.0"), []);
+    commit("fix", "fix\n", "fix: new fix");
+    const fixes = commits("v0.8.0");
+    assert.deepEqual(fixes.map((c: { subject: string }) => c.subject), ["fix: new fix"]);
+    assert.equal(next("v0.8.0", fixes).next, "0.8.1");
+    commit("new-feature", "new\n", "feat: new feature");
+    assert.equal(next("v0.8.0", commits("v0.8.0")).next, "0.9.0");
+    git("tag", "v0.9.0");
+    commit("later-fix", "later\n", "fix: after a normal tag");
+    assert.equal(releaseBase("v0.9.0"), "v0.9.0");
+    assert.deepEqual(commits("v0.9.0").map((c: { subject: string }) => c.subject), ["fix: after a normal tag"]);
+  } finally { process.chdir(cwd); rmSync(root, { recursive: true, force: true }); }
+});
