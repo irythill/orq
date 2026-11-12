@@ -3015,6 +3015,14 @@ test("harness: wait strategy follows capabilities, not background-process suppor
   assert.match(t, /never dispatch the same child again/);
   assert.match(t, /will \*\*not\*\* continue by yourself/);
   assert.match(strategyText("claude", capabilities("claude")), /background task.*end your\nturn/s);
+  // a yielded tool session is polled, not duplicated
+  assert.match(t, /keep polling \*\*that same\*\* session/);
+  // no wake-up and no foreground wait: manual, never promises continuation
+  const man = capabilities("x", { agents: { x: { conductor: { capabilities: { foreground_wait: false } } } } });
+  assert.equal(strategy(man), "manual");
+  assert.match(strategyText("x", man), /will \*\*not\*\* continue/);
+  // a real wake-up still wins without foreground waits
+  assert.equal(strategy(capabilities("claude", { agents: { claude: { conductor: { capabilities: { foreground_wait: false } } } } })), "background-task");
 });
 
 test("instructions: strategy diagnostics and per-conductor AGENTS.md block (#119)", () => {

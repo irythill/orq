@@ -7,6 +7,7 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 ## [Unreleased]
 
 ### Added
+- Manual waiting strategy for conductor harnesses that can neither be woken by a finished background task nor keep a foreground wait open (`agents.<agent>.conductor.capabilities.foreground_wait = false`): the conductor reports the pending prefixes and says it will not continue by itself. The foreground loop now polls a running shell session handed back by the harness instead of starting a duplicate `orq wait`. New guide: `docs/conductor-continuation.md` (#119).
 - Conductor wait/resume strategy by harness capability: only a harness whose finished background task starts a new turn (Claude Code) ends its turn after dispatch; Codex, OpenCode, Copilot, Antigravity and unknown harnesses stay active in an `orq wait --any --timeout` loop and never re-dispatch on a timeout. The conductor instructions and the AGENTS.md block carry the selected strategy; `orq instructions strategy [--conductor <agent>] [--json]` reports it; `agents.<agent>.conductor.capabilities` overrides it (#119).
 - Any configured agent CLI can conduct: `orq conductor [agent] [account|-] [model]`, with per-agent interactive launch/resume templates, model aliases and account environments. Setup saves the conductor choice, migrates the workspace map to `ORQ.md` without overwriting user instructions, and supplies the issue playbook for Codex and other conductors. Reserve and optional `[conductor].headroom` follow the active conductor; legacy Claude launches remain supported (#67).
 
