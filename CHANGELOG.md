@@ -6,6 +6,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 
+### Fixed
+- `orq agent` refuses to start a review (`review-<repo>`, its rounds `-<n>` and redos like `-2b`) while another review of the same repo in the same issue folder is still alive, so a conductor can no longer stack concurrent reviewers on one issue (exit 3, nothing started) (#134).
+
 ## [0.9.0] — 2026-11-12
 
 ### Added

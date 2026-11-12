@@ -6,6 +6,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+### Corrigido
+- `orq agent` recusa iniciar uma revisão (`review-<repo>`, suas rodadas `-<n>` e refações como `-2b`) enquanto outra revisão do mesmo repo na mesma pasta da issue ainda está viva, então um conductor não empilha mais revisores simultâneos numa issue (saída 3, nada iniciado) (#134).
+
 ## [0.9.0] — 2026-11-12
 
 ### Adicionado
