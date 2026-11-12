@@ -123,7 +123,7 @@ Duas camadas, para separar **o seu jeito de trabalhar** do **projeto do time**:
 | Arquivo | De quem | O que guarda |
 |---|---|---|
 | `~/.config/orq/config.toml` | seu, fica na sua máquina | agentes, contas, modelos por papel e nível, pesos do pick, limites de memória |
-| `<workspace>/.orq/workspace.toml` | do time, versionado | Plane (projetos, padrão de issue), repos, branch base, verificação, testes, dependências |
+| `<workspace>/.orq/workspace.toml` | do time, versionado | overrides do time para qualquer chave pessoal, mais `tracker.kind` e `repos.<nome>.prod_ref` (`orq gc`); o mapa de repos, projetos do tracker, padrão de issue, branch base e verificação ficam no `ORQ.md` do workspace |
 
 O mais específico ganha, chave por chave. JSON também funciona (`config.json`). Para ver o resultado mesclado:
 `orq config` (tudo), `orq config get policy.weights`, `orq config files`.

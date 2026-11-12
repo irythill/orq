@@ -8,6 +8,7 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ### Corrigido
 - `orq agent` recusa iniciar uma revisão (`review-<repo>`, suas rodadas `-<n>` e refações como `-2b`) enquanto outra revisão do mesmo repo na mesma pasta da issue ainda está viva, então um conductor não empilha mais revisores simultâneos numa issue (saída 3, nada iniciado) (#134).
+- README: a tabela de config não diz mais que o `.orq/workspace.toml` guarda projetos do tracker, padrão de issue, branch base e verificação; isso fica no `ORQ.md` do workspace, e o arquivo guarda overrides do time mais `tracker.kind` e `repos.<nome>.prod_ref`.
 
 ## [0.9.0] — 2026-11-12
 

@@ -120,7 +120,7 @@ Two layers, to keep **your way of working** apart from **the team's project**:
 | File | Whose | What it holds |
 |---|---|---|
 | `~/.config/orq/config.toml` | yours, stays on your machine | agents, accounts, models per role and level, pick weights, memory limits |
-| `<workspace>/.orq/workspace.toml` | the team's, versioned | Plane (projects, issue standard), repos, base branch, verification, tests, dependencies |
+| `<workspace>/.orq/workspace.toml` | the team's, versioned | team overrides of any personal key, plus `tracker.kind` and `repos.<name>.prod_ref` (`orq gc`); the repo map, tracker projects, issue standard, base branch and verification live in the workspace `ORQ.md` |
 
 The more specific one wins, key by key. JSON works too (`config.json`). To see the merged result: `orq config`
 (everything), `orq config get policy.weights`, `orq config files`.

@@ -8,6 +8,7 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ### Fixed
 - `orq agent` refuses to start a review (`review-<repo>`, its rounds `-<n>` and redos like `-2b`) while another review of the same repo in the same issue folder is still alive, so a conductor can no longer stack concurrent reviewers on one issue (exit 3, nothing started) (#134).
+- README: the config table no longer claims `.orq/workspace.toml` holds tracker projects, the issue standard, base branch and verification; those live in the workspace `ORQ.md`, and the file holds team overrides plus `tracker.kind` and `repos.<name>.prod_ref`.
 
 ## [0.9.0] — 2026-11-12
 
