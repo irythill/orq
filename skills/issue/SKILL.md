@@ -17,11 +17,17 @@ herdr (`HERDR_ENV=1`), in tmux windows inside tmux, else in the background (thei
 still `<prefix>.out.md`; `-T`, the agent's own screen, needs herdr or tmux). Set `ORQ_CONDUCTOR_ID` to a fixed name per
 conductor outside herdr.
 - **Completion signal:** in herdr, one line `[HERDR-AGENT DONE] <title> status=ok|fail ... answer: <file>` is typed into
-  your pane after each child. Anywhere else no line arrives: after dispatching, run `orq wait <prefix>` **as a background
-  task** (when the harness supports background commands); its exit wakes you and its output is the line
+  your pane after each child. Anywhere else no line arrives: `orq wait <prefix>` prints
   `[ORQ AGENT DONE] <title> status=ok|fail ... answer: <file>`. Treat both lines the same. Several children in parallel:
-  `orq wait --any <prefix1> <prefix2>` (one wake-up per finish; wait again for the rest). No background tasks in your
-  harness → run `orq wait` in the foreground; that is the one allowed blocking wait.
+  `orq wait --any <prefix1> <prefix2>` (one finish per call; wait again for the rest).
+- **Waiting strategy** (your conductor instructions name it; `orq instructions strategy` shows it). It depends on what
+  your harness can do, not on whether it can start a background process:
+  - *background task* — only when a finished background task starts a new turn by itself (Claude Code: Bash with
+    `run_in_background`): run `orq wait --any ...` that way and end your turn.
+  - *foreground loop* — every other harness (Codex, OpenCode, ...): stay active. Run
+    `orq wait --any --timeout <s> <pending prefixes>` in the foreground; exit 124 = nothing finished yet → one-line
+    status to the user and run it again (never re-dispatch on a timeout). Don't end your turn expecting a wake-up; if
+    you must, tell the user you won't continue until they message you.
 - `orq verify` and `orq baseline` run like children (herdr tab, tmux window or background) and you wait for them the same
   way, e.g. `orq wait $O/verify-<repo>`.
 - Peeking at a child: `<prefix>.log` (in herdr also `herdr pane read $(cat <prefix>.pane) --source recent`).
@@ -148,7 +154,7 @@ orq agent $(cat $O/impl-<repo>.pick) -g <group> -t "<ID> impl <repo>" -d $WT -o 
   arriving), run `orq notice` (delivery log) and `<prefix>.done` for that issue, then handle the failure; running
   `orq wait`, `orq verify` or `orq agent` for the issue acknowledges it.
 - **Never block waiting** (`herdr agent wait`, `pane wait-output`, `sleep`, `timeout`): completion arrives as a
-  `[HERDR-AGENT DONE]` line in your pane (herdr) or through the background `orq wait`. Dispatch, report in one line and end your turn. "Done yet?" = `<prefix>.done`
+  `[HERDR-AGENT DONE]` line in your pane (herdr) or through `orq wait` per your waiting strategy. Dispatch, report in one line, then end your turn (herdr / background task) or keep looping (foreground loop). "Done yet?" = `<prefix>.done`
   exists (never `pgrep`).
 - Investigation only (no code): "READ ONLY" prompt, in the repo itself, no worktree. `orq agent -r` (Claude:
   `--permission-mode plan`; the others: throwaway worktree, no editing).
@@ -169,7 +175,7 @@ something is red, new or old, and never widen a baseline or allowlist to silence
 outside the issue's domain: ask the user first (then it ships as its own PR, not as a note).
 **Mandatory order every round (impl and each fix): child `ok` → verify → review.** Never dispatch the review (or an
 "early" fix) while this round's verify is pending, even if it is queued behind another verify: wait for
-the `... verify ...` done line and end your turn until then.
+the `... verify ...` done line (end your turn or keep looping, per your waiting strategy).
 
 ## 5. Cross review (always another vendor)
 ```bash
@@ -265,7 +271,7 @@ rules live) commits and writes the PR. Find and cite in the prompt, by path, wha
   high severity, `file:line` and a concrete failure, not already decided in the rounds, goes into a fix round (it
   counts towards `policy.max_rounds`); the rest goes into the Plane comment or a follow-up issue. Don't re-request the
   bot's review to "get it clean".
-- **CI after every push:** `gh pr checks <n>` (no `--watch`; if pending, end your turn and check on the next notice).
+- **CI after every push:** `gh pr checks <n>` (no `--watch`; if pending, check again on the next notice or loop iteration).
   Red → `gh run view <id> --log-failed | tail -40`: error from the diff → fix round; error already on the base → create
   a Plane issue (workspace standard) and tell the user. "Ready to merge" only with green checks or an explained failure
   + issue.

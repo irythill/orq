@@ -128,7 +128,7 @@ function workspace(dir: string, conductor?: string): void {
   c ??= detect()[0] ?? "claude";
   const d = expand(dir); // typed at the prompt: ~ is not expanded by any shell
   console.log(`Workspace ${d}`);
-  for (const l of prepareWorkspace(d, c === "claude" ? "claude" : "agents")) console.log(l);
+  for (const l of prepareWorkspace(d, c === "claude" ? "claude" : "agents", undefined, c)) console.log(l);
   if (c !== "agents") {
     const toml = join(d, ".orq", "workspace.toml"), json = join(d, ".orq", "workspace.json");
     const file = existsSync(toml) || !existsSync(json) ? toml : json;
