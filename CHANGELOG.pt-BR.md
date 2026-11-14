@@ -6,6 +6,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-14
+
 ### Adicionado
 - `orq ci` e o board acompanham PRs abertos de worktrees de issues após liberar a reivindicação, mostram a revisão de bot mais recente e avisam o dono atual ou anterior sobre novas revisões no head e falhas de CI (#141).
 
