@@ -342,7 +342,7 @@ test("collectCi: a released PR notifies its last terminal owner once per failed 
   f.pr("sha3", "FAILURE"); collectCi(f.ws, hooks); collectCi(f.ws, hooks);
   assert.equal(notices.length, 2); assert.deepEqual(owner, []); assert.deepEqual(desktop, ["failed", "failed", "failed"]);
   const calls = readFileSync(f.callsFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-  assert.ok(calls.every((call) => call.cwd === f.repo));
+  assert.ok(calls.every((call) => realpathSync(call.cwd) === realpathSync(f.repo))); // macOS tmpdir: /var → /private/var
   assert.equal(calls.filter((call) => call.args[0] === "pr").length, calls.filter((call) => call.args[0] === "api").length);
   f.pr("sha3", "FAILURE", "MERGED");
   assert.deepEqual(collectCi(f.ws, hooks), []); assert.deepEqual(loadCache(), []);
