@@ -6,6 +6,8 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-14
+
 ### Added
 - `orq ci` and the board follow open PRs for issue worktrees after claim release, report the latest bot review, and notify the live or last owner of new head reviews and CI failures (#141).
 
