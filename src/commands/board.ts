@@ -258,7 +258,7 @@ function startCollectCi(wss: string[]): void {
 // Age per requested workspace, not the shared cache file's mtime: ci.json holds every workspace's entries and
 // collectCi() rewrites the whole file on every run, so one workspace's collection would otherwise renew the
 // mtime for all of them and starve a second workspace that was never actually collected. collectedAt() reads a
-// per-workspace marker that collectCi() writes even when it finds zero entries (no claimed issue with a matching
+// per-workspace marker that collectCi() writes even when it finds zero entries (no open PR on a matching
 // worktree) — without it, a workspace with nothing to collect would look permanently stale (entries' own `at`
 // would never exist for it) and the board would relaunch the collector every redraw forever.
 function ci(wss: string[], now: number): Snapshot["ci"] {
@@ -398,9 +398,11 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
 
   section("MONITOR", m("CI/CD", "CI/CD"));
   const ciMark: Record<CiEntry["state"], string> = { passed: `${c.ok}✓`, failed: `${c.err}✗`, running: `${c.acc}●`, queued: `${c.mut}‖`, none: `${c.mut}·` };
-  for (const e of s.ci.entries)
-    out.push(` ${ciMark[e.state]}${c.r} ${c.ink}${fit(e.issue, 10)}${c.r} ${c.ink2}${fit(e.repo, 14)}${c.r} ${c.mut}${fit(e.branch, 24)}${c.r} ${c.ink}${(e.pr ? `#${e.pr}` : "-").padEnd(6)}${c.r} ${c.ink2}${e.state}${c.r}`);
-  if (!s.ci.entries.length) out.push(` ${c.mut}${s.ci.age === undefined ? m("collecting...", "coletando...") : m("no claimed issue has a PR", "nenhuma issue reivindicada tem PR")}${c.r}`);
+  for (const e of s.ci.entries) {
+    const reviewMark = W >= 72 && e.bot?.sha === e.sha ? " R" : "";
+    out.push(` ${ciMark[e.state]}${c.r} ${c.ink}${fit(e.issue, 10)}${c.r} ${c.ink2}${fit(e.repo, 14)}${c.r} ${c.mut}${fit(e.branch, 24)}${c.r} ${c.ink}${(e.pr ? `#${e.pr}` : "-").padEnd(6)}${c.r} ${c.ink2}${e.state}${reviewMark}${c.r}`);
+  }
+  if (!s.ci.entries.length) out.push(` ${c.mut}${s.ci.age === undefined ? m("collecting...", "coletando...") : m("no issue worktree has an open PR", "nenhuma worktree de issue tem PR aberto")}${c.r}`);
 
   section("MIXER", m("quota", "cota"));
   const win = (v: string, tag: string) => {
