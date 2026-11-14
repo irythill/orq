@@ -270,10 +270,10 @@ conductor (herdr) e, no Linux, uma notificação de desktop (`[ui] desktop_notif
 `notify-send`). Sucessos ficam quietos. A linha vermelha no topo do board lista as falhas da última hora cujo aviso não
 foi entregue ou que o conductor ainda não tratou (some quando ele roda `orq wait`, `orq verify` ou `orq agent` para a
 issue).
-O `orq quota --line` imprime a cota numa linha para qualquer barra de status. O `orq ci` mostra os checks do PR de cada
-issue reivindicada (na fila, rodando, passou, falhou ou nenhum, lido via `gh` na hora — é uma consulta que o usuário
-pediu agora, então, diferente da coluna de CI do board, não lê só o cache); uma falha também avisa o conductor dono num
-aviso só por commit. Depois dos merges, o `orq gc` lista e remove as worktrees de issues que ficaram para trás.
+O `orq quota --line` imprime a cota numa linha para qualquer barra de status. O `orq ci` mostra os checks e a revisão
+mais recente de bot para cada PR aberto numa worktree de issue, mesmo após liberar a issue; a revisão indica `head` ou
+`older commit`. O board lê o mesmo cache e marca revisão no head com `R`. Falhas e novas revisões no head avisam o dono
+atual ou o último dono uma vez por commit/revisão. Depois dos merges, o `orq gc` lista e remove as worktrees restantes.
 
 Várias issues ao mesmo tempo: um conductor por issue (de preferência em contas diferentes). O `orq claim`
 (`herdr-claim`) impede que dois conductors peguem a mesma issue.
@@ -317,7 +317,7 @@ Dia a dia, atalhos e várias issues ao mesmo tempo: [docs/pt-BR/herdr.md](docs/p
 | `orq deps` (`herdr-deps`) | Liga as dependências do worktree às do repo principal (sem reinstalar) |
 | `orq baseline ...` (`herdr-baseline`) | Snapshot manual dos testes que falham na base (fora do fluxo) |
 | `orq gc [-w <workspace>] [--yes] [--days N] [--json]` | Lista worktrees de issues que podem ser removidas (PR mergeado, ou conteúdo já na base, inclusive squash merge); `--yes` as remove. Nunca mexe em trabalho não commitado, commit fora do remote, claim ativo ou agente rodando. `orq-gc.timer` diário opcional |
-| `orq ci [-w <workspace>] [--json]` | Status de CI/CD de cada issue reivindicada com PR: na fila, rodando, passou, falhou ou nenhum, coletado na hora via `gh` (o cache que ele preenche é o que a coluna de CI do `orq board` lê, sem nunca travar na rede). Quando vira verde ou vermelho sai uma notificação do herdr, e uma falha também avisa o conductor dono |
+| `orq ci [-w <workspace>] [--json]` | Checks e revisão de bot mais recente por PR aberto em worktree de issue, reivindicada ou liberada; mostra se a revisão cobre o head. O board lê o cache e marca revisão no head com `R`. Falhas e novas revisões no head avisam o dono atual ou o último dono |
 | `orq rounds <ID> [-w <workspace>] [--json] [--diagnose]` | Watchdog: `--diagnose` (só warn/stop) pede a um agente barato, somente leitura e de outro fornecedor (papel de pick `watchdog`, cai para `opinion`, depois `review`) o diagnóstico de por que as rodadas não convergem → `.orquestra/<ID>/diagnosis-<n>.md`, consultivo; `orq agent -R -F` além de `max_rounds` exige (`-F -F` ignora). Sem ele, sem LLM: rodadas de fix vs `policy.max_rounds`, tempo por rodada, achados do revisor repetidos entre rodadas, alerta ok / warn / stop. O board marca cada issue (`r2/2 ⚠`) |
 | `orq quota --line` | Uma linha de cota para barra de status (`work 64 · home 94! · codex 81`), do cache do board, nunca da rede |
 | `orq setup` | Primeira configuração e instalação: ambiente, skills do Claude, config, workspace do conductor |

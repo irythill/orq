@@ -6,6 +6,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 
+### Added
+- `orq ci` and the board follow open PRs for issue worktrees after claim release, report the latest bot review, and notify the live or last owner of new head reviews and CI failures.
+
 ### Fixed
 - `orq agent` refuses to start a review (`review-<repo>`, its rounds `-<n>` and redos like `-2b`) while another review of the same repo in the same issue folder is still alive, so a conductor can no longer stack concurrent reviewers on one issue (exit 3, nothing started) (#134).
 

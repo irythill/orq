@@ -267,11 +267,14 @@ rules live) commits and writes the PR. Find and cite in the prompt, by path, wha
   issue) and the answer in `$O/impl-<repo>.out.md`. Check the opened PR against the template.
 - Plane comment (`workitem_comment create`): summary, repo(s), branch, agents and models used (`orq pick` output),
   review result, checks that ran.
-- **Review bots on the PR** (a GitHub App reviewer): one more input, not a new review cycle. Only a finding with
+- **Review bots on the PR**: `orq ci` reports the latest bot review and sends a notice for a new review on the head,
+  including after `orq claim -r` via the recorded last owner. React to notices instead of polling. Treat it as one more
+  input, not a new review cycle. Only a finding with
   high severity, `file:line` and a concrete failure, not already decided in the rounds, goes into a fix round (it
   counts towards `policy.max_rounds`); the rest goes into the Plane comment or a follow-up issue. Don't re-request the
   bot's review to "get it clean".
-- **CI after every push:** `gh pr checks <n>` (no `--watch`; if pending, check again on the next notice or loop iteration).
+- **CI after every push:** the collector sends a notice for a red check, including after `orq claim -r` via the recorded
+  last owner. React to notices instead of polling. Use `gh pr checks <n>` for details (no `--watch`).
   Red → `gh run view <id> --log-failed | tail -40`: error from the diff → fix round; error already on the base → create
   a Plane issue (workspace standard) and tell the user. "Ready to merge" only with green checks or an explained failure
   + issue.

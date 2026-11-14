@@ -1,5 +1,5 @@
-// CI/CD signal per claimed issue, for `orq ci` and the board's CI column: for each issue with a live owner
-// (.orquestra/<ID>/owner, as orq claim keeps it), the branch its worktree carries (as orq gc matches it:
+// CI/CD signal for open PRs on issue worktrees, for `orq ci` and the board's CI column. Each issue directory
+// under .orquestra matches the branch its worktree carries (as orq gc matches it:
 // <repo>-plane-<id-lower> under .worktrees) and that branch's PR checks via `gh pr view`, aggregated into
 // queued | running | passed | failed | none. Cached in the state dir (board/ci.json), like quota — orq board
 // never blocks on `gh`; a stale cache starts a background collection the same way quota does. `orq ci` itself is
@@ -21,7 +21,7 @@ import { stateDir } from "./paths.js";
 import { notify } from "./testrun.js";
 
 export type CiState = "queued" | "running" | "passed" | "failed" | "none";
-export interface CiEntry { ws: string; issue: string; repo: string; branch: string; pr?: number; sha?: string; state: CiState; notified?: string; at: number }
+export interface CiEntry { ws: string; issue: string; repo: string; branch: string; pr?: number; sha?: string; state: CiState; bot?: { login: string; sha: string; at: string }; notified?: string; notifiedBot?: string; at: number }
 
 const git = (cwd: string, ...args: string[]) => spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
 const output = (cwd: string, ...args: string[]) => { const r = git(cwd, ...args); return r.status === 0 ? r.stdout.trim() : undefined; };
@@ -41,7 +41,7 @@ export function loadCache(): CiEntry[] {
 export function saveCache(entries: CiEntry[]): void { writeAtomic(cacheFile(), JSON.stringify(entries, null, 1)); }
 
 // A per-workspace "collected at" marker, separate from ci.json: collectCi() writes no cache entry for a workspace
-// with no claimed issue that has a matching worktree, so ci.json alone can't tell "never collected" apart from
+// with no issue worktree that has an open PR, so ci.json alone can't tell "never collected" apart from
 // "collected, found nothing" — the board would otherwise relaunch the collector every redraw forever in the
 // latter case. Keyed by a hash of the workspace path since it doubles as a file name.
 const wsKey = (ws: string) => createHash("sha1").update(ws).digest("hex").slice(0, 16);
@@ -55,15 +55,17 @@ export function collectedAt(ws: string): number | undefined {
   catch { return undefined; }
 }
 
-/** Claimed issues of a workspace with a live owner (as `orq claim -l` lists them), issue id → owner pane + kind
- *  ("herdr" for a pane herdr-notify can reach, else a plain terminal conductor — see handoff.ts's same check). */
-export function claimedIssues(ws: string): { id: string; owner: string; kind: string }[] {
+/** Issues with matching worktree branches, resolving a live current or last owner only for those issues. */
+export function claimedIssues(ws: string, worktrees = listWorktrees(ws), pattern?: string): { id: string; owner: string; kind: string }[] {
   const O = join(ws, ".orquestra"), out: { id: string; owner: string; kind: string }[] = [];
-  for (const d of existsSync(O) ? readdirSync(O).filter((x) => !x.startsWith(".")) : []) {
+  for (const d of existsSync(O) ? readdirSync(O, { withFileTypes: true }).filter((x) => x.isDirectory() && !x.name.startsWith(".")).map((x) => x.name) : []) {
+    if (!issueBranches(ws, d, worktrees, pattern).length) continue;
     const f = join(O, d, "owner");
-    if (!existsSync(f)) continue;
-    const t = readFileSync(f, "utf8").trim();
-    if (aliveOwner(t)) out.push({ id: d, owner: /pane=(\S+)/.exec(t)?.[1] ?? "", kind: /kind=(\S+)/.exec(t)?.[1] ?? "herdr" });
+    const t = existsSync(f) ? readFileSync(f, "utf8").trim() : "";
+    const currentAlive = !!t && aliveOwner(t), lastFile = join(O, d, "last-owner");
+    const last = !currentAlive && existsSync(lastFile) ? readFileSync(lastFile, "utf8").trim() : "";
+    const chosen = currentAlive ? t : last && aliveOwner(last) ? last : "";
+    out.push({ id: d, owner: /pane=(\S+)/.exec(chosen)?.[1] ?? "", kind: /kind=(\S+)/.exec(chosen)?.[1] ?? "herdr" });
   }
   return out;
 }
@@ -124,16 +126,29 @@ export function aggregateChecks(rollup: RollupItem[]): CiState {
  *  no PR (empty/garbage JSON, or no "number") reads as "none". Pure: no network, so it needs no fake gh to test. */
 export function parsePrStatus(json: string): { pr?: number; sha?: string; state: CiState } {
   try {
-    const j = JSON.parse(json) as { number?: number; headRefOid?: string; statusCheckRollup?: RollupItem[] };
-    if (!j.number) return { state: "none" };
+    const j = JSON.parse(json) as { number?: number; headRefOid?: string; state?: string; statusCheckRollup?: RollupItem[] };
+    if (!j.number || (j.state && j.state !== "OPEN")) return { state: "none" };
     return { pr: j.number, sha: j.headRefOid, state: aggregateChecks(j.statusCheckRollup ?? []) };
   } catch { return { state: "none" }; }
 }
 
+/** Parses GitHub's pull reviews response, retaining the latest review from a bot account. */
+export function parseBotReview(json: string): { login: string; sha: string; at: string } | undefined {
+  try {
+    const rows = JSON.parse(json) as { user?: { type?: string; login?: string }; commit_id?: string; submitted_at?: string }[];
+    return rows.filter((r) => r.user?.type === "Bot" && r.user.login && r.commit_id && r.submitted_at)
+      .sort((a, b) => Date.parse(b.submitted_at!) - Date.parse(a.submitted_at!))
+      .map((r) => ({ login: r.user!.login!, sha: r.commit_id!, at: r.submitted_at! }))[0];
+  } catch { return undefined; }
+}
+
 /** The branch's PR and CI state; no `gh`, no PR, or a `gh` failure all read as "none" — never an error. */
-function prStatus(repo: string, branch: string): { pr?: number; sha?: string; state: CiState } {
-  const r = gh(repo, ["pr", "view", branch, "--json", "number,headRefOid,statusCheckRollup"]);
-  return r.status === 0 ? parsePrStatus(r.stdout) : { state: "none" };
+function prStatus(repo: string, branch: string): { pr?: number; sha?: string; state: CiState; bot?: CiEntry["bot"] } {
+  const r = gh(repo, ["pr", "view", branch, "--json", "number,state,headRefOid,statusCheckRollup"]);
+  const parsed = r.status === 0 ? parsePrStatus(r.stdout) : { state: "none" as CiState };
+  if (!parsed.pr) return parsed;
+  const reviews = gh(repo, ["api", `repos/{owner}/{repo}/pulls/${parsed.pr}/reviews`]);
+  return { ...parsed, ...(reviews.status === 0 ? { bot: parseBotReview(reviews.stdout) } : {}) };
 }
 
 // `orq ci -w ws2` (foreground) and the board's detached `orq board --collect-ci` for ws1 can run at the same
@@ -187,13 +202,14 @@ export function collectCi(ws: string, hooks: { desktop?: typeof notifyDesktop; o
   const desktop = hooks.desktop ?? notifyDesktop, toOwner = hooks.owner ?? ((pane: string, line: string) => notify(pane, line)),
     notice = hooks.notice ?? ((l: string) => console.log(l));
   const now = Date.now(), worktrees = listWorktrees(ws), pattern = issuePattern(ws);
-  const found = claimedIssues(ws).flatMap(({ id, owner, kind }) =>
-    issueBranches(ws, id, worktrees, pattern).map(({ repo, branch }) => ({ id, owner, kind, repo, branch, ...prStatus(join(ws, repo), branch) })));
+  const found = claimedIssues(ws, worktrees, pattern).flatMap(({ id, owner, kind }) =>
+    issueBranches(ws, id, worktrees, pattern).map(({ repo, branch }) => ({ id, owner, kind, repo, branch, ...prStatus(join(ws, repo), branch) }))
+      .filter((entry) => entry.pr !== undefined));
 
-  const toNotify: { owner: string; kind: string; id: string; repo: string; state: CiState; sha: string }[] = [];
+  const toNotify: { owner: string; kind: string; id: string; repo: string; state: CiState; sha: string; bot?: NonNullable<CiEntry["bot"]> }[] = [];
   const mine: CiEntry[] = withCacheLock(() => {
     const cache = loadCache(), mine: CiEntry[] = [];
-    for (const { id, owner, kind, repo, branch, pr, sha, state } of found) {
+    for (const { id, owner, kind, repo, branch, pr, sha, state, bot } of found) {
       const prev = cache.find((e) => e.ws === ws && e.issue === id && e.repo === repo && e.branch === branch);
       let notified = prev?.notified;
       const mark = sha ? `${state}:${sha}` : undefined;
@@ -202,13 +218,24 @@ export function collectCi(ws: string, hooks: { desktop?: typeof notifyDesktop; o
         notified = mark;
       }
       if (!prev && mark) notified = mark; // first sighting: known, not news
-      mine.push({ ws, issue: id, repo, branch, ...(pr !== undefined ? { pr } : {}), ...(sha ? { sha } : {}), state, ...(notified ? { notified } : {}), at: now });
+      const botMark = bot && sha === bot.sha ? `${bot.login}:${sha}` : undefined;
+      let notifiedBot = prev?.notifiedBot;
+      if (prev && bot && botMark && notifiedBot !== botMark) { toNotify.push({ owner, kind, id, repo, state, sha: bot.sha, bot }); notifiedBot = botMark; }
+      if (!prev && botMark) notifiedBot = botMark;
+      mine.push({ ws, issue: id, repo, branch, ...(pr !== undefined ? { pr } : {}), ...(sha ? { sha } : {}), ...(bot ? { bot } : {}), state, ...(notified ? { notified } : {}), ...(notifiedBot ? { notifiedBot } : {}), at: now });
     }
     saveCache([...cache.filter((e) => e.ws !== ws), ...mine]);
     return mine;
   });
 
-  for (const { owner, kind, id, repo, state, sha } of toNotify) {
+  for (const { owner, kind, id, repo, state, sha, bot } of toNotify) {
+    if (bot) {
+      if (owner) {
+        const line = `[ORQ CI] ${id} ${repo} review by ${bot.login} (${sha.slice(0, 7)})`;
+        if (kind === "herdr") toOwner(owner, line); else notice(line);
+      }
+      continue;
+    }
     // A failure the owner is told about already pops up (src/notice.ts signals it loudly): no second popup.
     if (!(state === "failed" && owner && kind === "herdr")) desktop(id, repo, state);
     if (state === "failed" && owner) {

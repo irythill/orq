@@ -243,7 +243,7 @@ test("gc: prunes agent state files of finished/dead runs older than --days, keep
 });
 
 test("ci: aggregateChecks and parsePrStatus are pure (no gh, no PR, or a failure all read as none)", async () => {
-  const { aggregateChecks, parsePrStatus } = await import("./ci.js");
+  const { aggregateChecks, parsePrStatus, parseBotReview } = await import("./ci.js");
   assert.equal(aggregateChecks([]), "none"); // no checks registered yet: not a false "passed"
   assert.equal(aggregateChecks([{ status: "COMPLETED", conclusion: "SUCCESS" }]), "passed");
   assert.equal(aggregateChecks([{ status: "QUEUED" }]), "queued");
@@ -254,6 +254,14 @@ test("ci: aggregateChecks and parsePrStatus are pure (no gh, no PR, or a failure
     { pr: 5, sha: "abc123", state: "passed" });
   assert.deepEqual(parsePrStatus("not json"), { state: "none" });
   assert.deepEqual(parsePrStatus("{}"), { state: "none" }); // no PR open on that branch
+  assert.deepEqual(parsePrStatus('{"number":5,"state":"MERGED"}'), { state: "none" });
+  assert.deepEqual(parsePrStatus('{"number":5,"state":"CLOSED"}'), { state: "none" });
+  assert.deepEqual(parseBotReview(JSON.stringify([
+    { user: { type: "User", login: "person" }, commit_id: "u", submitted_at: "2026-01-01T00:00:00Z" },
+    { user: { type: "Bot", login: "codebot[bot]" }, commit_id: "old", submitted_at: "2026-01-01T00:00:00Z" },
+    { user: { type: "Bot", login: "codebot[bot]" }, commit_id: "head", submitted_at: "2026-01-02T00:00:00Z" },
+  ])), { login: "codebot[bot]", sha: "head", at: "2026-01-02T00:00:00Z" });
+  assert.equal(parseBotReview("not json"), undefined);
   // legacy commit-status checks (StatusContext: just `state`, no status/conclusion at all — Jenkins/CircleCI/old
   // GitLab repos) must resolve to a real state, not get stuck in "running" forever for lack of status/conclusion.
   assert.equal(aggregateChecks([{ __typename: "StatusContext", state: "SUCCESS" }]), "passed");
@@ -279,6 +287,106 @@ test("ci: issueBranches matches the worktree whose branch ends in plane-<id>, ca
   assert.deepEqual(issueBranches(ws, "abc-123"), [{ repo: "demo", branch: "work/plane-ABC-123" }]);
   assert.deepEqual(issueBranches(ws, "nope"), []);
   assert.deepEqual(issueBranches(join(root, "empty"), "abc-123"), []); // no .worktrees at all
+});
+
+function ciFixture() {
+  const { root } = sandbox(), ws = join(root, "ws"), repo = join(ws, "demo");
+  const git = (...args: string[]) => {
+    const r = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+  };
+  mkdirSync(join(ws, ".worktrees"), { recursive: true });
+  assert.equal(spawnSync("git", ["init", "-q", "-b", "main", repo]).status, 0);
+  git("config", "user.email", "orq-test"); git("config", "user.name", "Test");
+  writeFileSync(join(repo, "f"), "x"); git("add", "."); git("commit", "-qm", "base");
+  git("worktree", "add", "-qb", "work/plane-abc-1", join(ws, ".worktrees", "demo-plane-abc-1"), "main");
+  const issue = join(ws, ".orquestra", "ABC-1"); mkdirSync(issue, { recursive: true });
+  const prFile = join(root, "pr.json"), reviewsFile = join(root, "reviews.json"), callsFile = join(root, "gh-calls.jsonl");
+  const pr = (sha: string, conclusion?: string, state = "OPEN") => writeFileSync(prFile, JSON.stringify({
+    number: 9, state, headRefOid: sha, statusCheckRollup: [{ status: conclusion ? "COMPLETED" : "IN_PROGRESS", conclusion }],
+  }));
+  const reviews = (sha?: string) => writeFileSync(reviewsFile, JSON.stringify(sha ? [{
+    user: { type: "Bot", login: "codebot[bot]" }, commit_id: sha, submitted_at: "2026-01-02T00:00:00Z",
+  }] : []));
+  pr("sha1"); reviews();
+  const gh = join(root, "fake-gh.js");
+  writeFileSync(gh, `const fs = require("fs"), args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(callsFile)}, JSON.stringify({ args, cwd: process.cwd() }) + "\\n");
+if (args[0] === "pr" && args[1] === "view") process.stdout.write(fs.readFileSync(${JSON.stringify(prFile)}));
+else if (args[0] === "api" && args[1] === "repos/{owner}/{repo}/pulls/9/reviews") process.stdout.write(fs.readFileSync(${JSON.stringify(reviewsFile)}));
+else process.exit(1);
+`);
+  const saved = { XDG_STATE_HOME: process.env.XDG_STATE_HOME, ORQ_GH: process.env.ORQ_GH,
+    PATH: process.env.PATH, ORQ_CLAIM_TTL_H: process.env.ORQ_CLAIM_TTL_H };
+  process.env.XDG_STATE_HOME = join(root, "state"); process.env.ORQ_GH = gh; process.env.ORQ_CLAIM_TTL_H = "24";
+  const restore = () => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } };
+  return { root, ws, repo, issue, pr, reviews, callsFile, restore };
+}
+
+test("collectCi: a released PR notifies its last terminal owner once per failed head, or the desktop if dead", async (t) => {
+  const f = ciFixture(); t.after(f.restore);
+  const { collectCi, loadCache } = await import("./ci.js");
+  writeFileSync(join(f.issue, "last-owner"), `pane=last kind=id at=${new Date().toISOString()}\n`);
+  const notices: string[] = [], desktop: string[] = [], owner: string[] = [];
+  const hooks = { notice: (line: string) => notices.push(line), desktop: (_id: string, _repo: string, state: string) => desktop.push(state),
+    owner: (pane: string, line: string) => owner.push(`${pane} ${line}`) };
+  assert.equal(collectCi(f.ws, hooks)[0].state, "running");
+  f.pr("sha1", "FAILURE");
+  assert.equal(collectCi(f.ws, hooks)[0].state, "failed");
+  collectCi(f.ws, hooks);
+  assert.deepEqual(notices, ["[ORQ CI] ABC-1 demo failed (sha1)"]);
+  assert.deepEqual(desktop, ["failed"]);
+  f.pr("sha2", "FAILURE"); collectCi(f.ws, hooks); collectCi(f.ws, hooks);
+  assert.deepEqual(notices, ["[ORQ CI] ABC-1 demo failed (sha1)", "[ORQ CI] ABC-1 demo failed (sha2)"]);
+  writeFileSync(join(f.issue, "last-owner"), "pane=last kind=id at=2000-01-01T00:00:00Z\n");
+  f.pr("sha3", "FAILURE"); collectCi(f.ws, hooks); collectCi(f.ws, hooks);
+  assert.equal(notices.length, 2); assert.deepEqual(owner, []); assert.deepEqual(desktop, ["failed", "failed", "failed"]);
+  const calls = readFileSync(f.callsFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.ok(calls.every((call) => call.cwd === f.repo));
+  assert.equal(calls.filter((call) => call.args[0] === "pr").length, calls.filter((call) => call.args[0] === "api").length);
+  f.pr("sha3", "FAILURE", "MERGED");
+  assert.deepEqual(collectCi(f.ws, hooks), []); assert.deepEqual(loadCache(), []);
+});
+
+test("collectCi: a released PR reaches the last herdr owner and ignores owners without worktrees", { skip: process.platform === "win32" }, async (t) => {
+  const f = ciFixture(); t.after(f.restore);
+  const { collectCi } = await import("./ci.js");
+  const bin = join(f.root, "bin"), calls = join(f.root, "herdr-calls.txt"); mkdirSync(bin);
+  writeFileSync(join(bin, "herdr"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${calls}"\nexit 0\n`, { mode: 0o755 });
+  process.env.PATH = `${bin}${delimiter}${process.env.PATH ?? ""}`;
+  writeFileSync(join(f.issue, "last-owner"), "pane=last kind=herdr\n");
+  for (const [id, file] of [["OLD-1", "owner"], ["OLD-2", "last-owner"]]) {
+    const dir = join(f.ws, ".orquestra", id); mkdirSync(dir);
+    writeFileSync(join(dir, file), "pane=unused kind=herdr\n");
+  }
+  const owner: string[][] = [], desktop: string[] = [], notices: string[] = [];
+  const hooks = { owner: (pane: string, line: string) => owner.push([pane, line]),
+    desktop: (_id: string, _repo: string, state: string) => desktop.push(state), notice: (line: string) => notices.push(line) };
+  collectCi(f.ws, hooks); f.pr("sha1", "FAILURE"); collectCi(f.ws, hooks); collectCi(f.ws, hooks);
+  f.pr("sha2", "FAILURE"); collectCi(f.ws, hooks);
+  assert.deepEqual(owner, [["last", "[ORQ CI] ABC-1 demo failed (sha1)"], ["last", "[ORQ CI] ABC-1 demo failed (sha2)"]]);
+  assert.deepEqual(desktop, []); assert.deepEqual(notices, []);
+  assert.deepEqual(readFileSync(calls, "utf8").trim().split("\n"), Array(4).fill("agent get last"));
+});
+
+test("collectCi: bot reviews notify once per head after first sighting, never for an older commit or by desktop", async (t) => {
+  const f = ciFixture(); t.after(f.restore);
+  const { collectCi } = await import("./ci.js");
+  writeFileSync(join(f.issue, "last-owner"), `pane=last kind=id at=${new Date().toISOString()}\n`);
+  const notices: string[] = [], desktop: string[] = [], owner: string[] = [];
+  const hooks = { notice: (line: string) => notices.push(line), desktop: () => desktop.push("popup"), owner: () => owner.push("herdr") };
+  f.reviews("sha1");
+  assert.equal(collectCi(f.ws, hooks)[0].notifiedBot, "codebot[bot]:sha1");
+  collectCi(f.ws, hooks); assert.deepEqual(notices, []);
+  f.pr("sha2");
+  assert.equal(collectCi(f.ws, hooks)[0].bot?.sha, "sha1"); assert.deepEqual(notices, []);
+  f.reviews("sha2");
+  assert.equal(collectCi(f.ws, hooks)[0].notifiedBot, "codebot[bot]:sha2"); collectCi(f.ws, hooks);
+  assert.deepEqual(notices, ["[ORQ CI] ABC-1 demo review by codebot[bot] (sha2)"]);
+  f.pr("sha3"); f.reviews(); collectCi(f.ws, hooks);
+  f.reviews("sha3"); collectCi(f.ws, hooks); collectCi(f.ws, hooks);
+  assert.deepEqual(notices, ["[ORQ CI] ABC-1 demo review by codebot[bot] (sha2)", "[ORQ CI] ABC-1 demo review by codebot[bot] (sha3)"]);
+  assert.deepEqual(desktop, []); assert.deepEqual(owner, []);
 });
 
 test("collectCi: caches CI per issue; notifies per head SHA on a genuine transition to failed, again on a new red SHA", async () => {
@@ -446,7 +554,7 @@ test("orq ci: a claimed issue's PR state, 'none' with no gh and no PR", () => {
 
   const noGh = run("ci", "-w", ws, "--json");
   assert.equal(noGh.status, 0, noGh.stderr);
-  assert.deepEqual(JSON.parse(noGh.stdout).map((e: { state: string }) => e.state), ["none"]);
+  assert.deepEqual(JSON.parse(noGh.stdout), []); // no PR metadata means there is no known open PR to cache
 
   const gh = join(root, "fake-gh.js");
   writeFileSync(gh, `console.log(JSON.stringify({ number: 9, headRefOid: "sha1", statusCheckRollup: [{"status":"COMPLETED","conclusion":"SUCCESS"}] }))`);
@@ -496,6 +604,11 @@ test("orq ci: with no -w, finds claimed issues from the workspace root (_workspa
   git(repo, "worktree", "add", "-qb", "work/plane-abc-1", join(ws, ".worktrees", "demo-plane-abc-1"), "main");
   mkdirSync(join(ws, ".orquestra", "ABC-1"), { recursive: true });
   writeFileSync(join(ws, ".orquestra", "ABC-1", "owner"), `pane=c1 kind=id account=a at=${new Date().toISOString()}\n`);
+
+  const gh = join(root, "fake-gh.js");
+  writeFileSync(gh, `console.log(JSON.stringify(process.argv[2] === "api" ? [] :
+    { number: 9, state: "OPEN", headRefOid: "sha1", statusCheckRollup: [] }))`);
+  (env as Record<string, string | undefined>).ORQ_GH = gh;
 
   const r = spawnSync(process.execPath, [CLI, "ci", "--json"], { env, cwd: repo, encoding: "utf8" }); // cwd = <ws>/demo, not ws
   assert.equal(r.status, 0, r.stderr);
@@ -995,7 +1108,15 @@ test("claim: claim, refuse, release, take over a stale owner", () => {
   writeFileSync(f, "pane=a kind=id account=x at=2000-01-01T00:00:00Z\n");
   assert.match(as("b", "X-1").stdout, /previous owner \(a\) is gone/);
   assert.equal(as("a", "-r", "X-1").status, 1);
+  const last = join(root, ".orquestra", "X-1", "last-owner"), releasedOwner = readFileSync(f, "utf8");
   assert.equal(as("b", "-r", "X-1").status, 0);
+  assert.equal(existsSync(f), false);
+  assert.equal(readFileSync(last, "utf8"), releasedOwner);
+  assert.equal(as("a", "X-1").status, 0);
+  assert.equal(existsSync(last), false);
+  const nextOwner = readFileSync(f, "utf8");
+  assert.equal(as("a", "-r", "X-1").status, 0);
+  assert.equal(readFileSync(last, "utf8"), nextOwner);
   // By name: ORQ_CONDUCTOR_ID is the name outside herdr; part of it finds the owner, -f takes all of its issues.
   as("design-team", "X-2"); as("design-team", "X-3"); as("mkt-team", "X-4");
   assert.match(as("c", "-l").stdout, /X-2 "design-team" pane=design-team/);
@@ -1538,7 +1659,7 @@ test("board: a workspace with no claimed issue is marked collected, not stuck 'c
 
   const o = run("board", "--once", "-w", ws);
   assert.equal(o.status, 0, o.stderr);
-  assert.ok(o.stdout.includes("no claimed issue has a PR"), o.stdout); // not stuck on "collecting..."
+  assert.ok(o.stdout.includes("no issue worktree has an open PR"), o.stdout); // not stuck on "collecting..."
 });
 
 test("board --collect-ci: a failing non-herdr owner's notice lands in ci.log, never dropped by the detached collector's stdio:ignore", () => {

@@ -159,7 +159,7 @@ export async function claim(argv: string[]): Promise<number> {
     for (const h of hits) console.log(`${h.id} "${h.name || h.pane}" (${h.alive ? "alive" : "dead"})`);
     if (mode !== "force") return 0;
     await acquire("claims", process.pid, `claim --from ${from}`);
-    try { for (const h of hits) writeAtomic(h.f, ownerLine()); } finally { release("claims", process.pid); }
+    try { for (const h of hits) { rmSync(join(O, h.id, "last-owner"), { force: true }); writeAtomic(h.f, ownerLine()); } } finally { release("claims", process.pid); }
     console.log(m(`taken over: ${hits.map((h) => h.id).join(" ")} (now ${myName || me})`, `assumidas: ${hits.map((h) => h.id).join(" ")} (agora ${myName || me})`));
     return 0;
   }
@@ -172,6 +172,7 @@ export async function claim(argv: string[]): Promise<number> {
     const owner = field(cur, "pane");
     if (mode === "release") {
       if (cur && owner !== me) { console.log(m(`${id} belongs to ${owner}; not releasing it`, `${id} é de ${owner}; não libero`)); return 1; }
+      if (cur) writeAtomic(join(O, id, "last-owner"), `${cur}\n`);
       rmSync(F, { force: true }); console.log(m(`${id} released`, `${id} liberada`)); return 0;
     }
     if (cur && mode === "claim" && owner !== me) {
@@ -182,6 +183,7 @@ export async function claim(argv: string[]): Promise<number> {
       }
       console.log(m(`previous owner (${owner}) is gone; taking over ${id}`, `o dono anterior (${owner}) não existe mais; assumindo ${id}`));
     }
+    rmSync(join(O, id, "last-owner"), { force: true });
     writeAtomic(F, ownerLine());
     console.log(cur && owner === me && mode === "claim" ? m(`${id} is already yours`, `${id} já é sua`) : m(`${id} is yours (${me})`, `${id} é sua (${me})`));
     return 0;
