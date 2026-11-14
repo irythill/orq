@@ -266,10 +266,11 @@ A failure (tests red, agent `status=fail`, CI red) is also **loud**: besides the
 Linux, a desktop notification (`[ui] desktop_notify = false` turns that one off; needs `notify-send`). Successes are
 quiet. The board's red top line lists failures from the last hour whose notice was not delivered or that the conductor
 has not yet acted on (it clears when the conductor runs `orq wait`, `orq verify` or `orq agent` for the issue).
-`orq quota --line` prints quota in one line for any status bar. `orq ci` shows each claimed issue's PR checks (queued,
-running, passed, failed or none, read from `gh` right then — it is a status check the user asked for, so unlike the
-board's CI column it does not just read the cache); a failure pings the owning conductor once per commit. After
-merges, `orq gc` lists and removes the issue worktrees left behind.
+`orq quota --line` prints quota in one line for any status bar. `orq ci` shows checks and the latest bot review for each
+open PR on an issue worktree, including after the issue claim is released; a review is marked `head` or `older commit`.
+It reads `gh` live while the board reads its cache, and sends a failure or new head review to the live owner or last
+owner once per commit/review. The board CI column stays narrow and marks a head review with `R`. After merges,
+`orq gc` lists and removes the issue worktrees left behind.
 
 Several issues at once: one conductor per issue (ideally on different accounts). `orq claim` (`herdr-claim`) keeps two
 conductors off the same issue.
@@ -313,7 +314,7 @@ Day to day, shortcuts and several issues at once: [docs/herdr.md](docs/herdr.md)
 | `orq deps` (`herdr-deps`) | Links the worktree's dependencies to the main repo's (no reinstall) |
 | `orq baseline ...` (`herdr-baseline`) | Manual snapshot of the tests failing on the base (outside the flow) |
 | `orq gc [-w <workspace>] [--yes] [--days N] [--json]` | Lists issue worktrees that are safe to remove (PR merged, or content already in the base, squash merges included); `--yes` removes them. Never touches uncommitted work, unpushed commits, a live claim or a running agent. Optional daily `orq-gc.timer` |
-| `orq ci [-w <workspace>] [--json]` | CI/CD status per claimed issue with a PR: queued, running, passed, failed or none, collected live via `gh` right then (the cache it fills is what `orq board`'s CI column reads, never blocking on the network). A run turning red or green pops a herdr notification, and a failure also pings the owning conductor |
+| `orq ci [-w <workspace>] [--json]` | CI checks and latest bot review per open PR on an issue worktree, whether claimed or released; review includes whether it covers the head. The board reads the same cached data and marks a head review `R`. Failure and new head review notices go to the live or last owner |
 | `orq rounds <ID> [-w <workspace>] [--json] [--diagnose]` | Watchdog: `--diagnose` (warn/stop only) has a cheap read only agent of another vendor (pick role `watchdog`, falls back to `opinion`, then `review`) diagnose why rounds don't converge → `.orquestra/<ID>/diagnosis-<n>.md`, advisory; `orq agent -R -F` past `max_rounds` needs it (`-F -F` bypasses). Without it, no LLM: fix rounds vs `policy.max_rounds`, time per round, reviewer findings repeated across rounds, alert ok / warn / stop. The board marks each issue (`r2/2 ⚠`) |
 | `orq quota --line` | One line of quota for a status bar (`work 64 · home 94! · codex 81`), from the board's cache, never the network |
 | `orq setup` | First configuration and install: environment, skills for Claude, config, conductor workspace |

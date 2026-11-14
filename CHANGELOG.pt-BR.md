@@ -6,6 +6,14 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-14
+
+### Adicionado
+- `orq ci` e o board acompanham PRs abertos de worktrees de issues após liberar a reivindicação, mostram a revisão de bot mais recente e avisam o dono atual ou anterior sobre novas revisões no head e falhas de CI (#141).
+
+### Alterado
+- `orq ci` e o board listam só issues com PR aberto: uma issue reivindicada ainda sem PR, ou com PR mergeado/fechado, não aparece mais como `none` (#141).
+
 ### Corrigido
 - `orq agent` recusa iniciar uma revisão (`review-<repo>`, suas rodadas `-<n>` e refações como `-2b`) enquanto outra revisão do mesmo repo na mesma pasta da issue ainda está viva, então um conductor não empilha mais revisores simultâneos numa issue (saída 3, nada iniciado) (#134).
 

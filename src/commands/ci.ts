@@ -1,4 +1,4 @@
-// orq ci [-w <workspace>]... [--json]   CI/CD signal per claimed issue with a PR: queued | running | passed |
+// orq ci [-w <workspace>]... [--json]   CI/CD signal per issue worktree with an open PR: queued | running | passed |
 // failed | none. This is the one caller of src/ci.ts's collectCi() that runs it in the foreground (network and
 // all) instead of reading its cache — the user asked for CI status right now, so it collects right now; `orq
 // board`'s CI column is the one that stays off the network and only reads the cache this same collectCi() fills.
@@ -8,7 +8,7 @@ import { getPath, loadConfig } from "../config.js";
 import { m } from "../i18n.js";
 import { expand } from "../paths.js";
 
-export const USAGE = "orq ci [-w <workspace>]... [--json]   CI/CD status per claimed issue (queued|running|passed|failed|none)";
+export const USAGE = "orq ci [-w <workspace>]... [--json]   CI/CD status per issue worktree with an open PR (queued|running|passed|failed|none)";
 
 const label = (s: CiEntry["state"]) => ({ queued: m("queued", "na fila"), running: m("running", "rodando"),
   passed: m("passed", "passou"), failed: m("failed", "falhou"), none: m("none", "nenhum") })[s];
@@ -29,7 +29,7 @@ export async function ci(argv: string[]): Promise<number> {
   const hooks = json ? { notice: (line: string) => console.error(line) } : {};
   const entries = wss.flatMap((ws) => collectCi(ws, hooks));
   if (json) { console.log(JSON.stringify(entries)); return 0; }
-  if (!entries.length) { console.log(m("no claimed issue has a PR", "nenhuma issue reivindicada tem PR")); return 0; }
-  for (const e of entries) console.log(`${e.issue} ${e.repo} ${e.branch} ${e.pr ? `#${e.pr}` : "-"} ${label(e.state)}`);
+  if (!entries.length) { console.log(m("no issue worktree has an open PR", "nenhuma worktree de issue tem PR aberto")); return 0; }
+  for (const e of entries) console.log(`${e.issue} ${e.repo} ${e.branch} ${e.pr ? `#${e.pr}` : "-"} ${label(e.state)}${e.bot ? ` review ${e.bot.login} (${e.bot.sha === e.sha ? "head" : "older commit"})` : ""}`);
   return 0;
 }
