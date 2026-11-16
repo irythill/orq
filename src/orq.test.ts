@@ -1543,6 +1543,51 @@ test("missedTurn: a -T turn without its hook is one seen busy after the last .do
   assert.equal(missedTurn(d, now - 200_000, now - 90_000, 60_000, now), false); // the hook wrote it
 });
 
+test("hookWatch: no signal while a subagent runs or the screen/worktree moves; a genuine missing hook is signalled", async () => {
+  const { hookWatch } = await import("./commands/agent.js");
+  const { BUILTIN_AGENTS } = await import("./agents.js");
+  const busy = new RegExp(BUILTIN_AGENTS.claude.tui_busy!, "m"), t0 = Date.now(), s = 15_000;
+  const run = (screens: string[], trees?: string[]) => {
+    const d = join(mkdtempSync(join(tmpdir(), "orq-watch-")), "x.done");
+    let i = 0;
+    const w = hookWatch({ done: d, graceMs: 90_000, busy, status: () => (i === 0 ? "working" : "idle"),
+      probe: () => ({ screen: screens[Math.min(i - 1, screens.length - 1)], tree: trees?.[Math.min(i - 1, trees.length - 1)] ?? "" }) });
+    const fired: number[] = [];
+    for (; i < 20; i++) if (w.tick(t0 + i * s)) { fired.push(i); writeFileSync(d, "status=unconfirmed reason=no-hook"); } // as noHook does
+    return fired;
+  };
+  const sub = "● Fixing the test\n\n> \n  ← 1 agent · ? for shortcuts";
+  assert.deepEqual(run([sub]), []); // herdr idle for 5 min, a subagent on the status line
+  assert.deepEqual(run(["…", "> \n  1 background task"]), []);
+  assert.deepEqual(run(Array.from({ length: 20 }, (_, k) => `writing… ${k}`)), []); // the screen keeps changing
+  assert.deepEqual(run(["> "], Array.from({ length: 20 }, (_, k) => `M src/a.ts@${k}`)), []); // the worktree keeps changing
+  // A quiet screen: signalled once, after the grace (first probe at tick 1, 90 s later = tick 7).
+  assert.deepEqual(run(["● Done.\n\n> \n  ? for shortcuts"]), [7]);
+  // A subagent that finishes: the grace counts from the last time it was seen.
+  assert.deepEqual(run([sub, sub, sub, sub, "● Done.\n> "]), [11]);
+});
+
+test("orq wait: a tentative no-hook .done is held while the agent is open, the late hook's .done is the answer", async () => {
+  const { doneLine, tentative } = await import("./commands/wait.js");
+  const { isLoud } = await import("./notice.js");
+  const O = join(mkdtempSync(join(tmpdir(), "orq-wait-")), "impl-api");
+  writeFileSync(`${O}.pid`, String(process.pid));
+  writeFileSync(`${O}.out.md`, "screen tail");
+  writeFileSync(`${O}.done`, "status=unconfirmed rc=0 reason=no-hook mode=tui\n");
+  assert.equal(doneLine(O), undefined);
+  assert.equal(tentative(O), true);
+  assert.equal(isLoud("[HERDR-AGENT DONE] impl status=unconfirmed rc=0 reason=no-hook answer: /x"), false);
+  writeFileSync(`${O}.done`, "status=ok rc=0 mode=tui\n"); // the hook fired late
+  assert.deepEqual(doneLine(O)?.ok, true);
+  assert.equal(tentative(O), false);
+  // The agent closed without its hook ever firing: the tentative status is what's left, reported as not ok.
+  writeFileSync(`${O}.done`, "status=unconfirmed rc=0 reason=no-hook mode=tui\n");
+  writeFileSync(`${O}.pid`, String(spawnSync(process.execPath, ["-e", ""]).pid));
+  const d = doneLine(O);
+  assert.equal(d?.ok, false);
+  assert.match(d!.line, /status=unconfirmed .*reason=no-hook/);
+});
+
 test("board: agents, queue, claims, quota and blocks from fake state files, plain when piped", async () => {
   const { root, env, run } = sandbox(), st = join(root, "state", "orq"), ws = join(root, "ws"), now = Date.now();
   const iso = (ms: number) => new Date(ms).toISOString(), dead = spawnSync(process.execPath, ["-e", ""]).pid!;

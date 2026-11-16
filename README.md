@@ -261,6 +261,10 @@ You only come back when it asks for a decision or says it's done.
 To see everything at once, keep **`orq board`** open in a tab or window (any terminal, any OS; `herdr-board` calls it):
 test queue, running agents (model, memory against the cap, last action), conductors and their issues, memory, quota,
 CI/CD per claimed issue, blocks and the 7-day scoreboard. `--once` prints it once, `--json` for scripts.
+A `-T` agent on herdr whose end-of-turn hook never fires is signalled after its screen stays quiet (idle in herdr, no
+subagent or background task on its status line, screen and worktree unchanged) for `agents.<name>.no_hook_grace`
+seconds (default 90), as a tentative `status=unconfirmed reason=no-hook` with the screen's tail as the answer; a late
+hook still sends the final line, and `orq wait` holds the prefix until it arrives or the agent closes.
 A failure (tests red, agent `status=fail`, CI red) is also **loud**: besides the line typed into the conductor's pane
 (delivered by orq with retries and a log, `orq notice`), you get a `✗` title on the conductor's pane (herdr) and, on
 Linux, a desktop notification (`[ui] desktop_notify = false` turns that one off; needs `notify-send`). Successes are

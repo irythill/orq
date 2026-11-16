@@ -37,6 +37,8 @@ roles  = ["impl", "fix", "review"]
 quota  = ["work", "personal"]   # accounts from `claude-accounts`; the least used one is suggested
 prior  = 0.8
 reserve = true            # shares quota with the conductors (Opus): only when the others don't fit
+# no_hook_grace = 90        # -T on herdr: seconds of quiet screen before a missing end-of-turn hook is signalled (tentatively)
+# tui_busy = "esc to interrupt"   # regex on the screen's last lines = still working (built in for Claude: subagents, background tasks)
 [agents.claude.models.impl]
 default = "claude-sonnet-5@low"
 heavy   = "claude-sonnet-5@medium"
