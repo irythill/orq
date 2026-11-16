@@ -113,16 +113,20 @@ export async function gc(argv: string[], clock: () => number = Date.now): Promis
       else if (verdict !== "KEEP" && (merged || inBase)) { verdict = "REMOVABLE"; reason = merged ? "PR merged" : m("content is in base", "conteúdo já está na base"); }
       else if (verdict !== "KEEP") {
         const prs = gh(repo, ["pr", "list", "--head", branch, "--state", "all", "--json", "number,state", "--limit", "20"]);
-        let list: { number: number; state: string }[] = [];
-        if (prs.status === 0) { try { list = JSON.parse(prs.stdout); } catch { ghUnavailable = true; } } else ghUnavailable = true;
+        let list: { number: number; state: string }[] = [], lookupFailed = prs.status !== 0;
+        if (!lookupFailed) { try { list = JSON.parse(prs.stdout); } catch { lookupFailed = true; } }
+        if (lookupFailed) ghUnavailable = true;
         const open = list.find((p) => p.state === "OPEN");
         if (open) { verdict = "KEEP"; reason = m(`PR open (#${open.number})`, `PR aberto (#${open.number})`); }
         else {
-          const closed = list.find((p) => p.state === "CLOSED");
+          const closed = list.find((p) => p.state === "CLOSED"), done = list.find((p) => p.state === "MERGED");
           const commit = output(repo, "log", "-1", "--format=%ct", branch);
           const age = commit === undefined ? undefined : Math.floor((clock() - Number(commit) * 1000) / 86400_000);
           const last = age === undefined ? "" : m(`; last commit ${age} day(s) ago`, `; último commit há ${age} dia(s)`);
-          verdict = "STALE"; reason = (closed ? m(`PR closed without merge (#${closed.number})`, `PR fechado sem merge (#${closed.number})`) : m("no PR", "sem PR")) + last;
+          const pr = lookupFailed ? m("PR lookup failed", "consulta de PR falhou")
+            : done ? m(`PR merged (#${done.number}) but later commits are not in base`, `PR mergeado (#${done.number}), mas commits posteriores não estão na base`)
+            : closed ? m(`PR closed without merge (#${closed.number})`, `PR fechado sem merge (#${closed.number})`) : m("no PR", "sem PR");
+          verdict = "STALE"; reason = pr + last;
         }
       }
       rows.push({ repo: repoName, worktree: basename(path), branch, verdict, reason, path });
