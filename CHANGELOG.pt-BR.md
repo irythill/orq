@@ -6,6 +6,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+### Corrigido
+- `orq gc` mantém a worktree cuja branch tem PR aberto (`KEEP — PR aberto (#N)`) em vez de marcá-la como `STALE`; `STALE` agora diz `PR fechado sem merge (#N)` ou `sem PR`, com a idade do último commit (#51).
+
 ## [0.10.0] — 2026-11-14
 
 ### Adicionado

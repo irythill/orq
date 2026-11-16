@@ -150,6 +150,10 @@ test("gc classifies issue worktrees and removes only removable ones", async () =
   const oldCommit = spawnSync("git", ["-C", stale.path, "commit", "-qm", "old"], { encoding: "utf8",
     env: { ...env, GIT_AUTHOR_DATE: oldDate, GIT_COMMITTER_DATE: oldDate } });
   assert.equal(oldCommit.status, 0, oldCommit.stderr); git(repo, "push", "-qu", "origin", stale.branch);
+  // Pushed, unmerged branches whose PR is open (live work) or closed without merge.
+  for (const id of ["open", "closed"]) {
+    const b = add(id); writeFileSync(join(b.path, id), "x"); git(b.path, "add", "."); git(b.path, "commit", "-qm", id); git(repo, "push", "-qu", "origin", b.branch);
+  }
   // Committed after its PR was merged: the PR's head is an older commit, so it must stay.
   const moved = add("moved"); writeFileSync(join(moved.path, "later"), "x"); git(moved.path, "add", "."); git(moved.path, "commit", "-qm", "after merge");
   // Nothing of its own (content is in base), but its claim is alive; .orquestra/ keeps the ID uppercase.
@@ -165,7 +169,9 @@ test("gc classifies issue worktrees and removes only removable ones", async () =
   writeFileSync(join(ws, ".orquestra", "GONE-3", "impl.pane"), "p");
   const gh = join(root, "fake-gh.js"); writeFileSync(gh, `const a = process.argv.slice(2).join(" ");
 console.log(/--head work\\/plane-merged .*--state merged/.test(a) ? '[{"number":1}]'
-  : /--head work\\/plane-moved .*--state merged/.test(a) ? '[{"number":2,"headRefOid":"0000000"}]' : "[]");
+  : /--head work\\/plane-moved .*--state merged/.test(a) ? '[{"number":2,"headRefOid":"0000000"}]'
+  : /--head work\\/plane-open .*--state all/.test(a) ? '[{"number":6,"state":"CLOSED"},{"number":7,"state":"OPEN"}]'
+  : /--head work\\/plane-closed .*--state all/.test(a) ? '[{"number":8,"state":"CLOSED"}]' : "[]");
 `); (env as Record<string, string | undefined>).ORQ_GH = gh;
   const listed = run("gc", "-w", ws, "--json"); assert.equal(listed.status, 0, `stdout=${listed.stdout} stderr=${listed.stderr} signal=${listed.signal}`);
   assert.ok(listed.stdout.trim(), `gc produced no rows: ${listed.stderr} signal=${listed.signal}`);
@@ -174,7 +180,9 @@ console.log(/--head work\\/plane-merged .*--state merged/.test(a) ? '[{"number":
   assert.equal(byId("dirty").verdict, "KEEP"); assert.equal(byId("unpushed").verdict, "KEEP");
   assert.equal(byId("squash").verdict, "REMOVABLE"); assert.match(byId("squash").reason, /base/);
   assert.equal(byId("merged").verdict, "REMOVABLE"); assert.match(byId("merged").reason, /PR merged/);
-  assert.equal(byId("stale").verdict, "STALE");
+  assert.equal(byId("stale").verdict, "STALE"); assert.match(byId("stale").reason, /^no PR; last commit \d{3,} day\(s\) ago$/);
+  assert.equal(byId("open").verdict, "KEEP"); assert.equal(byId("open").reason, "PR open (#7)");
+  assert.equal(byId("closed").verdict, "STALE"); assert.match(byId("closed").reason, /^PR closed without merge \(#8\); last commit 0 day/);
   assert.equal(byId("moved").verdict, "KEEP"); assert.equal(byId("own-1").verdict, "KEEP");
   assert.equal(byId("own-1-api-2").verdict, "KEEP"); assert.match(byId("own-1-api-2").reason, /live owner/);
   assert.equal(byId("run-2-x").verdict, "KEEP"); assert.match(byId("run-2-x").reason, /child agent/);
