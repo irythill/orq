@@ -38,10 +38,11 @@ export function nextStep(tries: number, r: Attempt): Step {
   return tries <= BACKOFF_S.length ? { kind: "retry", afterMs: BACKOFF_S[tries - 1] * 1000 } : { kind: "giveup" };
 }
 
-/** A failure is loud (sound, pane title, desktop): "status=" other than ok in a done line, or a red CI line. */
+/** A failure is loud (sound, pane title, desktop): "status=" other than ok in a done line (a tentative `unconfirmed`
+ *  isn't one yet), or a red CI line. */
 export function isLoud(line: string): boolean {
   const st = /\bstatus=(\S+)/.exec(line)?.[1];
-  if (st !== undefined) return st !== "ok";
+  if (st !== undefined) return st !== "ok" && st !== "unconfirmed";
   return /^\[ORQ CI\].* failed\b/.test(line);
 }
 

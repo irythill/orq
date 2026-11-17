@@ -264,6 +264,11 @@ Para ver tudo de uma vez, deixe o **`orq board`** aberto numa aba ou janela (qua
 `herdr-board` o chama): fila de testes, agentes rodando (modelo, memória contra o limite, última ação), conductors e
 suas issues, memória, quota, CI/CD de cada issue reivindicada, bloqueios e o placar de 7 dias. `--once` imprime uma
 vez, `--json` para scripts.
+Um agente `-T` no herdr cujo hook de fim de turno nunca dispara é sinalizado depois que a tela fica quieta (ociosa no
+herdr, nenhum subagente ou tarefa em background na linha de status, tela e worktree sem mudança) por
+`agents.<nome>.no_hook_grace` segundos (padrão 90), como um `status=unconfirmed reason=no-hook` provisório com o fim da
+tela como resposta; um hook atrasado ainda manda a linha final, e o `orq wait` segura o prefixo até ela chegar ou o
+agente fechar.
 Uma falha (testes vermelhos, agente `status=fail`, CI vermelho) também é **barulhenta**: além da linha digitada no pane
 do conductor (entregue pelo orq com novas tentativas e log, `orq notice`), você recebe um título `✗` no pane do
 conductor (herdr) e, no Linux, uma notificação de desktop (`[ui] desktop_notify = false` desliga essa; precisa do

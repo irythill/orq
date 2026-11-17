@@ -1,6 +1,8 @@
 // orq wait — Notifier for any conductor: block until children started by `orq agent` (or orq verify/baseline) write
 // <prefix>.done, then print one line each: "[ORQ AGENT DONE] <title> status=ok rc=0 ... answer: <file>".
 // Exit 0 = all ok, 1 = some failed (or its runner died without .done), 124 = timeout. With --any, returns at the first.
+// A tentative .done (status=unconfirmed: a -T turn whose hook didn't fire) is held while its runner lives: the hook may
+// still fire and write the final one.
 // Claude Code: run it as a background task; it wakes the conductor when it exits.
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
@@ -13,6 +15,12 @@ export const USAGE = "orq wait [--any] [--timeout <s>] [--answer] <prefix>...   
 
 const read = (f: string) => { try { return readFileSync(f, "utf8"); } catch { return undefined; } };
 
+const runnerAlive = (prefix: string) => { const pid = Number(read(`${prefix}.pid`)); return Boolean(pid) && alive(pid); };
+
+/** A tentative .done whose agent is still open: not finished yet. */
+export const tentative = (prefix: string) =>
+  doneStatus(read(`${prefix}.done`) ?? "") === "unconfirmed" && runnerAlive(prefix);
+
 /** Finished? → its summary line and whether it went well. */
 export function doneLine(prefix: string): { line: string; ok: boolean } | undefined {
   let done = read(`${prefix}.done`)?.trim();
@@ -20,7 +28,7 @@ export function doneLine(prefix: string): { line: string; ok: boolean } | undefi
     const pid = Number(read(`${prefix}.pid`));
     if (!pid || alive(pid) || existsSync(`${prefix}.done`)) return undefined;
     done = `status=died ${m("(the runner exited without writing .done)", "(o runner saiu sem escrever .done)")}`;
-  }
+  } else if (tentative(prefix)) return undefined;
   let title = basename(prefix);
   try { title = JSON.parse(read(`${prefix}.job.json`) ?? "").title || title; } catch { /* verify/baseline: no job */ }
   const answer = [`${prefix}.out.md`, `${prefix}.txt`].find(existsSync) ?? prefix;
@@ -55,7 +63,11 @@ export async function wait(argv: string[]): Promise<number> {
     }
     if (!pending.length) return failed ? 1 : 0;
     if (Date.now() > end) {
-      console.log(m(`still running: ${pending.join(" ")}`, `ainda rodando: ${pending.join(" ")}`));
+      const t = pending.filter(tentative), note = t.length
+        ? m(` (no end-of-turn hook yet, screen quiet; tentative answer in <prefix>.out.md: ${t.join(" ")})`,
+          ` (sem hook de fim de turno ainda, tela quieta; resposta provisória em <prefixo>.out.md: ${t.join(" ")})`)
+        : "";
+      console.log(m(`still running: ${pending.join(" ")}${note}`, `ainda rodando: ${pending.join(" ")}${note}`));
       return 124;
     }
     await new Promise((r) => setTimeout(r, 1000));

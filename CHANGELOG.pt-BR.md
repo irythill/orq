@@ -7,6 +7,7 @@ English: [CHANGELOG.md](CHANGELOG.md).
 ## [Unreleased]
 
 ### Corrigido
+- Um agente `-T` no herdr não é mais marcado `reason=no-hook` enquanto ainda trabalha: o herdr mostra o Claude ocioso enquanto roda um subagente ou uma tarefa em background, então o sinal de no-hook agora também exige a tela quieta (nenhum marcador de trabalho na linha de status, `agents.<nome>.tui_busy`, embutido para o Claude) e tela e worktree sem mudança por `agents.<nome>.no_hook_grace` segundos (padrão 90, antes 60 fixos). O sinal é provisório, `status=unconfirmed reason=no-hook` (não é barulhento nem conta como rodada falha): o `orq wait` continua esperando esse prefixo enquanto o agente está aberto e devolve o status final do hook atrasado, e o playbook do `/issue` diz como tratá-lo (#145).
 - `orq gc` mantém a worktree cuja branch tem PR aberto (`KEEP — PR aberto (#N)`) em vez de marcá-la como `STALE`; `STALE` agora diz `PR fechado sem merge (#N)` ou `sem PR`, com a idade do último commit (#51).
 
 ## [0.10.0] — 2026-11-14
