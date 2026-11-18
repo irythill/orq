@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "../accounts.js";
 import { colorMode } from "../banner.js";
 import { collectCi, collectedAt, type CiEntry, loadCache as loadCiCache } from "../ci.js";
-import { getPath, loadConfig } from "../config.js";
+import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m, setLang } from "../i18n.js";
 import { argvModel } from "../agents.js";
@@ -233,13 +233,16 @@ export function parseQuota(text: string): Quota[] {
 }
 
 /** Quota names some agent with a role draws on (its `quota` list, or its own name; claude with no list, every Claude
- *  account), or undefined when no agent is configured; a line outside it (an account no agent uses, an agent with no
- *  role) is shown as off. */
-export function quotaInUse(agentsCfg: unknown, accounts: () => string[] = () => claudeAccounts().map((a) => a.name)): Set<string> | undefined {
+ *  account), or undefined when no agent is configured; a line outside it (an account no agent uses, an agent with
+ *  `roles = []` and in no [roles.*] section) is shown as off. */
+export function quotaInUse(cfg: Obj, accounts: () => string[] = () => claudeAccounts().map((a) => a.name)): Set<string> | undefined {
+  const agentsCfg = cfg.agents;
   if (!agentsCfg || typeof agentsCfg !== "object" || !Object.keys(agentsCfg).length) return undefined;
+  const inRoles = new Set(Object.values((cfg.roles ?? {}) as Record<string, Obj>)
+    .flatMap((r) => [r?.agent, ...[r?.fallback, r?.pool].flatMap((x) => (Array.isArray(x) ? x : []))]).filter(Boolean).map(String));
   const used = new Set<string>();
   for (const [name, a] of Object.entries(agentsCfg as Record<string, { roles?: unknown; quota?: unknown }>)) {
-    if (Array.isArray(a?.roles) && !a.roles.length) continue;
+    if (Array.isArray(a?.roles) && !a.roles.length && !inRoles.has(name)) continue;
     used.add(name);
     if (Array.isArray(a?.quota)) for (const q of a.quota) used.add(String(q));
     else if (name === "claude") for (const q of accounts()) used.add(q);
@@ -251,7 +254,7 @@ export function quota(now: number): Snapshot["quota"] {
   let age: number | undefined;
   try { age = now - statSync(qfile()).mtimeMs; } catch { /* never collected */ }
   if (age === undefined || age > QTTL) startCollect();
-  const used = quotaInUse(getPath(loadConfig().cfg, "agents"));
+  const used = quotaInUse(loadConfig().cfg);
   return { lines: parseQuota(read(qfile())).map((q) => (used && !used.has(q.name.split("/")[0]) ? { ...q, off: true } : q)), age };
 }
 

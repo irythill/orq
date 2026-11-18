@@ -1671,10 +1671,12 @@ test("board: a failed run names its reason, not rc=0; agent and model columns ne
   assert.match(text, /agy\/m2/); // near its limit: still its own row
   assert.doesNotMatch(text, /agy\/m1|^ old /m);
   // In use: an agent with a role, by name and by its quota list; an agent with no role draws on nothing.
-  assert.deepEqual([...quotaInUse({ claude: { roles: ["impl"], quota: ["work", "home"] }, copilot: { roles: [], quota: ["copilot"] } })!], ["claude", "work", "home"]);
-  assert.deepEqual([...quotaInUse({ claude: { roles: ["impl"] } }, () => ["work", "home"])!], ["claude", "work", "home"]); // no list: every account
-  assert.equal(quotaInUse(undefined), undefined);
-  assert.equal(quotaInUse({}), undefined); // no agent declared: nothing is judged off
+  const agents = { claude: { roles: ["impl"], quota: ["work", "home"] }, copilot: { roles: [], quota: ["copilot"] } };
+  assert.deepEqual([...quotaInUse({ agents })!], ["claude", "work", "home"]);
+  assert.deepEqual([...quotaInUse({ agents, roles: { second: { pick: "auto", pool: ["copilot"] } } })!], ["claude", "work", "home", "copilot"]); // in a [roles.*] pool
+  assert.deepEqual([...quotaInUse({ agents: { claude: { roles: ["impl"] } } }, () => ["work", "home"])!], ["claude", "work", "home"]); // no list: every account
+  assert.equal(quotaInUse({}), undefined);
+  assert.equal(quotaInUse({ agents: {} }), undefined); // no agent declared: nothing is judged off
 });
 
 test("board --once: a workspace never collected for CI is collected before printing, not left at collecting...", { skip: process.platform === "win32" }, () => {
