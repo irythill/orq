@@ -11,9 +11,10 @@ import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, 
 import { freemem, homedir, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { claudeAccounts } from "../accounts.js";
 import { colorMode } from "../banner.js";
 import { collectCi, collectedAt, type CiEntry, loadCache as loadCiCache } from "../ci.js";
-import { getPath, loadConfig } from "../config.js";
+import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m, setLang } from "../i18n.js";
 import { argvModel } from "../agents.js";
@@ -37,11 +38,11 @@ type Table = Map<number, [number, number]>;
 // --- snapshot ---------------------------------------------------------------------------------------------------
 export interface Agent {
   unit: string; title: string; agent: string; model?: string; host?: string; pid: number; issue: string; label: string;
-  state: "running" | "idle" | "died" | "ok" | "fail" | "killed"; rc?: number; secs: number; age: number; idleSecs?: number; mem?: number; cap?: number; activity?: string;
+  state: "running" | "idle" | "died" | "ok" | "fail" | "killed"; rc?: number; reason?: string; secs: number; age: number; idleSecs?: number; mem?: number; cap?: number; activity?: string;
 }
 export interface QItem { label: string; pid: number; secs: number; mem?: number }
 export interface Conductor { id: string; kind: string; account: string; alive: boolean; issues: string[]; name: string; rounds?: Record<string, Pick<Metrics, "rounds" | "max" | "level">> }
-export interface Quota { name: string; five: string; week: string; reset5h?: number; resetWeek?: number; note?: string }
+export interface Quota { name: string; five: string; week: string; reset5h?: number; resetWeek?: number; note?: string; off?: boolean }
 export interface Snapshot {
   at: string; mem: { used: number; total: number }; workspaces: string[];
   queue: { holders: QItem[]; waiters: QItem[] }; agents: Agent[]; conductors: Conductor[];
@@ -65,6 +66,17 @@ function modelOf(prefix: string, unit: string): string | undefined {
     models.set(unit, v);
   }
   return models.get(unit);
+}
+
+/** Why a run recorded before its state file had a reason failed, from its .done when that file is this run's (written
+ *  between its start and shortly after its end; a rerun on the same prefix rewrites it). */
+const reasons = new Map<string, string | undefined>();
+function reasonOf(prefix: string, unit: string, at: number, end: number | undefined): string | undefined {
+  if (!reasons.has(unit)) {
+    const d = read(`${prefix}.done`), t = Date.parse(field(d, "at"));
+    reasons.set(unit, end !== undefined && t >= at && t <= end + 60_000 ? field(d, "reason") || undefined : undefined);
+  }
+  return reasons.get(unit);
 }
 
 /** What the agent did last, from the tail of its log (stream JSON of claude/opencode, else the last text line). */
@@ -142,6 +154,7 @@ function agents(table: Table | undefined, now: number): Agent[] {
       host: s.host as string | undefined, pid, issue: basename(dirname(prefix)), label: basename(prefix), state: st,
       secs: Math.max(0, Math.round(((end ?? now) - at) / 1000)), age: Math.max(0, Math.round((now - (end ?? at)) / 1000)), cap: typeof s.cap === "number" ? s.cap : undefined };
     if (s.rc !== undefined) a.rc = Number(s.rc);
+    if (st === "fail") { const r = typeof s.reason === "string" ? s.reason : reasonOf(prefix, a.unit, at, end); if (r) a.reason = r; }
     if (st === "running") {
       if (table) {
         a.mem = treeMem(pid, table);
@@ -219,11 +232,30 @@ export function parseQuota(text: string): Quota[] {
   });
 }
 
+/** Quota names some agent with a role draws on (its `quota` list, or its own name; claude with no list, every Claude
+ *  account), or undefined when no agent is configured; a line outside it (an account no agent uses, an agent with
+ *  `roles = []` and in no [roles.*] section) is shown as off. */
+export function quotaInUse(cfg: Obj, accounts: () => string[] = () => claudeAccounts().map((a) => a.name)): Set<string> | undefined {
+  const agentsCfg = cfg.agents;
+  if (!agentsCfg || typeof agentsCfg !== "object" || !Object.keys(agentsCfg).length) return undefined;
+  const inRoles = new Set(Object.values((cfg.roles ?? {}) as Record<string, Obj>)
+    .flatMap((r) => [r?.agent, ...[r?.fallback, r?.pool].flatMap((x) => (Array.isArray(x) ? x : []))]).filter(Boolean).map(String));
+  const used = new Set<string>();
+  for (const [name, a] of Object.entries(agentsCfg as Record<string, { roles?: unknown; quota?: unknown }>)) {
+    if (Array.isArray(a?.roles) && !a.roles.length && !inRoles.has(name)) continue;
+    used.add(name);
+    if (Array.isArray(a?.quota)) for (const q of a.quota) used.add(String(q));
+    else if (name === "claude") for (const q of accounts()) used.add(q);
+  }
+  return used;
+}
+
 export function quota(now: number): Snapshot["quota"] {
   let age: number | undefined;
   try { age = now - statSync(qfile()).mtimeMs; } catch { /* never collected */ }
   if (age === undefined || age > QTTL) startCollect();
-  return { lines: parseQuota(read(qfile())), age };
+  const used = quotaInUse(loadConfig().cfg);
+  return { lines: parseQuota(read(qfile())).map((q) => (used && !used.has(q.name.split("/")[0]) ? { ...q, off: true } : q)), age };
 }
 
 function startCollect(): void {
@@ -272,8 +304,11 @@ function ci(wss: string[], now: number): Snapshot["ci"] {
 // Detached (stdio: "ignore"): collectCi()'s default notice (console.log) would otherwise vanish into /dev/null,
 // so a non-herdr conductor's "CI failed" line is appended to a log file instead.
 function collectCiAll(wss: string[]): number {
+  mkdirSync(qdir(), { recursive: true });
   const notice = (l: string) => appendFileSync(join(qdir(), "ci.log"), `${l}\n`);
-  for (const ws of wss) collectCi(ws, { notice });
+  for (const ws of wss) {
+    try { collectCi(ws, { notice }); } catch (e) { notice(`${new Date().toISOString()} collect ${ws}: ${(e as Error).message}`); }
+  }
   return 0;
 }
 
@@ -377,16 +412,16 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
   const shownAgents = s.agents.filter((a) => !old(a)), hidden = s.agents.length - shownAgents.length;
   shownAgents.forEach((a, i) => {
     const n = `${c.mut}${String(i + 1).padStart(2, "0")}${c.r}`, who = `${c.ink}${fit(a.issue, 9)}${c.r} ${c.ink2}${fit(a.label, 22)}${c.r} `
-      + `${c.ink}${fit(a.agent, 11)}${c.r}${c.mut}${fit(a.model ?? m("default", "padrão"), 17)}${c.r} ${c.ink}${(a.state === "died" ? "?" : dur(a.secs)).padEnd(7)}${c.r}`; // died: when it stopped is unknown
+      + `${c.ink}${fit(a.agent, 11)}${c.r} ${c.mut}${fit(a.model ?? m("default", "padrão"), 17)}${c.r} ${c.ink}${(a.state === "died" ? "?" : dur(a.secs)).padEnd(7)}${c.r}`; // died: when it stopped is unknown
     if (a.state === "running" || a.state === "idle") {
-      const pct = a.cap && a.mem ? Math.round(100 * a.mem / a.cap) : 0, used = 1 + 2 + 2 + 10 + 23 + 11 + 17 + 1 + 8 + 6 + 1 + 7 + 1;
+      const pct = a.cap && a.mem ? Math.round(100 * a.mem / a.cap) : 0, used = 1 + 2 + 2 + 10 + 23 + 12 + 17 + 1 + 8 + 6 + 1 + 7 + 1;
       const idle = a.state === "idle", mark = idle ? `${c.wrn}◌` : `${c.acc}●`;
       const warn = !idle && a.secs > 3 * 3600 ? ` ${c.err}⚠ ${m("for", "há")} ${dur(a.secs)}${c.r}` : "";
       const what = idle ? `${c.wrn}${m("idle", "ocioso")} ${dur(a.idleSecs ?? 0)}` : fit(a.activity ?? "", Math.max(0, W - used - 2)).trimEnd();
       out.push(` ${mark}${c.r} ${n}  ${who} ${meter(pct, 4)} ${c.ink2}${gb(a.mem).padEnd(6)}${c.r} ${c.mut}${what}${c.r}${warn}`);
     } else if (a.state === "died")
       out.push(` ${c.err}●${c.r} ${n}  ${who} ${c.err}${m("runner gone without finishing", "runner sumiu sem terminar")}${c.r}`);
-    else out.push(` ${a.state === "ok" ? c.ok : c.err}${a.state === "ok" ? "✓" : "✗"}${c.r} ${n}  ${c.mut}${a.issue.padEnd(9).slice(0, 9)} ${fit(a.label, 22)} ${fit(a.agent, 11)}${fit(a.model ?? "", 17)} ${dur(a.secs).padEnd(7)} ${a.state} rc=${a.rc ?? "?"}${c.r}`);
+    else out.push(` ${a.state === "ok" ? c.ok : c.err}${a.state === "ok" ? "✓" : "✗"}${c.r} ${n}  ${c.mut}${a.issue.padEnd(9).slice(0, 9)} ${fit(a.label, 22)} ${fit(a.agent, 11)} ${fit(a.model ?? m("default", "padrão"), 17)} ${dur(a.secs).padEnd(7)} ${a.state}${a.reason ? ` ${a.reason}` : ""}${a.rc === undefined ? " rc=?" : a.rc ? ` rc=${a.rc}` : ""}${c.r}`);
   });
   if (!shownAgents.length) out.push(` ${c.mut}${m("none", "nenhum")}${c.r}`);
   if (hidden) out.push(` ${c.mut}${m(`+${hidden} older finished hidden`, `+${hidden} antigos finalizados ocultos`)}${c.r}`);
@@ -410,7 +445,10 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
     return n !== undefined ? `${c.mut}${tag.padEnd(3)}${c.r} ${meter(Number(n), 6)} ${c.ink}${n.padStart(3)}%${c.r}`
       : `${c.mut}${tag.padEnd(3)} ${" ".repeat(8)} ${v.padStart(3)} ${c.r}`;
   };
-  const shown = s.quota.lines.filter((q) => q.five !== "-" || q.week !== "-"), idle = s.quota.lines.filter((q) => !shown.includes(q));
+  // Per-model rows (`<agent>/<model>`) fold into their agent's row unless one is near its limit.
+  const pctOf = (v: string) => Number(/^(\d+)%?$/.exec(v)?.[1] ?? 0), on = s.quota.lines.filter((q) => !q.off);
+  const folded = on.filter((q) => q.name.includes("/") && on.some((p) => p.name === q.name.split("/")[0]) && Math.max(pctOf(q.five), pctOf(q.week)) < 70);
+  const shown = on.filter((q) => !folded.includes(q) && (q.five !== "-" || q.week !== "-")), idle = on.filter((q) => !folded.includes(q) && !shown.includes(q));
   const cw = 21, per = Math.max(1, Math.floor((W - 1) / cw));
   for (let i = 0; i < shown.length; i += per) {
     const g = shown.slice(i, i + per);
@@ -419,7 +457,10 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
     out.push(" " + g.map((q) => win(q.five, "5h") + "    ").join(""));
     out.push(" " + g.map((q) => win(q.week, m("wk", "sem")) + "    ").join(""));
   }
+  if (folded.length) out.push(` ${c.mut}${m(`+${folded.length} per-model rows below 70%`, `+${folded.length} linhas por modelo abaixo de 70%`)}: ${[...new Set(folded.map((q) => q.name.split("/")[0]))].join(" ")}${c.r}`);
   if (idle.length) out.push(` ${c.mut}${m("no quota collector", "sem coletor de cota")}: ${idle.map((q) => q.name).join(" ")}${c.r}`);
+  const off = s.quota.lines.filter((q) => q.off);
+  if (off.length) out.push(` ${c.mut}${m("off (no agent uses it)", "desligada (nenhum agente usa)")}: ${off.map((q) => q.name).join(" ")}${c.r}`);
   const blocks = Object.entries(s.blocks).sort();
   for (const [k, b] of blocks)
     out.push(` ${c.wrn}■${c.r} ${c.ink}${k.padEnd(14)}${c.r} ${c.mut}${m("blocked until", "bloqueado até")} ${when(b.until)}  ${b.reason ?? ""}${c.r}`);
@@ -456,6 +497,8 @@ export async function board(argv: string[]): Promise<number> {
   let theme = process.env.ORQ_THEME || String(getPath(cfg(), "ui.theme") ?? "gunmetal");
   if (!THEMES.includes(theme)) theme = "gunmetal";
 
+  // One-shot render: a workspace never collected is collected now, else it would only ever show "collecting...".
+  if (!json && (once || !process.stdout.isTTY)) { const miss = wss.filter((w) => collectedAt(w) === undefined); if (miss.length) collectCiAll(miss); }
   if (json) { console.log(JSON.stringify(await snapshot(wss, await processTableAsync()), null, 2)); return 0; }
   const tty = Boolean(process.stdout.isTTY);
   if (once || !tty) {

@@ -1374,7 +1374,7 @@ test("agent: no_review match on the answer ends status=fail, even with an ok exi
   say("Nothing to review nesta branch.");
   const nothing = go();
   assert.equal(nothing.status, 1);
-  assert.match(nothing.stdout, /status=fail rc=0/);
+  assert.match(nothing.stdout, /status=fail rc=0 reason=no-review/);
   say("1. [blocker] main foo");
   const findings = go();
   assert.equal(findings.status, 0, findings.stdout + findings.stderr);
@@ -1650,6 +1650,43 @@ test("board: finished/dead rows older than the threshold fold into a count in th
   assert.match(text, /\+2 older finished hidden/);
   assert.equal((text.match(/runner gone/g) ?? []).length, 0);
   assert.ok(!/older finished hidden/.test(render(snap as never, "gunmetal", 100, "none", 9).join("\n")));
+});
+
+test("board: a failed run names its reason, not rc=0; agent and model columns never touch; quota off and per-model rows folded", async () => {
+  const { render, quotaInUse } = await import("./commands/board.js");
+  const base = { unit: "u", title: "t", pid: 1, issue: "ABC-1", label: "review-api", secs: 60, age: 60 };
+  const snap = { at: new Date().toISOString(), mem: { used: 1, total: 2 }, workspaces: ["/w"], queue: { holders: [], waiters: [] },
+    agents: [{ ...base, agent: "antigravity", model: "gemini-3.8-flash", state: "fail", rc: 0, reason: "no-verdict" },
+      { ...base, agent: "codex", state: "fail", rc: 0 }, { ...base, agent: "claude", state: "fail", rc: 3 }],
+    conductors: [], ci: { entries: [] }, blocks: {}, scoreboard: [], notices: [],
+    quota: { lines: [{ name: "work", five: "10%", week: "20%" }, { name: "old", five: "1%", week: "2%", off: true },
+      { name: "agy", five: "0%", week: "-" }, { name: "agy/m1", five: "1%", week: "-" }, { name: "agy/m2", five: "85%", week: "-" }] } };
+  const text = render(snap as never, "gunmetal", 100, "none").join("\n");
+  assert.match(text, /antigravity gemini-3\.8-flash .* fail no-verdict\s*$/m);
+  assert.match(text, /codex\s+default\s+1m00s\s+fail\s*$/m);
+  assert.match(text, /fail rc=3/);
+  assert.doesNotMatch(text, /rc=0/);
+  assert.match(text, /off \(no agent uses it\): old/);
+  assert.match(text, /\+1 per-model rows below 70%: agy/);
+  assert.match(text, /agy\/m2/); // near its limit: still its own row
+  assert.doesNotMatch(text, /agy\/m1|^ old /m);
+  // In use: an agent with a role, by name and by its quota list; an agent with no role draws on nothing.
+  const agents = { claude: { roles: ["impl"], quota: ["work", "home"] }, copilot: { roles: [], quota: ["copilot"] } };
+  assert.deepEqual([...quotaInUse({ agents })!], ["claude", "work", "home"]);
+  assert.deepEqual([...quotaInUse({ agents, roles: { second: { pick: "auto", pool: ["copilot"] } } })!], ["claude", "work", "home", "copilot"]); // in a [roles.*] pool
+  assert.deepEqual([...quotaInUse({ agents: { claude: { roles: ["impl"] } } }, () => ["work", "home"])!], ["claude", "work", "home"]); // no list: every account
+  assert.equal(quotaInUse({}), undefined);
+  assert.equal(quotaInUse({ agents: {} }), undefined); // no agent declared: nothing is judged off
+});
+
+test("board --once: a workspace never collected for CI is collected before printing, not left at collecting...", { skip: process.platform === "win32" }, () => {
+  const { root, env } = sandbox(), ws = join(root, "ws");
+  mkdirSync(ws, { recursive: true });
+  const r = spawnSync(process.execPath, [CLI, "board", "--once", "-w", ws], { env, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const ci = r.stdout.slice(r.stdout.indexOf("MONITOR"), r.stdout.indexOf("MIXER"));
+  assert.match(ci, /no issue worktree has an open PR/);
+  assert.doesNotMatch(ci, /collecting/);
 });
 
 test("board: a conductor shows the herdr workspace's live label, falling back to the stored name when dead", { skip: process.platform === "win32" }, () => {
