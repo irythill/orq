@@ -16,6 +16,8 @@
 //   ok_exit  = [0, 1]                     # exit codes that still count as a verdict (a review tool exits 1 on findings)
 //   filter   = "jq -r '.findings[] | ...'" # shell line: gets the answer on stdin, its stdout becomes the answer
 //   no_review = "Nothing to review"       # regex: a match on the answer's first line (or a short answer, 200 chars) = nothing reviewed → status=fail
+//   tui_busy = "esc to interrupt"         # -T on herdr: regex on the screen's last lines = still working, even while herdr shows it idle
+//   no_hook_grace = 90                    # -T on herdr: seconds quiet (idle, screen and worktree unchanged) before a missing hook is signalled
 //   commit   = false                      # the agent can't run git commit: orq commits a write run's changes for it
 //   network  = false                      # the agent has no network: orq fetches origin before a write run (no fetch/pull/push for it)
 //   base_commit = false                   # can't review `-b <commit>` (diffs against origin/<base> itself): pick skips it, agent falls back to the branch base (default: follows usesPrompt: true if the agent takes the prompt, false for a tool that ignores it)
@@ -59,6 +61,8 @@ export interface AgentDef {
   network?: boolean; // false = orq fetches origin before a write run; the agent rebases locally (default true)
   base_commit?: boolean; // false = can't review a commit base (-b <sha>): orq pick skips it, orq agent uses the branch base (default: true if the agent takes the prompt, false for a tool that ignores it)
   no_review?: string; // regex: matched on the answer's first line (or all of a short one) = "nothing was reviewed" → status=fail, not a verdict
+  tui_busy?: string; // regex on the last lines of a -T screen: the agent is still working (subagent, background task)
+  no_hook_grace?: number; // seconds a -T screen stays quiet before a turn without its hook is signalled (default 90)
 }
 
 /** Does the agent's command take the prompt (stdin, a file in its folder or a {prompt*} placeholder)? A review tool like revtool does not. */
@@ -113,6 +117,8 @@ export const BUILTIN_AGENTS: Record<string, AgentDef> = {
     stdin: true, format: "claude", session: "uuid", accounts: true, unset_env: ["HERDR_PANE_ID"],
     tui: `${CLAUDE_TUI} --session-id {session} {mode} --settings {hook_settings} {prompt_text}`,
     tui_resume: `${CLAUDE_TUI} --resume {session} {mode} --settings {hook_settings} {prompt_text}`, turn_hook: "claude",
+    // herdr shows Claude idle while a subagent or a background task runs; its status line still counts them.
+    tui_busy: "esc to interrupt|\\b\\d+ (?:local )?(?:agents?|background tasks?|shells?)\\b",
   },
   codex: {
     // Codex treats any .git inside a writable root as read only: the folders a commit needs are granted one by one.

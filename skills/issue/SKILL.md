@@ -20,6 +20,12 @@ conductor outside herdr.
   your pane after each child. Anywhere else no line arrives: `orq wait <prefix>` prints
   `[ORQ AGENT DONE] <title> status=ok|fail ... answer: <file>`. Treat both lines the same. Several children in parallel:
   `orq wait --any <prefix1> <prefix2>` (one finish per call; wait again for the rest).
+- **`status=unconfirmed reason=no-hook`** (only `-T` on herdr): the child's end-of-turn hook didn't fire and its screen
+  went quiet; the answer file holds the screen's last lines. It is tentative, not a failed round: if the hook fires
+  later, a final `[HERDR-AGENT DONE] ... status=ok|fail` line arrives by itself (`orq wait` keeps waiting on such a
+  prefix while the agent is open and returns the final status). Read the screen tail: clearly finished (its summary is
+  there, work committed) → go on as with `status=ok`; still working, or unclear → keep waiting as usual (end your turn
+  or keep looping), never ask the user to ping you and never dispatch a fix for it.
 - **Waiting strategy** (your conductor instructions name it; `orq instructions strategy` shows it). It depends on what
   your harness can do, not on whether it can start a background process:
   - *background task* — only when a finished background task starts a new turn by itself (Claude Code: Bash with

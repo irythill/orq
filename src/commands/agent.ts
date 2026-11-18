@@ -42,7 +42,7 @@ interface Job {
   session?: string; fromLog?: string; parent: string; host: Host; unit: string; cap?: number; swap?: number;
   mode: MemMode; throwaway: boolean; promptInDir: boolean; closeAfter: number; keep: boolean; tui?: boolean;
   okExit?: number[]; filter?: string; noReview?: string; idleCloseMin?: number; ro?: boolean; review?: boolean;
-  orqCommits?: boolean; orqFetches?: boolean; scopeNote?: string;
+  orqCommits?: boolean; orqFetches?: boolean; scopeNote?: string; tuiBusy?: string; noHookGraceS?: number;
 }
 
 const git = (dir: string, ...a: string[]) => {
@@ -252,6 +252,7 @@ export async function agent(argv: string[]): Promise<number> {
     // A review (-r, prefix review*) must end with a verdict; policy.review_verdict = false turns the check off.
     review: ro && /^review/i.test(basename(O)) && getPath(cfg, "policy.review_verdict") !== false,
     idleCloseMin: tui ? Number(mach.tui_idle_close_min ?? 30) : undefined,
+    tuiBusy: tui ? def.tui_busy : undefined, noHookGraceS: tui ? def.no_hook_grace : undefined,
   };
   writeAtomic(`${O}.job.json`, JSON.stringify(job, null, 1));
   countRound?.();
@@ -417,17 +418,73 @@ export function missedTurn(done: string, busyAt: number, idleSince: number, grac
   try { return statSync(done).mtimeMs < busyAt; } catch { return true; }
 }
 
-const NO_HOOK_GRACE_MS = 60_000;
+const NO_HOOK_GRACE_S = 90;
 
-/** Signals a -T turn whose end-of-turn hook never fired: .done (status=fail reason=no-hook) and the done line, with the
- *  screen's last lines as the answer, so the conductor isn't left waiting. A late hook still overwrites both. */
+/** What a -T screen looks like on one tick: its last lines and the worktree's state. */
+export interface Probe { screen: string; tree: string }
+
+/** Is the agent visibly still working although herdr shows it idle: a busy marker (`busy`, agents.<name>.tui_busy) in
+ *  the screen's last lines (a subagent, a background task), or the screen or the worktree changed since `prev`? */
+export function stillWorking(cur: Probe, prev?: Probe, busy?: RegExp): boolean {
+  const tail = cur.screen.trimEnd().split("\n").slice(-8).join("\n");
+  if (busy?.test(tail)) return true;
+  return Boolean(prev) && (prev!.screen !== cur.screen || prev!.tree !== cur.tree);
+}
+
+/** Watches a -T turn on herdr for its missing hook. Each `tick` reads herdr's status for the pane (`status`) and, once
+ *  the turn looks over without .done being rewritten, the screen and worktree (`probe`); true = signal it now. */
+export function hookWatch(o: { done: string; graceMs: number; busy?: RegExp; status: () => string | undefined; probe: () => Probe }) {
+  let idleSince = 0, prev: Probe | undefined;
+  const w = {
+    busyAt: 0,
+    tick(now = Date.now()): boolean {
+      const st = o.status();
+      if (st === "working" || st === "blocked") { w.busyAt = now; idleSince = 0; prev = undefined; }
+      else if (st === "idle" || st === "done") idleSince ||= now;
+      if (!idleSince || !missedTurn(o.done, w.busyAt, idleSince, 0, now)) return false;
+      const cur = o.probe();
+      if (stillWorking(cur, prev, o.busy)) idleSince = now;
+      prev = cur;
+      return missedTurn(o.done, w.busyAt, idleSince, o.graceMs, now);
+    },
+  };
+  return w;
+}
+
+/** The worktree's state: HEAD, the changed paths and their mtimes (an edit to an already changed file counts too). */
+function treeState(dir: string): string {
+  const st = spawnSync("git", ["-C", dir, "status", "--porcelain", "-z"], { encoding: "utf8", timeout: 10_000 });
+  const head = spawnSync("git", ["-C", dir, "rev-parse", "-q", "HEAD"], { encoding: "utf8", timeout: 5_000 }).stdout ?? "";
+  const files = (st.stdout ?? "").split("\0").filter(Boolean).map((e) => {
+    const f = e.slice(3);
+    try { return `${e}@${statSync(join(dir, f)).mtimeMs}`; } catch { return e; }
+  });
+  return `${head.trim()}\n${files.join("\n")}`;
+}
+
+const readPane = (pane: string, lines: number) => {
+  const r = spawnSync("herdr", ["pane", "read", pane, "--lines", String(lines), "--format", "text"], { encoding: "utf8", timeout: 5_000 });
+  return r.status === 0 ? r.stdout : "";
+};
+
+/** The agent's tui_busy regex; an invalid one is reported and ignored. */
+function busyRe(pattern: string | undefined): RegExp | undefined {
+  if (!pattern) return undefined;
+  try { return new RegExp(pattern, "m"); } catch (e) {
+    console.error(`orq agent: ignoring invalid agents.<name>.tui_busy pattern ${JSON.stringify(pattern)}: ${(e as Error).message}`);
+    return undefined;
+  }
+}
+
+/** Signals a -T turn whose end-of-turn hook never fired: .done (status=unconfirmed reason=no-hook) and the done line,
+ *  with the screen's last lines as the answer, so the conductor isn't left waiting. Tentative: a late hook still
+ *  overwrites both and sends the authoritative done line; `orq wait` holds it while the agent is open. */
 function noHook(j: Job, pane: string): void {
   const O = j.prefix;
-  const r = spawnSync("herdr", ["pane", "read", pane, "--lines", "80", "--format", "text"], { encoding: "utf8", timeout: 5_000 });
-  writeFileSync(`${O}.out.md`, `${m("The agent's end-of-turn hook did not fire; its turn looks finished (the screen went idle). Last lines of the screen:",
-    "O hook de fim de turno do agente não disparou; o turno parece terminado (a tela ficou ociosa). Últimas linhas da tela:")}\n\n${r.status === 0 ? r.stdout : ""}`);
-  writeAtomic(`${O}.done`, `status=fail rc=0 reason=no-hook at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
-  if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=fail rc=0 reason=no-hook answer: ${O}.out.md`);
+  writeFileSync(`${O}.out.md`, `${m("The agent's end-of-turn hook did not fire; its turn looks finished (the screen went quiet). Tentative: if the hook fires later, a final done line replaces this one. Last lines of the screen:",
+    "O hook de fim de turno do agente não disparou; o turno parece terminado (a tela ficou quieta). Provisório: se o hook disparar depois, uma linha de conclusão final substitui esta. Últimas linhas da tela:")}\n\n${readPane(pane, 80)}`);
+  writeAtomic(`${O}.done`, `status=unconfirmed rc=0 reason=no-hook at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
+  if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=unconfirmed rc=0 reason=no-hook answer: ${O}.out.md`);
 }
 
 /** herdr's view of the agent on a pane: working | blocked | idle | done | unknown; undefined when it can't be read. */
@@ -552,18 +609,20 @@ async function runJob(file: string): Promise<number> {
           // into the screen removes it) or rewritten (the next end of turn), so idle = .done untouched that long.
           const idleMs = (j.idleCloseMin && !j.keep ? j.idleCloseMin : 0) * 60_000;
           // On herdr the pane's agent status also catches a turn typed straight into the screen (.done only changes
-          // when it ends), and a turn whose hook never fired (busy, then idle, .done not rewritten): that one is
-          // signalled from here, flagged reason=no-hook, with the screen's tail as the answer. Elsewhere (tmux) only
-          // .done tells: a turn typed directly into the screen that runs longer than the timeout can still be closed.
+          // when it ends), and a turn whose hook never fired (busy, then quiet, .done not rewritten): that one is
+          // signalled from here, tentatively (status=unconfirmed reason=no-hook), with the screen's tail as the answer.
+          // herdr shows Claude idle while a subagent runs, so "quiet" also needs no busy marker on the screen and the
+          // screen and worktree unchanged. Elsewhere (tmux) only .done tells: a turn typed directly into the screen
+          // that runs longer than the timeout can still be closed.
           const pane = j.host === "herdr" ? process.env.HERDR_PANE_ID : undefined;
           if (!pane && idleMs <= 0) return;
-          let busyAt = 0, idleSince = 0;
+          const w = hookWatch({ done: `${O}.done`, graceMs: (j.noHookGraceS ?? NO_HOOK_GRACE_S) * 1000, busy: busyRe(j.tuiBusy),
+            status: () => (pane ? paneStatus(pane) : undefined),
+            probe: () => ({ screen: readPane(pane!, 40), tree: existsSync(j.dir) ? treeState(j.dir) : "" }) });
           idleT = setInterval(() => {
-            const st = pane ? paneStatus(pane) : undefined, now = Date.now();
-            if (st === "working" || st === "blocked") { busyAt = now; idleSince = 0; }
-            else if (st === "idle" || st === "done") idleSince ||= now;
-            if (pane && missedTurn(`${O}.done`, busyAt, idleSince, NO_HOOK_GRACE_MS, now)) noHook(j, pane);
-            if (!idleExpired(`${O}.done`, idleMs, now, busyAt)) return;
+            const now = Date.now();
+            if (w.tick(now)) noHook(j, pane!);
+            if (!idleExpired(`${O}.done`, idleMs, now, w.busyAt)) return;
             clearInterval(idleT);
             console.log(m(`[orq agent] no follow-up for ${j.idleCloseMin} min: closing the finished agent`, `[orq agent] sem follow-up há ${j.idleCloseMin} min: fechando o agente que terminou`));
             idleClosed = true;
