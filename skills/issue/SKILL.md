@@ -87,6 +87,11 @@ The output goes straight into `orq agent` (`orq agent $(orq pick ...) -g ... -t 
 - Exit 3 = no candidate (quota exhausted, no agent with that role): **stop and ask the user**.
 - Implementer failed review twice (step 6) → pick again without it: `orq pick impl --level <level> --exclude-agent <agent>`.
 - `--exclude-agent` never "sticks": every `orq pick` call decides again, with only that dispatch's exclusions.
+- **Availability is never remembered.** Never exclude an agent (or skip `orq pick`) because a memory, a note or an
+  earlier session says it was out of quota, broken or slow: quotas reset and fixes land. What is out right now is what
+  `orq pick` sees (live quota + active blocks). When an agent runs out, record it with `orq block <agent> --quota`
+  (lifted when the window resets); another reason to keep it out → `orq block <agent> --days N --reason "..."` and tell
+  the user. Never save it to your memory or notes, where it never expires.
 - The conductor's own model (e.g. Opus) as implementer: only with the user's OK, never through `orq pick`.
 - Want to understand a choice? `orq pick ... --explain --no-record` (score of each candidate; not counted in rotation).
 

@@ -6,6 +6,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 
+### Changed
+- The `/issue` playbook and the conductor instructions forbid leaving an agent out because of a memory, a note or an earlier session (quota, failures): `orq pick` sees live quota and blocks, and an agent out of quota goes to `orq block <agent> --quota`, which expires, never to the conductor's memory.
+
 ## [0.10.1] — 2026-11-18
 
 ### Fixed
