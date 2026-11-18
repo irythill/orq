@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, dev]
   pull_request:
+  workflow_dispatch: # release-pr runs it on release/next, whose PR (opened with GITHUB_TOKEN) triggers nothing itself
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true

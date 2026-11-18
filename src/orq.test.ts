@@ -3237,6 +3237,17 @@ test("release: version from conventional commits; check wants package, lock and 
   assert.deepEqual(problems("0.7.0", ok), []);
   const bad = problems("0.7.0", { ...ok, pkg: { version: "0.6.1" }, pt: log("0.6.1", "### Fixed\n- y\n") });
   assert.equal(bad.length, 3, bad.join("\n"));
+  // bump: what it writes passes check; the unreleased entries land under the new heading; a second bump changes nothing.
+  const { bumped } = await import(mod);
+  const pending = { pkg: { name: "p", version: "0.6.1" }, lock: { version: "0.6.1", packages: { "": { version: "0.6.1" }, "node_modules/x": { version: "1.0.0" } } },
+    en: log("0.6.1", "\n### Fixed\n- y\n"), pt: log("0.6.1", "\n### Corrigido\n- y\n") };
+  const b = bumped("0.7.0", "2026-11-18", pending);
+  const parsed = { pkg: JSON.parse(b.pkg), lock: JSON.parse(b.lock), en: b.en, pt: b.pt };
+  assert.deepEqual(problems("0.7.0", parsed), []);
+  assert.equal(parsed.lock.packages[""].version, "0.7.0");
+  assert.equal(parsed.lock.packages["node_modules/x"].version, "1.0.0");
+  assert.match(b.en, /## \[Unreleased\]\n\n## \[0\.7\.0\] — 2026-11-18\n\n### Fixed\n- y\n\n## \[0\.6\.1\]/);
+  assert.equal(bumped("0.7.0", "2026-11-19", parsed).en, b.en);
 });
 
 test("harness: wait strategy follows capabilities, not background-process support (#119)", async () => {
