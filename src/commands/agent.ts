@@ -354,7 +354,8 @@ function turn(file: string, kind: string, rest: string[]): number {
     appendFileSync(`${O}.turns`, `${new Date().toISOString()}\n`); // stats: work time ends at the first turn
     if (sid) writeFileSync(`${O}.id`, `${sid}\n`);
     const noReview = noReviewMatch(j.noReview, answer), noVerdict = Boolean(j.review) && /\S/.test(answer) && !hasVerdict(answer);
-    const st = /\S/.test(answer) && !noReview && !noVerdict ? "ok" : "fail", why = noVerdict ? " reason=no-verdict" : "";
+    const why = !/\S/.test(answer) ? " reason=empty" : noReview ? " reason=no-review" : noVerdict ? " reason=no-verdict" : "";
+    const st = why ? "fail" : "ok";
     writeAtomic(`${O}.done`, `status=${st} rc=0${why} at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
     if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=0${why} answer: ${O}.out.md`);
   } catch (e) { console.error(`orq agent --turn: ${(e as Error).message}`); }
@@ -633,8 +634,8 @@ async function runJob(file: string): Promise<number> {
       clearInterval(idleT);
       if (idleClosed) rc = 0; // closed on purpose after a finished turn: not a kill
     }
-    const st = end(rc, killedRc(rc));
-    state({ status: st, rc, end: new Date().toISOString() });
+    const st = end(rc, killedRc(rc)), reason = st === "fail" ? /\breason=(\S+)/.exec(existsSync(`${O}.done`) ? readFileSync(`${O}.done`, "utf8") : "")?.[1] : undefined;
+    state({ status: st, rc, end: new Date().toISOString(), ...(reason ? { reason } : {}) });
     console.log(`\n[${j.agent} (TUI) ${m("exited", "encerrado")}] ${m("answer", "resposta")}: ${O}.out.md`);
     if (!j.keep) { await sleep(j.closeAfter * 1000); closeOwnTab(j.host); }
     return 0;
@@ -722,10 +723,12 @@ async function runJob(file: string): Promise<number> {
   // killed (SIGKILL, memory cap...) is its own status: never ok, even if an ok_exit list or a leftover answer says otherwise.
   const noVerdict = !spawnErr && Boolean(j.review) && verdict && !noReview && /\S/.test(answer) && !hasVerdict(answer);
   const st = spawnErr ? "fail" : killedRc(rc) ? "killed" : verdict && !noReview && !noVerdict && /\S/.test(answer) ? "ok" : "fail"; // whitespace-only answer = failure
-  const why = spawnErr ? ` reason=spawn:${spawnErr.code ?? "error"}` : noVerdict ? " reason=no-verdict" : "";
+  // Why a run failed with nothing in rc to say so (a failed filter, an empty or no-review answer, no verdict).
+  const why = spawnErr ? ` reason=spawn:${spawnErr.code ?? "error"}` : st !== "fail" ? "" : !verdict ? (rc === 0 ? " reason=filter" : "")
+    : noReview ? " reason=no-review" : noVerdict ? " reason=no-verdict" : !/\S/.test(answer) ? " reason=empty" : "";
   writeAtomic(`${O}.done`, `status=${st} rc=${rc}${why} at=${new Date().toISOString()} agent=${j.agent}\n`);
   rmSync(`${O}.pid`, { force: true });
-  state({ status: st, rc, end: new Date().toISOString() });
+  state({ status: st, rc, end: new Date().toISOString(), ...(why ? { reason: why.slice(8) } : {}) });
   if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=${rc}${why} answer: ${O}.out.md`);
   console.log(`\n[${j.agent} ${m("finished", "terminou")}: exit ${rc} status=${st}] ${m("answer", "resposta")}: ${O}.out.md`);
   if (j.host !== "plain" && !j.keep) { await sleep(j.closeAfter * 1000); closeOwnTab(j.host); }

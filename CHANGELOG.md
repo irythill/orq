@@ -6,8 +6,14 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-11-18
+
 ### Fixed
 - A `-T` agent on herdr is no longer flagged `reason=no-hook` while it is still working: herdr shows Claude idle while a subagent or a background task runs, so the no-hook signal now also needs the screen quiet (no busy marker on its status line, `agents.<name>.tui_busy`, built in for Claude) and the screen and worktree unchanged for `agents.<name>.no_hook_grace` seconds (default 90, was a fixed 60). The signal is tentative, `status=unconfirmed reason=no-hook` (not loud, not a failed round): `orq wait` keeps waiting on such a prefix while the agent is open and returns the late hook's final status, and the `/issue` playbook says how to handle it (#145).
+- `orq board` no longer shows a failed run as `fail rc=0`: `orq agent` records why a run failed when its exit code doesn't say (`reason=empty`, `no-review` or `filter` in `.done`, besides `no-verdict`, and in the run's state) and TRACKS shows that reason, also for older runs from their `.done` (#133).
+- `orq board` MIXER shows quota of an account or agent no agent with a role (in `agents.<name>.roles` or a `[roles.*]` section) uses as off instead of as a live meter (#135), and folds per-model rows (`antigravity/<model>`) into their agent's unless one is at 70% or more (#137).
+- `orq board` TRACKS keeps a space between the agent and model columns (`antigravity gemini-…`) and shows `default` for a finished run started without a model, as for a running one (#136).
+- `orq board --once` (and a piped board) collects CI first for a workspace never collected, instead of printing MONITOR as `collecting...` every time (#137).
 - `orq gc` keeps a worktree whose branch has an open PR (`KEEP — PR open (#N)`) instead of reporting it as `STALE`; `STALE` now says `PR closed without merge (#N)` or `no PR`, with the age of the last commit (#51).
 
 ## [0.10.0] — 2026-11-14
