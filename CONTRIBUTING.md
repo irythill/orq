@@ -20,7 +20,9 @@ Node 22, 24 and 26, plus an install from the packed tarball. A PR title that isn
 Versions come from the commit types since the last `v*` tag (`scripts/release.mjs`): `feat` → minor, `fix`/`perf` →
 patch, `type!:` or `BREAKING CHANGE:` → major (minor while on 0.x); `chore`, `test`, `docs`, `ci` alone release nothing.
 - Every push to `dev` opens or updates the `dev → main` PR, listing the commits and the version they call for.
-- Before that PR is merged, the maintainer bumps `package.json` (`npm version <v> --no-git-tag-version`) and moves
-  `[Unreleased]` to `## [<v>] — <date>` in both changelogs; the `version` check fails until then.
+- While `dev` doesn't carry that version yet, the same workflow opens (or rewrites) a `chore(release): <v>` PR from
+  `release/next` into `dev` that bumps `package.json`/`package-lock.json` and moves `[Unreleased]` to
+  `## [<v>] — <date>` in both changelogs (`node scripts/release.mjs bump`), and dispatches `ci` on it. The `version`
+  check on the `dev → main` PR fails until that PR is merged.
 - Merging into `main` tags `v<version>`, publishes to npm (trusted publishing, with provenance) and creates the GitHub
   release from the changelog section.

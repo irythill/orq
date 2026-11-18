@@ -1,11 +1,14 @@
 # Keeps a dev → main PR open whenever dev is ahead of main, its body listing the commits since the last tag and the
-# version they call for (scripts/release.mjs).
+# version they call for (scripts/release.mjs), and, while dev doesn't carry that version yet, a `chore(release): <v>`
+# PR from release/next into dev that bumps it. A PR opened with GITHUB_TOKEN triggers no workflow, so ci is dispatched
+# on release/next (workflow_dispatch is the exception) to give that PR its required checks.
 name: release-pr
 on:
   push:
     branches: [dev]
 permissions:
-  contents: read
+  contents: write # push release/next
+  actions: write # dispatch ci on release/next
   pull-requests: write
   statuses: write # a PR opened with GITHUB_TOKEN triggers no workflow, so the version check is reported from here
 concurrency:
@@ -43,3 +46,22 @@ jobs:
           # Its own title ("Release v…") is conventional by construction; the ci `title` job doesn't run on it.
           gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=success -f context=title \
             -f description="release PR title" >/dev/null
+      - name: open or update the chore(release) PR into dev
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          open=$(gh pr list --base dev --head release/next --state open --json number -q '.[0].number')
+          if node scripts/release.mjs check >/dev/null 2>&1; then
+            # dev carries the version (or there is nothing to release): a leftover bump PR is stale.
+            [ -z "$open" ] || gh pr close "$open" --delete-branch --comment "dev already carries this version."
+            exit 0
+          fi
+          git switch -C release/next
+          v=$(node scripts/release.mjs bump)
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qam "chore(release): $v"
+          git push -qf origin release/next
+          body="Bumps package.json/package-lock.json to $v and moves [Unreleased] to [$v] in both changelogs, so the \`version\` check on the dev → main release PR passes. Opened by the release-pr workflow; rewritten on every push to dev."
+          if [ -n "$open" ]; then gh pr edit "$open" --title "chore(release): $v" --body "$body"
+          else gh pr create --base dev --head release/next --title "chore(release): $v" --body "$body"; fi
+          gh workflow run ci.yml --ref release/next

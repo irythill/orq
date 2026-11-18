@@ -4,8 +4,9 @@
 //   node scripts/release.mjs next    {"last","next","bump"} as JSON (next = null when nothing to release)
 //   node scripts/release.mjs check   fails unless package.json, package-lock.json and both changelogs carry `next`
 //   node scripts/release.mjs notes   markdown body for the dev → main PR
+//   node scripts/release.mjs bump    writes `next` into package.json, package-lock.json and both changelogs
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const git = (...a) => execFileSync("git", a, { encoding: "utf8" }).trim();
@@ -65,6 +66,16 @@ export function problems(version, files) {
   return out;
 }
 
+/** The release files with `version` applied: package and lock versions, and a `## [<version>] — <date>` heading under
+ *  [Unreleased] in each changelog (left alone when it already has one). */
+export function bumped(version, date, files) {
+  const json = (o) => JSON.stringify(o, null, 2) + "\n";
+  const lock = { ...files.lock, version };
+  if (lock.packages?.[""]) lock.packages = { ...lock.packages, "": { ...lock.packages[""], version } };
+  const log = (t) => (t.includes(`## [${version}]`) ? t : t.replace(/^## \[Unreleased\]\n/m, `## [Unreleased]\n\n## [${version}] — ${date}\n`));
+  return { pkg: json({ ...files.pkg, version }), lock: json(lock), en: log(files.en), pt: log(files.pt) };
+}
+
 function main(cmd) {
   const last = lastTag(), list = commits(last), n = next(last, list);
   if (cmd === "next") { console.log(JSON.stringify(n)); return 0; }
@@ -84,11 +95,21 @@ function main(cmd) {
       const cs = list.filter((c) => bumpOf(c) === k);
       if (cs.length) lines.push(`**${groups[k]}**`, ...cs.map((c) => `- ${c.subject}`), "");
     }
-    lines.push("Before merging: bump package.json (`npm version <v> --no-git-tag-version`) and move [Unreleased] to the new version in both changelogs; the `version` check enforces it. Merging tags and publishes.");
+    if (n.next) lines.push(`Before merging: merge the \`chore(release): ${n.next}\` PR into dev (opened by the release-pr workflow); the \`version\` check waits for it. Merging this one tags and publishes.`);
     console.log(lines.join("\n"));
     return 0;
   }
-  console.error("usage: node scripts/release.mjs next|check|notes");
+  if (cmd === "bump") {
+    if (!n.next) { console.log(`nothing to release since ${last ?? "the start"}`); return 0; }
+    const read = (f) => readFileSync(f, "utf8");
+    const out = bumped(n.next, new Date().toISOString().slice(0, 10), { pkg: JSON.parse(read("package.json")),
+      lock: JSON.parse(read("package-lock.json")), en: read("CHANGELOG.md"), pt: read("CHANGELOG.pt-BR.md") });
+    writeFileSync("package.json", out.pkg); writeFileSync("package-lock.json", out.lock);
+    writeFileSync("CHANGELOG.md", out.en); writeFileSync("CHANGELOG.pt-BR.md", out.pt);
+    console.log(n.next);
+    return 0;
+  }
+  console.error("usage: node scripts/release.mjs next|check|notes|bump");
   return 2;
 }
 
