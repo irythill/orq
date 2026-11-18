@@ -8,6 +8,10 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ### Corrigido
 - Um agente `-T` no herdr não é mais marcado `reason=no-hook` enquanto ainda trabalha: o herdr mostra o Claude ocioso enquanto roda um subagente ou uma tarefa em background, então o sinal de no-hook agora também exige a tela quieta (nenhum marcador de trabalho na linha de status, `agents.<nome>.tui_busy`, embutido para o Claude) e tela e worktree sem mudança por `agents.<nome>.no_hook_grace` segundos (padrão 90, antes 60 fixos). O sinal é provisório, `status=unconfirmed reason=no-hook` (não é barulhento nem conta como rodada falha): o `orq wait` continua esperando esse prefixo enquanto o agente está aberto e devolve o status final do hook atrasado, e o playbook do `/issue` diz como tratá-lo (#145).
+- `orq board` não mostra mais um run que falhou como `fail rc=0`: o `orq agent` registra por que um run falhou quando o código de saída não diz (`reason=empty`, `no-review` ou `filter` no `.done`, além de `no-verdict`, e no estado do run) e o TRACKS mostra esse motivo, também para runs antigos a partir do `.done` (#133).
+- O MIXER do `orq board` mostra como desligada a quota de uma conta ou agente que nenhum agente com papel usa, em vez de um medidor ativo (#135), e junta as linhas por modelo (`antigravity/<modelo>`) à do agente, a não ser que uma esteja em 70% ou mais (#137).
+- O TRACKS do `orq board` mantém um espaço entre as colunas de agente e modelo (`antigravity gemini-…`) e mostra `padrão` num run finalizado iniciado sem modelo, como já fazia num run em andamento (#136).
+- `orq board --once` (e o board por pipe) coleta antes o CI de uma workspace nunca coletada, em vez de mostrar o MONITOR como `coletando...` toda vez (#137).
 - `orq gc` mantém a worktree cuja branch tem PR aberto (`KEEP — PR aberto (#N)`) em vez de marcá-la como `STALE`; `STALE` agora diz `PR fechado sem merge (#N)` ou `sem PR`, com a idade do último commit (#51).
 
 ## [0.10.0] — 2026-11-14

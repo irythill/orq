@@ -262,8 +262,10 @@ quando ele pede uma decisão ou avisa que terminou.
 
 Para ver tudo de uma vez, deixe o **`orq board`** aberto numa aba ou janela (qualquer terminal, qualquer SO; o
 `herdr-board` o chama): fila de testes, agentes rodando (modelo, memória contra o limite, última ação), conductors e
-suas issues, memória, quota, CI/CD de cada issue reivindicada, bloqueios e o placar de 7 dias. `--once` imprime uma
-vez, `--json` para scripts.
+suas issues, memória, quota, CI/CD de cada issue reivindicada, bloqueios e o placar de 7 dias. Um run que falhou mostra
+o motivo (`no-verdict`, `empty`...) quando o código de saída não diz; a quota de uma conta que nenhum agente usa aparece
+como desligada, e as linhas por modelo (`antigravity/<modelo>`) se juntam à do agente, a não ser que uma esteja em 70% ou
+mais. `--once` imprime uma vez (coletando antes o CI de uma workspace nunca coletada), `--json` para scripts.
 Um agente `-T` no herdr cujo hook de fim de turno nunca dispara é sinalizado depois que a tela fica quieta (ociosa no
 herdr, nenhum subagente ou tarefa em background na linha de status, tela e worktree sem mudança) por
 `agents.<nome>.no_hook_grace` segundos (padrão 90), como um `status=unconfirmed reason=no-hook` provisório com o fim da
