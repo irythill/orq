@@ -1546,7 +1546,8 @@ test("missedTurn: a -T turn without its hook is one seen busy after the last .do
 test("hookWatch: no signal while a subagent runs or the screen/worktree moves; a genuine missing hook is signalled", async () => {
   const { hookWatch } = await import("./commands/agent.js");
   const { BUILTIN_AGENTS } = await import("./agents.js");
-  const busy = new RegExp(BUILTIN_AGENTS.claude.tui_busy!, "m"), t0 = Date.now(), s = 15_000;
+  // t0 in the past: .done's real mtime (coarse fs clock, a few ms behind Date.now()) must land after busyAt.
+  const busy = new RegExp(BUILTIN_AGENTS.claude.tui_busy!, "m"), t0 = Date.now() - 60_000, s = 15_000;
   const run = (screens: string[], trees?: string[]) => {
     const d = join(mkdtempSync(join(tmpdir(), "orq-watch-")), "x.done");
     let i = 0;
