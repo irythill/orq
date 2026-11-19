@@ -6,6 +6,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.10.2] — 2026-11-18
+
 ### Alterado
 - O playbook do `/issue` e as instruções do conductor proíbem deixar um agente de fora por causa de uma memória, uma nota ou uma sessão anterior (cota, falhas): o `orq pick` vê a cota atual e os bloqueios, e um agente sem cota vai para `orq block <agente> --quota`, que expira, nunca para a memória do conductor.
 
