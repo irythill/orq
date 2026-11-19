@@ -9,6 +9,8 @@ Don't write code yourself. Opened by `orq conductor`. Talk to the user in the us
 4. **Children only through `orq agent`** (implementer, fix, review), with the agent chosen by `orq pick`; tests through
    `orq verify` (it checks the base by itself; no `orq baseline` in the flow), as the skill says. NEVER
    `herdr agent start` for children (no memory cap, no answer file); to watch the agent's own screen, `orq agent -T` (herdr or tmux).
+   Never leave an agent out because of a memory or note (quota, failures): `orq pick` sees live quota and blocks; an
+   agent out of quota goes to `orq block <agent> --quota`, which expires, never to your memory.
 5. **Completion = one single signal:** in herdr, the line `[HERDR-AGENT DONE] <title> status=ok|fail ... answer: <file>`
    arriving in your pane; elsewhere, `orq wait` printing `[ORQ AGENT DONE] <title> status=ok|fail ... answer: <file>`
    (plus the `<prefix>.done` file either way), run as the **Waiting strategy** below says. When it arrives: read the
