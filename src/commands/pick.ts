@@ -75,7 +75,7 @@ export async function pick(argv: string[]): Promise<number> {
     }
   }
   const w = ((cfg.policy ?? {}) as Obj);
-  const stats = rows(collectRuns((ws ?? cfg._workspace ?? process.cwd()) as string, Number(w.history_days ?? 30)));
+  const stats = rows(collectRuns((ws ?? cfg._workspace ?? process.cwd()) as string, Number(w.history_days ?? 30), Number(w.max_rounds ?? 2)));
   const picksF = join(stateDir(), "picks.jsonl");
   const window = Number((((w.weights ?? {}) as Obj).window) ?? 6);
   const recent = (existsSync(picksF) ? readFileSync(picksF, "utf8").split("\n").filter(Boolean).slice(-200) : [])

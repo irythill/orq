@@ -100,6 +100,9 @@ default = "auto"          # "auto" = the plan's default model
 #   delivery  = impl: approved on the first review; review/opinion: answered (status ok with text)
 #   economy   = the lowest median of new tokens among candidates ÷ this candidate's (1 = the cheapest)
 #   quickness = the same, with the median duration
+#   loop-free = impl: 1 − share of its issues that hit max_rounds, repeated a heavy finding or needed the watchdog
+#   grounded  = 1 − share of runs with a false claim (impl: tests "pass" but orq verify of that commit fails, or a named
+#               file that doesn't exist; review: a finding marked with `orq rounds <ID> --invalid`)
 # Each axis blends `prior` with the measured value: (prior·min_samples + measured·n) / (min_samples + n).
 # Below `min_samples` runs the candidate also gets the `explore` bonus, shrinking as n grows and dropped after
 # `explore_streak` consecutive picks of it.
@@ -122,6 +125,8 @@ history_days = 30
 quality  = 0.40
 tokens   = 0.45           # 3–5 tasks in parallel: saving tokens is the priority
 speed    = 0.15
+looping  = 0.20
+hallucination = 0.20
 rotation = 0.20
 reserve  = 0.30           # penalty for agents with reserve = true
 prefer   = 0.30           # watchdog without [roles.watchdog]: bonus for the opinion agents over the review pool

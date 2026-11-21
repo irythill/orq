@@ -6,7 +6,9 @@
 // "- **Sugestão — `a.ts:7–8`:** ..."; "**Critério 1**" is not one). Files may be markdown links; a ".worktrees/<dir>/" prefix is
 // stripped so a file matches across rounds. A finding "repeats" when a later review has one on the same file
 // with similar words (token overlap, see similar()).
-import { readdirSync, readFileSync, statSync } from "node:fs";
+// .invalid.log: findings the conductor judged wrong (`orq rounds <ID> --invalid`), "<review prefix> <n> <iso> <why>"
+// per line, n = the finding's place in parseFindings() order (1-based); they count against the reviewer in orq stats.
+import { appendFileSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export type Level = "ok" | "warn" | "stop";
@@ -187,6 +189,29 @@ export function collectRounds(ws: string, issue: string, max: number): Metrics |
   const x = metrics(issue, { rounds, max, perRound, findings, secs: Math.round((t1 - t0) / 1000) });
   const fu = roundReasons(dir, names);
   return Object.keys(fu).length ? { ...x, followups: fu } : x;
+}
+
+export const INVALID_LOG = ".invalid.log";
+
+/** Review prefix → the numbers of its findings marked invalid. */
+export function readInvalid(dir: string): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>();
+  for (const line of read(join(dir, INVALID_LOG)).split("\n")) {
+    const [rv, n] = line.split(" ");
+    if (!rv || !/^\d+$/.test(n ?? "")) continue;
+    out.set(rv, (out.get(rv) ?? new Set()).add(Number(n)));
+  }
+  return out;
+}
+
+/** Marks findings of a review invalid; returns the marked ones (numbers outside the review are an error). */
+export function markInvalid(dir: string, review: string, ns: number[], why = ""): Finding[] {
+  const fs = parseFindings(read(join(dir, `${review}.out.md`)), 0);
+  const bad = ns.filter((n) => !Number.isInteger(n) || n < 1 || n > fs.length);
+  if (bad.length) throw new RangeError(`${review}: ${fs.length} finding(s), no ${bad.join(", ")}`);
+  const at = new Date().toISOString(), note = why.replace(/\s+/g, " ").trim();
+  appendFileSync(join(dir, INVALID_LOG), ns.map((n) => `${review} ${n} ${at}${note ? ` ${note}` : ""}\n`).join(""));
+  return ns.map((n) => fs[n - 1]);
 }
 
 /** Cheap change signature of an issue folder (names + mtimes, no reads) for caching collectRounds between redraws. */
