@@ -6,19 +6,27 @@
 // Agent and model come from the job (<prefix>.job.json argv), then the pick (<prefix>.pick), then the log; a tool
 // without models (a review CLI) has model "-". Time runs to the first turn on a screen run (<prefix>.turns): later
 // turns wait on a person. Killed runs and older screen runs without .turns are counted but left out of the time median.
+// Looping (implementer, per issue): the issue's rounds (src/rounds.ts) hit max_rounds or repeated a heavy finding, or
+// needed a watchdog diagnosis. Hallucination: an implementer whose answer says the tests pass while `orq verify` of the
+// same commit has new failures, or whose answer names repo files that don't exist (<prefix>.refs, written by orq agent);
+// a reviewer with a finding the conductor marked invalid (`orq rounds <ID> --invalid`).
+import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { argvModel, tokenize } from "./agents.js";
 import { doneStatus } from "./process.js";
+import { collectRounds, parseFindings, readInvalid } from "./rounds.js";
 
 export interface Run {
   issue: string; name: string; agent: string; model: string; role: string; ok: boolean;
   secs: number; timed: boolean; new: number; tot: number; repo: string; approved?: boolean;
+  loop?: boolean; halluc?: boolean; // undefined = nothing to judge it by
 }
 export interface Row {
   role: string; agent: string; model: string; n: number; ok: number; approved: number | null; n_appr: number;
   min: number | null; new: number | null; tot: number | null;
+  loop?: number | null; n_loop?: number; halluc?: number | null; n_halluc?: number; // % of the runs that could be judged
 }
 
 const ROLE = /^(impl|fix\d*|review\d*|[a-z]+-review\d*|watchdog\d*)-?/;
@@ -107,7 +115,50 @@ export function tokens(agent: string, log: string, sid = ""): [number, number] {
   return [neu, tot];
 }
 
-export function collectRuns(ws: string, days: number): Run[] {
+/** Does an answer say the tests pass? (A child is told not to run them, so the claim is either false or unchecked.) */
+export function claimsPass(text: string): boolean {
+  return text.split("\n").some((l) => /\b(?:tests?|specs?|test suite|jest|vitest|testes?)\b[^.\n]{0,40}?\b(?:pass(?:es|ed|ing)?|green|succeed(?:s|ed)?|passam|passaram|passando|verdes?)\b/i.test(l)
+    && !/\b(?:not|never|didn'?t|did not|don'?t|no|without|n[ãa]o|sem|nenhum)\b[^.\n]{0,20}?\b(?:run|ran|rodei|rodar|executei|executar|rodad)/i.test(l));
+}
+
+/** Repo-relative file paths an answer names ("src/a.ts", "`lib/x.py:12`"); orq's own files and dependencies are left out. */
+export function refPaths(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of text.matchAll(/(?:^|[\s`'"(\[])((?:[\w@.-]+\/)+[\w@-][\w@.-]*\.[A-Za-z]\w{0,5})(?=[\s`'"),\]:;]|\.(?:\s|$)|$)/gm)) {
+    const p = m[1].replace(/^\.\//, "");
+    if (/(?:^|\/)(?:\.orquestra|\.worktrees|node_modules|\.git)\//.test(p) || p.startsWith("../")) continue;
+    out.add(p);
+  }
+  return [...out];
+}
+
+const gitOut = (dir: string, ...a: string[]) => {
+  const r = spawnSync("git", ["-C", dir, ...a], { encoding: "utf8", maxBuffer: 1 << 28 });
+  return r.status === 0 ? r.stdout : undefined;
+};
+
+/** The paths in `text` that exist neither in the worktree nor in HEAD's or `start`'s tree (a file the run deleted counts
+ *  as existing). A path also matches a tracked file it is the tail of ("Foo.tsx" said from inside a package). */
+export function missingRefs(dir: string, text: string, start?: string): { head?: string; checked: number; missing: string[] } {
+  const paths = refPaths(text), head = gitOut(dir, "rev-parse", "HEAD")?.trim();
+  if (!paths.length || !head) return { head, checked: 0, missing: [] };
+  const tracked = new Set<string>();
+  for (const rev of [head, start]) if (rev) for (const f of (gitOut(dir, "ls-tree", "-r", "--name-only", rev) ?? "").split("\n")) if (f) tracked.add(f);
+  const known = (p: string) => existsSync(join(dir, p)) || tracked.has(p) || [...tracked].some((f) => f.endsWith(`/${p}`));
+  const missing = paths.filter((p) => !known(p));
+  return { head, checked: paths.length, missing };
+}
+
+/** <prefix>.refs: "head=<sha> checked=<n> missing=<a,b>" (missing may be empty). */
+export const refsLine = (r: ReturnType<typeof missingRefs>) => `head=${r.head ?? ""} checked=${r.checked} missing=${r.missing.join(",")}\n`;
+function parseRefs(text: string): { head: string; missing: number } | undefined {
+  const r = /head=(\S*) checked=\d+ missing=(\S*)/.exec(text);
+  return r ? { head: r[1], missing: r[2] ? r[2].split(",").length : 0 } : undefined;
+}
+
+const LOOPING = new Set(["over_max", "at_max", "same_finding", "repeated"]);
+
+export function collectRuns(ws: string, days: number, maxRounds = 2): Run[] {
   const cutoff = Date.now() - days * 86400_000;
   const base = join(ws, ".orquestra");
   const runs: Run[] = [];
@@ -152,7 +203,45 @@ export function collectRuns(ws: string, days: number): Run[] {
     r.approved = (t.includes("APPROVED") || t.includes("APROVADO")) &&
       !["NOT APPROVED", "REPROVADO", "NÃO APROVADO"].some((x) => t.includes(x));
   }
+  judge(ws, runs, maxRounds);
   return runs;
+}
+
+/** Sets loop/halluc on the runs that can be judged (see the header). */
+function judge(ws: string, runs: Run[], maxRounds: number): void {
+  const base = join(ws, ".orquestra");
+  const loops = new Map<string, boolean | undefined>(), invalid = new Map<string, Map<string, Set<number>>>();
+  const loopOf = (issue: string) => {
+    if (!loops.has(issue)) {
+      const x = collectRounds(ws, issue, maxRounds);
+      let diag = false;
+      try { diag = readdirSync(join(base, issue)).some((n) => /^diagnosis-\d+\.md$/.test(n)); } catch { /* gone */ }
+      loops.set(issue, x ? diag || x.reasons.some((r) => LOOPING.has(r.code)) : undefined);
+    }
+    return loops.get(issue);
+  };
+  for (const r of runs) {
+    const dir = join(base, r.issue), pre = join(dir, r.name);
+    if (r.name.startsWith("impl-") && (r.role === "impl" || r.role === "fix")) {
+      r.loop = loopOf(r.issue);
+      const refs = parseRefs(read(`${pre}.refs`)), vdone = read(join(dir, `verify-${r.repo}.done`));
+      let falsePass: boolean | undefined;
+      if (vdone) {
+        const failed = /\bstatus=fail\b/.test(vdone) && Number(/\bnew=(\d+)/.exec(vdone)?.[1] ?? 0) > 0;
+        const vhead = /^# verify \S+ (\S+)/.exec(read(join(dir, `verify-${r.repo}.txt`)))?.[1] ?? "";
+        // The same commit when both are known (either may be abbreviated); else the verify that ran after this answer.
+        const same = refs?.head && vhead && vhead !== "?" ? refs.head.startsWith(vhead) || vhead.startsWith(refs.head)
+          : statSync(join(dir, `verify-${r.repo}.done`)).mtimeMs >= statSync(`${pre}.done`).mtimeMs;
+        if (same) falsePass = failed && claimsPass(read(`${pre}.out.md`));
+      }
+      if (refs || falsePass !== undefined) r.halluc = Boolean(falsePass) || (refs?.missing ?? 0) > 0;
+    } else if (r.role === "review") {
+      const n = parseFindings(read(`${pre}.out.md`), 0).length;
+      if (!n) continue; // nothing claimed, nothing to be wrong about
+      if (!invalid.has(r.issue)) invalid.set(r.issue, readInvalid(dir));
+      r.halluc = (invalid.get(r.issue)!.get(r.name)?.size ?? 0) > 0;
+    }
+  }
 }
 
 const median = (xs: number[]) => {
@@ -169,12 +258,15 @@ export function rows(runs: Run[]): Row[] {
   return [...groups.keys()].sort().map((k) => {
     const rs = groups.get(k)!, [role, agent, model] = JSON.parse(k) as string[];
     const withTok = rs.filter((r) => r.tot), appr = rs.filter((r) => r.approved !== undefined).map((r) => r.approved!);
+    const pct = (xs: boolean[]) => (xs.length ? Math.round(100 * xs.filter(Boolean).length / xs.length) : null);
+    const lp = rs.filter((r) => r.loop !== undefined).map((r) => r.loop!), hl = rs.filter((r) => r.halluc !== undefined).map((r) => r.halluc!);
     return { role, agent, model, n: rs.length, ok: Math.round(100 * rs.filter((r) => r.ok).length / rs.length),
       approved: appr.length ? Math.round(100 * appr.filter(Boolean).length / appr.length) : null, n_appr: appr.length,
       min: rs.some((r) => r.timed) ? Math.round(median(rs.filter((r) => r.timed).map((r) => r.secs)) / 6) / 10 : null,
       new: withTok.length ? Math.floor(median(withTok.map((r) => r.new))) : null,
-      tot: withTok.length ? Math.floor(median(withTok.map((r) => r.tot))) : null };
+      tot: withTok.length ? Math.floor(median(withTok.map((r) => r.tot))) : null,
+      loop: pct(lp), n_loop: lp.length, halluc: pct(hl), n_halluc: hl.length };
   });
 }
 
-export const scoreboard = (ws: string, days: number) => rows(collectRuns(ws, days));
+export const scoreboard = (ws: string, days: number, maxRounds = 2) => rows(collectRuns(ws, days, maxRounds));

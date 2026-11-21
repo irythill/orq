@@ -6,6 +6,10 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 
+### Added
+- `orq pick` scores looping and hallucination (#104): new `policy.weights.looping` and `policy.weights.hallucination` (default 0.20 each), blended with `prior` like the other axes. Looping is the share of an implementer's issues that reached `max_rounds`, repeated a heavy finding or needed `orq rounds --diagnose`. Hallucination is an implementer answer that says the tests pass while `orq verify` of the same commit has new failures, or names repo files that don't exist (checked by `orq agent` at the end of a write run, in `<prefix>.refs`), and a reviewer finding the conductor marked wrong. `orq stats` shows both as `loop%` and `halluc%`.
+- `orq rounds <ID> --invalid <review> [<n>...] [--why <text>]` marks a review's findings wrong (`.orquestra/<ID>/.invalid.log`); without numbers it lists the findings. The `/issue` playbook uses it for findings that are wrong, not just downgraded.
+
 ## [0.10.2] — 2026-11-18
 
 ### Changed

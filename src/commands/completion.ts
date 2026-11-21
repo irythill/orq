@@ -23,7 +23,7 @@ export const WORDS: Record<string, string[]> = {
   config: ["get", "files", "-w"], lang: ["pt", "en", "auto", "toggle"], lock: ["wait", "release", "run", "status"],
   pick: ["impl", "fix", "worker", "review", "opinion", "watchdog"], instructions: ["claude", "agents"], board: ["--once", "--json", "-w"],
   completion: ["bash", "zsh", "fish", "powershell"], stats: ["--days", "--json", "-w"], wait: ["--any", "--timeout", "--answer"],
-  ci: ["--json", "-w"], rounds: ["--json", "--diagnose", "-w"],
+  ci: ["--json", "-w"], rounds: ["--json", "--diagnose", "--invalid", "--why", "-w"],
 };
 
 const q = (s: string) => `'${s.replace(/'/g, "''")}'`; // PowerShell single quotes

@@ -1,6 +1,8 @@
 // orq rounds <ID> [-w <workspace>] [--json]   per-issue round metrics from .orquestra/<ID>/ (src/rounds.ts), no LLM
 // orq rounds <ID> --diagnose [-w <workspace>]  warn/stop only: a cheap read only "watchdog" agent (another vendor than the
 //   implementer when known) diagnoses why the rounds don't converge → .orquestra/<ID>/diagnosis-<rounds>.md (advisory)
+// orq rounds <ID> --invalid <review> [<n>...] [--why <text>]  marks findings of review-<...>.out.md wrong (orq stats counts
+//   them against the reviewer); without numbers, lists that review's findings with their numbers
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,12 +12,13 @@ import { getPath, loadConfig } from "../config.js";
 import { buildPrompt, evidence, latestDiagnosis, recommendation } from "../diagnose.js";
 import { m } from "../i18n.js";
 import { expand } from "../paths.js";
-import { collectRounds, mark, type Metrics, type Reason } from "../rounds.js";
+import { collectRounds, mark, markInvalid, type Metrics, parseFindings, type Reason } from "../rounds.js";
 import { alive } from "../lock.js";
 import { wait } from "./wait.js";
 
 export const USAGE = `orq rounds <ID> [-w <workspace>] [--json]   rounds vs max_rounds, time per round, repeated findings, alert level
-orq rounds <ID> --diagnose [-w <workspace>]   on warn/stop: an independent cheap agent diagnoses why rounds don't converge (advisory; needed for orq agent -R -F)`;
+orq rounds <ID> --diagnose [-w <workspace>]   on warn/stop: an independent cheap agent diagnoses why rounds don't converge (advisory; needed for orq agent -R -F)
+orq rounds <ID> --invalid <review> [<n>...] [--why <text>] [-w <workspace>]   mark a review's findings wrong (counts against the reviewer); no <n>: list them`;
 
 export const WATCHDOG_TIMEOUT = 900; // seconds `orq rounds --diagnose` waits for the agent
 const CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
@@ -32,16 +35,21 @@ const why = (r: Reason) => ({
 })[r.code];
 
 export async function rounds(argv: string[]): Promise<number> {
-  let ws: string | undefined, id: string | undefined, json = false, diagnose = false;
+  let ws: string | undefined, id: string | undefined, json = false, diagnose = false, invalid: string | undefined, note = "";
+  const nums: number[] = [];
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "-w") { if (!argv[i + 1]) { console.error(USAGE); return 2; } ws = expand(argv[++i]); }
     else if (argv[i] === "--json") json = true;
     else if (argv[i] === "--diagnose") diagnose = true;
+    else if (argv[i] === "--invalid" && argv[i + 1] && !argv[i + 1].startsWith("-")) invalid = argv[++i].replace(/\.out\.md$/, "").replace(/^.*[\\/]/, "");
+    else if (argv[i] === "--why" && argv[i + 1] !== undefined) note = argv[++i];
+    else if (invalid && /^\d+$/.test(argv[i])) nums.push(Number(argv[i]));
     else if (!id && !argv[i].startsWith("-")) id = argv[i];
     else { console.error(USAGE); return 2; }
   }
-  if (!id) { console.error(USAGE); return 2; }
+  if (!id || (diagnose && invalid)) { console.error(USAGE); return 2; }
   ws ??= (getPath(loadConfig().cfg, "_workspace") as string | null) ?? process.cwd();
+  if (invalid) return invalidate(join(ws, ".orquestra", id), invalid, nums, note);
   const { cfg } = loadConfig(ws); // the workspace's own policy.max_rounds
   const x = collectRounds(ws, id, Number(getPath(cfg, "policy.max_rounds") ?? 2));
   if (!x) { console.error(m(`no rounds recorded for ${id} in ${ws}/.orquestra`, `nenhuma rodada registrada para ${id} em ${ws}/.orquestra`)); return 1; }
@@ -57,6 +65,22 @@ export async function rounds(argv: string[]): Promise<number> {
   const d = latestDiagnosis(join(ws, ".orquestra", id));
   if (d) console.log(`${m("diagnosis", "diagnóstico")} ${d.n}: ${d.line ?? m("(no RECOMMENDATION line)", "(sem linha RECOMMENDATION)")}`);
   return 0;
+}
+
+/** --invalid: mark findings of one review wrong, or list them (numbered as the marks count them) when no number is given. */
+function invalidate(dir: string, review: string, nums: number[], why: string): number {
+  const file = join(dir, `${review}.out.md`);
+  if (!existsSync(file)) { console.error(m(`no review answer ${file}`, `sem resposta de revisão ${file}`)); return 1; }
+  if (!nums.length) {
+    const fs = parseFindings(readFileSync(file, "utf8"), 0);
+    if (!fs.length) console.log(m(`${review}: no tagged findings`, `${review}: nenhum achado marcado`));
+    fs.forEach((f, i) => console.log(`${i + 1}. [${f.severity}] ${f.title.slice(0, 120)}`));
+    return 0;
+  }
+  try {
+    for (const [i, f] of markInvalid(dir, review, nums, why).entries()) console.log(`${m("invalid", "inválido")}: ${review} ${nums[i]}. [${f.severity}] ${f.title.slice(0, 120)}`);
+    return 0;
+  } catch (e) { console.error((e as Error).message); return 2; }
 }
 
 const orq = (...a: string[]) => spawnSync(process.execPath, [CLI, ...a], { encoding: "utf8" });

@@ -177,6 +177,8 @@ pacing_penalty = 0.3                     # score penalty when usage at the curre
 quality  = 0.40                          # did it deliver? (impl: approved on the first review)
 tokens   = 0.45                          # did it spend little?
 speed    = 0.15
+looping  = 0.20                          # did its issues converge? (no max_rounds hit, no repeated blocker, no watchdog)
+hallucination = 0.20                     # were its claims true? (tests it said pass, files it named, findings marked invalid)
 rotation = 0.20                          # penalty for having been picked recently
 ```
 
@@ -185,8 +187,13 @@ rotation = 0.20                          # penalty for having been picked recent
    and, for reviews, from a vendor other than the implementer's (and, for a round's delta, able to review a commit:
    `base_commit`). With several accounts, it prefers one whose pace stays within the limit, then
    the least used.
-2. **Scores:** `quality × delivery + tokens × economy + speed × quickness − rotation × recent picks`. The numbers come
-   from the history (`orq stats`); an agent with few runs uses the config's `prior` and gets an exploration bonus.
+2. **Scores:** `quality × delivery + tokens × economy + speed × quickness + looping × loop-free + hallucination × grounded
+   − rotation × recent picks`. The numbers come from the history (`orq stats`); an agent with few runs uses the config's
+   `prior` and gets an exploration bonus. **Looping** (implementers): the share of their issues that reached `max_rounds`,
+   repeated a heavy finding across reviews or needed `orq rounds --diagnose`. **Hallucination**: an implementer whose
+   answer says the tests pass while `orq verify` of the same commit has new failures, or names repo files that don't
+   exist (`orq agent` checks them at the end of a write run, in `<prefix>.refs`); a reviewer with a finding the conductor
+   marked wrong (`orq rounds <ID> --invalid <review> <n>`).
 3. **Reserved agents** (`reserve = true`, or the active conductor by default) receive a score penalty to keep quota for orchestration.
 4. **The watchdog** (`orq rounds --diagnose`), without a `[roles.watchdog]`, scores the opinion and review pools together: opinion agents get
    a `weights.prefer` bonus (0.30), so a single opinion agent out of quota doesn't leave the diagnosis without an agent. It is neither the
@@ -194,7 +201,7 @@ rotation = 0.20                          # penalty for having been picked recent
 
 ```bash
 orq pick review --impl-agent codex --explain     # every candidate's score and who was left out, and why
-orq stats --days 30                              # scoreboard per agent and model: delivery, approval, time (to the first turn), tokens
+orq stats --days 30                              # scoreboard per agent and model: delivery, approval, time (to the first turn), tokens, loop%, halluc%
 orq block antigravity --days 3                   # out of the picks (e.g. weekly quota gone, no collector for it)
 orq pick fix --same .orquestra/<ID>/impl-<repo>.pick   # a fix round: the implementer's agent/model/account, effort +1
 ```
@@ -325,7 +332,7 @@ Day to day, shortcuts and several issues at once: [docs/herdr.md](docs/herdr.md)
 | `orq baseline ...` (`herdr-baseline`) | Manual snapshot of the tests failing on the base (outside the flow) |
 | `orq gc [-w <workspace>] [--yes] [--days N] [--json]` | Lists issue worktrees that are safe to remove (PR merged, or content already in the base, squash merges included); `--yes` removes them. Never touches uncommitted work, unpushed commits, an open PR, a live claim or a running agent; unmerged branches without an open PR show as `STALE` with why (no PR, PR closed, PR lookup failed) and last-commit age. Optional daily `orq-gc.timer` |
 | `orq ci [-w <workspace>] [--json]` | CI checks and latest bot review per open PR on an issue worktree, whether claimed or released; review includes whether it covers the head. The board reads the same cached data and marks a head review `R`. Failure and new head review notices go to the live or last owner |
-| `orq rounds <ID> [-w <workspace>] [--json] [--diagnose]` | Watchdog: `--diagnose` (warn/stop only) has a cheap read only agent of another vendor (pick role `watchdog`, else the `opinion` and `review` pools with opinion preferred; not the issue's implementer or reviewer while another agent can) diagnose why rounds don't converge → `.orquestra/<ID>/diagnosis-<n>.md`, advisory; `orq agent -R -F` past `max_rounds` needs it (`-F -F` bypasses). Without it, no LLM: fix rounds vs `policy.max_rounds`, time per round, reviewer findings repeated across rounds, alert ok / warn / stop. The board marks each issue (`r2/2 ⚠`) |
+| `orq rounds <ID> [-w <workspace>] [--json] [--diagnose] [--invalid <review> [<n>...] [--why <text>]]` | `--invalid` marks findings of `review-<...>.out.md` wrong (no `<n>`: lists them numbered), which counts against the reviewer in `orq stats`/`orq pick`. Watchdog: `--diagnose` (warn/stop only) has a cheap read only agent of another vendor (pick role `watchdog`, else the `opinion` and `review` pools with opinion preferred; not the issue's implementer or reviewer while another agent can) diagnose why rounds don't converge → `.orquestra/<ID>/diagnosis-<n>.md`, advisory; `orq agent -R -F` past `max_rounds` needs it (`-F -F` bypasses). Without it, no LLM: fix rounds vs `policy.max_rounds`, time per round, reviewer findings repeated across rounds, alert ok / warn / stop. The board marks each issue (`r2/2 ⚠`) |
 | `orq quota --line` | One line of quota for a status bar (`work 64 · home 94! · codex 81`), from the board's cache, never the network |
 | `orq setup` | First configuration and install: environment, skills for Claude, config, conductor workspace |
 | `orq completion bash\|zsh\|fish\|powershell` | Prints the shell completion script (see Install) |
