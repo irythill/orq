@@ -66,7 +66,11 @@ async function diagnoseIssue(ws: string, id: string, x: Metrics): Promise<number
   if (x.level === "ok") { console.log(m(`${id}: level is ok, no diagnosis needed`, `${id}: nível ok, não precisa de diagnóstico`)); return 0; }
   const dir = join(ws, ".orquestra", id), prefix = join(dir, `watchdog-${x.rounds}-${Date.now()}`), out = join(dir, `diagnosis-${x.rounds}.md`);
   // The implementer, when known (impl-<repo>.pick saved by the playbook): the watchdog must be another vendor.
-  const implPick = readdirSync(dir).filter((n) => /^impl-.+\.pick$/.test(n)).map((n) => /(?:^|\s)-a (\S+)/.exec(readFileSync(join(dir, n), "utf8"))?.[1]).find(Boolean);
+  const pickOf = (re: RegExp) => readdirSync(dir).filter((n) => re.test(n))
+    .map((n) => /(?:^|\s)-a (\S+)/.exec(readFileSync(join(dir, n), "utf8"))?.[1]).filter((x): x is string => Boolean(x));
+  const implPick = pickOf(/^impl-.+\.pick$/)[0];
+  // The reviewers (review-<repo>.pick): the diagnosis judges their loop too, so the watchdog is someone else when it can be.
+  const reviewers = [...new Set(pickOf(/^review-.+\.pick$/))];
   // A watchdog still running for this issue (a previous --diagnose that timed out or was interrupted): don't start another.
   for (const n of readdirSync(dir).filter((f) => /^watchdog-.+\.pid$/.test(f))) {
     const pid = Number(readFileSync(join(dir, n), "utf8"));
@@ -80,7 +84,7 @@ async function diagnoseIssue(ws: string, id: string, x: Metrics): Promise<number
   const scratches: string[] = [];
   try {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const p = orq("pick", "watchdog", "--level", "simple", "-w", ws, ...(implPick ? ["--impl-agent", implPick] : []), ...excluded.flatMap((e) => ["--exclude-agent", e]));
+    const p = orq("pick", "watchdog", "--level", "simple", "-w", ws, ...(implPick ? ["--impl-agent", implPick] : []), ...reviewers.flatMap((r) => ["--review-agent", r]), ...excluded.flatMap((e) => ["--exclude-agent", e]));
     if (p.status !== 0) {
       if (first) { console.error(m("the watchdog agent failed; no diagnosis written", "o agente watchdog falhou; diagnóstico não gravado")); return first.rc; }
       console.error(p.stderr.trim() || `orq pick watchdog: exit ${p.status}`); return p.status ?? 1;
