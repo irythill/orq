@@ -7,6 +7,7 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 ## [Unreleased]
 
 ### Changed
+- `orq rounds --diagnose` no longer fails when the only opinion agent is out of quota or blocked: without a `[roles.watchdog]`, `orq pick watchdog` scores the opinion and review pools together, with a `policy.weights.prefer` bonus (default 0.30) for the opinion agents, and leaves out the issue's reviewers (from `review-<repo>.pick`, new `--review-agent` flag) besides the implementer while another agent can take it (#159).
 - The `/issue` playbook and the conductor instructions forbid leaving an agent out because of a memory, a note or an earlier session (quota, failures): `orq pick` sees live quota and blocks, and an agent out of quota goes to `orq block <agent> --quota`, which expires, never to the conductor's memory.
 
 ## [0.10.1] — 2026-11-18

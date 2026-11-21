@@ -191,6 +191,9 @@ rotation = 0.20                          # penalty for having been picked recent
 2. **Pontuação:** `quality × delivery + tokens × economy + speed × quickness − rotation × recent picks`. Os números vêm
    do histórico (`orq stats`); um agente com poucas execuções usa o `prior` da config e ganha um bônus de exploração.
 3. **Agentes reservados** (`reserve = true`, ou o conductor ativo por padrão) recebem uma penalidade na pontuação para preservar cota para a orquestração.
+4. **O watchdog** (`orq rounds --diagnose`), sem `[roles.watchdog]`, pontua os pools de opinion e review juntos: agentes de opinion ganham um
+   bônus `weights.prefer` (0,30), então um único agente de opinion sem cota não deixa o diagnóstico sem agente. Ele não é o implementador
+   nem o revisor da issue (`--review-agent`) enquanto outro agente puder assumir.
 
 ```bash
 orq pick review --impl-agent codex --explain     # every candidate's score and who was left out, and why
@@ -325,7 +328,7 @@ Dia a dia, atalhos e várias issues ao mesmo tempo: [docs/pt-BR/herdr.md](docs/p
 | `orq baseline ...` (`herdr-baseline`) | Snapshot manual dos testes que falham na base (fora do fluxo) |
 | `orq gc [-w <workspace>] [--yes] [--days N] [--json]` | Lista worktrees de issues que podem ser removidas (PR mergeado, ou conteúdo já na base, inclusive squash merge); `--yes` as remove. Nunca mexe em trabalho não commitado, commit fora do remote, PR aberto, claim ativo ou agente rodando; branches não integradas sem PR aberto aparecem como `STALE`, com o motivo (sem PR, PR fechado, consulta de PR falhou) e a idade do último commit. `orq-gc.timer` diário opcional |
 | `orq ci [-w <workspace>] [--json]` | Checks e revisão de bot mais recente por PR aberto em worktree de issue, reivindicada ou liberada; mostra se a revisão cobre o head. O board lê o cache e marca revisão no head com `R`. Falhas e novas revisões no head avisam o dono atual ou o último dono |
-| `orq rounds <ID> [-w <workspace>] [--json] [--diagnose]` | Watchdog: `--diagnose` (só warn/stop) pede a um agente barato, somente leitura e de outro fornecedor (papel de pick `watchdog`, cai para `opinion`, depois `review`) o diagnóstico de por que as rodadas não convergem → `.orquestra/<ID>/diagnosis-<n>.md`, consultivo; `orq agent -R -F` além de `max_rounds` exige (`-F -F` ignora). Sem ele, sem LLM: rodadas de fix vs `policy.max_rounds`, tempo por rodada, achados do revisor repetidos entre rodadas, alerta ok / warn / stop. O board marca cada issue (`r2/2 ⚠`) |
+| `orq rounds <ID> [-w <workspace>] [--json] [--diagnose]` | Watchdog: `--diagnose` (só warn/stop) pede a um agente barato, somente leitura e de outro fornecedor (papel de pick `watchdog`, senão os pools de `opinion` e `review` com preferência para opinion; não o implementador nem o revisor da issue enquanto outro agente puder) o diagnóstico de por que as rodadas não convergem → `.orquestra/<ID>/diagnosis-<n>.md`, consultivo; `orq agent -R -F` além de `max_rounds` exige (`-F -F` ignora). Sem ele, sem LLM: rodadas de fix vs `policy.max_rounds`, tempo por rodada, achados do revisor repetidos entre rodadas, alerta ok / warn / stop. O board marca cada issue (`r2/2 ⚠`) |
 | `orq quota --line` | Uma linha de cota para barra de status (`work 64 · home 94! · codex 81`), do cache do board, nunca da rede |
 | `orq setup` | Primeira configuração e instalação: ambiente, skills do Claude, config, workspace do conductor |
 | `orq completion bash\|zsh\|fish\|powershell` | Imprime o script de autocompletar do shell (veja Instalação) |
