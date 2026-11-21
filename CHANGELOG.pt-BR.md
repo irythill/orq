@@ -6,6 +6,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-11-21
+
 ### Adicionado
 - O `orq pick` pontua looping e alucinação (#104): novos `policy.weights.looping` e `policy.weights.hallucination` (padrão 0,20 cada), misturados com o `prior` como os outros eixos. Looping é a fração das issues de um implementador que chegou a `max_rounds`, repetiu um achado grave ou precisou de `orq rounds --diagnose`. Alucinação é uma resposta de implementador que diz que os testes passam enquanto o `orq verify` do mesmo commit tem falhas novas, ou cita arquivos do repo que não existem (conferidos pelo `orq agent` ao fim de uma execução de escrita, em `<prefix>.refs`), e um achado de revisor que o conductor marcou como errado. O `orq stats` mostra os dois como `loop%` e `halluc%`.
 - `orq rounds <ID> --invalid <review> [<n>...] [--why <texto>]` marca achados de uma revisão como errados (`.orquestra/<ID>/.invalid.log`); sem números, lista os achados. O playbook `/issue` usa isso para achados errados, não só rebaixados.
