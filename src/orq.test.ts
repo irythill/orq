@@ -2501,11 +2501,11 @@ test("orq rounds --diagnose: ok needs no diagnosis; the latest recommendation sh
   assert.match(go().stdout, /diagnosis 0: RECOMMENDATION: ask-user - spec unclear/);
 });
 
-test("watchdog role: own pool, else opinion, else review; models fall back the same way", () => {
+test("watchdog role: own pool, else opinion + review with opinion preferred; models fall back the same way", () => {
   const agents = { a: { roles: ["review"] }, b: { roles: ["opinion"] }, c: { roles: ["watchdog"] } };
   assert.deepEqual(resolveRole({ agents }, "watchdog"), { mode: "auto", pool: ["c"], rule: "other-vendor", section: undefined });
-  assert.deepEqual(resolveRole({ agents: { a: agents.a, b: agents.b } }, "watchdog").mode === "auto" && (resolveRole({ agents: { a: agents.a, b: agents.b } }, "watchdog") as { pool: string[] }).pool, ["b"]);
-  assert.deepEqual((resolveRole({ agents: { a: agents.a } }, "watchdog") as { pool: string[] }).pool, ["a"]);
+  assert.deepEqual(resolveRole({ agents: { a: agents.a, b: agents.b } }, "watchdog"), { mode: "auto", pool: ["b", "a"], rule: "other-vendor", prefer: ["b"] });
+  assert.deepEqual(resolveRole({ agents: { a: agents.a } }, "watchdog"), { mode: "auto", pool: ["a"], rule: "other-vendor" });
   const cfg = { agents: { a: agents.a }, roles: { watchdog: { agent: "w", fallback: ["a"] } } };
   assert.deepEqual(resolveRole(cfg, "watchdog"), { mode: "fixed", order: ["w", "a"], rule: "other-vendor", section: "watchdog" });
   // pick: another vendor than the implementer, with the opinion models when the agent has none for watchdog
@@ -2514,6 +2514,32 @@ test("watchdog role: own pool, else opinion, else review; models fall back the s
     stats: [], quota: {}, blocks: new Set(), recent: [] });
   assert.equal(r.best?.agent, "y");
   assert.equal(r.best?.model, "y-m");
+});
+
+test("watchdog pick: opinion agent preferred, review pool when it's out, never the issue's reviewer if another can", () => {
+  const mk = (vendor: string, role: string) => ({ vendor, run: "x {prompt_text}", roles: [role], quota: [`${vendor}q`], models: { [role]: { default: "m@low" } } });
+  const agents = { cop: mk("github", "opinion"), cdx: mk("openai", "review"), cla: mk("anthropic", "review"), oc: mk("minimax", "review") };
+  const go = (o: Partial<Parameters<typeof pickAgent>[0]> = {}) => pickAgent({ cfg: { agents }, role: "watchdog", level: "simple", implAgent: "cla",
+    implVendor: "anthropic", exclude: new Set(), stats: [], quota: {}, blocks: new Set(), recent: [], ...o });
+  const fresh = go();
+  assert.equal(fresh.best?.agent, "cop");
+  assert.match(fresh.cands[0].why, /opinion=\+0\.30/);
+  // the opinion agent over quota or blocked: a review agent of another vendor than the implementer
+  for (const r of [go({ quota: { githubq: 99 } }), go({ blocks: new Set(["cop"]) })]) {
+    assert.ok(r.best && r.best.agent !== "cop" && r.best.agent !== "cla", JSON.stringify(r.best));
+  }
+  // the issue's reviewer stays out while someone else can diagnose; alone, it still can
+  const noReviewer = go({ blocks: new Set(["cop"]), reviewAgents: new Set(["cdx"]) });
+  assert.equal(noReviewer.best?.agent, "oc");
+  assert.ok(noReviewer.notes.some((n) => /^cdx: it reviewed this issue/.test(n)));
+  const alone = pickAgent({ cfg: { agents: { cdx: agents.cdx } }, role: "watchdog", level: "simple", exclude: new Set(), reviewAgents: new Set(["cdx"]),
+    stats: [], quota: {}, blocks: new Set(), recent: [] });
+  assert.equal(alone.best?.agent, "cdx");
+  // others out of quota or --exclude-agent (the retry after a failed run): the reviewer is the one left
+  const left = go({ blocks: new Set(["cop"]), exclude: new Set(["oc"]), reviewAgents: new Set(["cdx"]) });
+  assert.equal(left.best?.agent, "cdx");
+  // weights.prefer = 0 turns the preference off
+  assert.doesNotMatch(go({ cfg: { agents, policy: { weights: { prefer: 0 } } } }).cands.map((c) => c.why).join(" "), /opinion=/);
 });
 
 test("watchdog: no throwaway worktree outside git, review tools that ignore prompts are not in the pool", () => {

@@ -124,6 +124,7 @@ tokens   = 0.45           # 3–5 tasks in parallel: saving tokens is the priori
 speed    = 0.15
 rotation = 0.20
 reserve  = 0.30           # penalty for agents with reserve = true
+prefer   = 0.30           # watchdog without [roles.watchdog]: bonus for the opinion agents over the review pool
 explore  = 0.10
 explore_streak = 2        # consecutive picks of an under-sampled agent before its explore bonus stops
 min_samples = 8

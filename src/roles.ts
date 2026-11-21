@@ -23,16 +23,19 @@ export const vendorOf = (name: string, a: Obj | undefined) => (a?.vendor as stri
 
 export type Resolved =
   | { mode: "fixed"; order: string[]; rule: string; section: string }
-  | { mode: "auto"; pool: string[]; rule: string; section?: string };
+  | { mode: "auto"; pool: string[]; rule: string; section?: string; prefer?: string[] };
 
 const count = (r: Resolved) => (r.mode === "fixed" ? r.order : r.pool).length;
 
-/** The watchdog (orq rounds --diagnose) uses its own role when something declares it, else the opinion pool, else the review one. */
+/** The watchdog (orq rounds --diagnose) uses its own role when something declares it, else the opinion and review pools
+ *  together, scored, with the opinion agents preferred (`prefer`): one opinion agent out of quota doesn't leave it without a pick. */
 export function resolveRole(cfg: Obj, role: PickRole): Resolved {
   const own = direct(cfg, role);
   if (role !== "watchdog" || count(own)) return own;
-  const op = direct(cfg, "opinion");
-  return count(op) ? op : direct(cfg, "review");
+  const names = (r: Resolved) => (r.mode === "fixed" ? r.order : r.pool);
+  const op = direct(cfg, "opinion"), rv = direct(cfg, "review");
+  const prefer = names(op), pool = [...new Set([...prefer, ...names(rv)])];
+  return { mode: "auto", pool, rule: (count(op) ? op : rv).rule, ...(prefer.length ? { prefer } : {}) };
 }
 
 function direct(cfg: Obj, role: PickRole): Resolved {
