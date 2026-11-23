@@ -3,9 +3,12 @@
 //               for an agent the user didn't list.
 //   auto role:  every (agent, model) pair that passes is scored (a level may list several models):
 //     quality * delivery + tokens * economy + speed * quickness − rotation * (picks in the last `window`)
-//     − reserve (agents with reserve = true) + explore (fewer than `min_samples` runs, fading with n, none after
-//     `explore_streak` picks in a row). Each axis is (prior·k + observed·n)/(k + n), k = min_samples.
-// Filters: --exclude-agent, orq block, a CLI that doesn't resolve on PATH, nobody reviews their own code (unless no other agent can), cross-vendor rule, a model for the role/level,
+//     − reserve (agents with reserve = true) + prefer (a watchdog from the opinion pool) + explore (fewer than `min_samples` runs, fading with n, none after
+//     `explore_streak` picks in a row) + looping * loop-free + hallucination * grounded (1 − the rates orq stats measures:
+//     looping for impl/fix/worker on its impl and fix rows; hallucination also for review/opinion/watchdog).
+//     Each axis is (prior·k + observed·n)/(k + n), k = min_samples.
+// Filters: --exclude-agent, orq block, a CLI that doesn't resolve on PATH, nobody reviews their own code (unless no other agent can),
+// a watchdog is neither the implementer nor the issue's reviewer (unless no other agent can), cross-vendor rule, a model for the role/level,
 // quota under the limits: policy.quota_week (95) on the weekly window, and on the 5h one policy.quota_5h per level
 // (simple 90, medium 85, heavy 80): a heavy task needs more room left to finish.
 // An agent's `headroom` (points) lowers both limits for it: that share of its accounts stays for the conductors.
@@ -31,6 +34,7 @@ export type WindowMap = Record<string, { five?: number; week?: number; resetFive
 export interface PickInput {
   commitBase?: boolean; // the review base is a commit (a round delta): agents with base_commit = false are out
   cfg: Obj; role: PickRole; level: string; implVendor?: string; implAgent?: string; exclude: Set<string>;
+  reviewAgents?: Set<string> /* watchdog: the agents that reviewed the issue */;
   missing?: Map<string, string> /* agent → why its CLI does not resolve */;
   stats: Row[]; quota: QuotaMap; windows?: WindowMap; blocks: Set<string>; recent: { agent: string; model?: string }[]; now?: number /* epoch s */;
 }
@@ -148,7 +152,8 @@ export function lighterModels(a: Obj, role: PickRole, level: string, tried: stri
   return out;
 }
 
-const WEIGHTS = { quality: 0.4, tokens: 0.45, speed: 0.15, rotation: 0.2, reserve: 0.3, explore: 0.1, explore_streak: 2, min_samples: 8, window: 6 };
+const WEIGHTS = { quality: 0.4, tokens: 0.45, speed: 0.15, looping: 0.2, hallucination: 0.2, rotation: 0.2, reserve: 0.3, prefer: 0.3,
+  explore: 0.1, explore_streak: 2, min_samples: 8, window: 6 };
 export const weights = (cfg: Obj) =>
   ({ ...WEIGHTS, ...((((cfg.policy ?? {}) as Obj).weights ?? {}) as Partial<typeof WEIGHTS>) });
 
@@ -163,6 +168,18 @@ function takesPrompt(cfg: Obj, name: string): boolean {
 }
 
 export function pick(inp: PickInput): PickResult {
+  if (inp.role !== "watchdog" || !inp.reviewAgents?.size) return pickOnce(inp);
+  // The issue's reviewers are out only while someone else passes every filter (quota, blocks, --exclude-agent included).
+  const first = pickOnce(inp);
+  if (first.best) return first;
+  const again = pickOnce({ ...inp, reviewAgents: undefined });
+  return again.best ? again : first;
+}
+
+const LOOP_ROLES = new Set<PickRole>(["impl", "fix", "worker"]);
+const HALLUC_ROLES = new Set<PickRole>(["impl", "fix", "worker", "review", "opinion", "watchdog"]);
+
+function pickOnce(inp: PickInput): PickResult {
   const { cfg, role, level } = inp;
   const agents = (cfg.agents ?? {}) as Record<string, Obj>;
   const conductor = String(cfg._conductorAgent ?? ((cfg.roles as Obj | undefined)?.conductor as Obj | undefined)?.agent ?? "");
@@ -176,7 +193,7 @@ export function pick(inp: PickInput): PickResult {
   const names = res.mode === "fixed" ? res.order : res.pool;
   const notes: string[] = [];
   const out = (n: string, why: string) => { notes.push(`${n}: ${why}`); };
-  const pass: (Omit<Candidate, "score" | "why"> & { a: Obj; st?: Row; pace?: number; hot?: boolean })[] = [];
+  const pass: (Omit<Candidate, "score" | "why"> & { a: Obj; st?: Row; judged: Row[]; pace?: number; hot?: boolean })[] = [];
 
   // Only with someone else to ask: a single agent must still be able to review.
   const someoneElse = names.some((n) => n !== inp.implAgent && agents[n]);
@@ -190,6 +207,9 @@ export function pick(inp: PickInput): PickResult {
     if (gone) { out(name, gone); continue; }
     if ((role === "review" || role === "opinion" || role === "watchdog") && name === inp.implAgent && someoneElse) {
       out(name, m("it implemented this code", "foi quem implementou")); continue;
+    }
+    if (role === "watchdog" && inp.reviewAgents?.has(name)) {
+      out(name, m("it reviewed this issue", "foi quem revisou")); continue;
     }
     if ((role === "review" || role === "opinion" || role === "watchdog") && res.rule === "other-vendor" && inp.implVendor && otherVendor
         && vendorOf(name, a) === inp.implVendor) {
@@ -281,7 +301,9 @@ export function pick(inp: PickInput): PickResult {
     for (const [model, effort] of res.mode === "fixed" ? mfx.slice(0, 1) : mfx) {
       const stOf = (sr: string) => inp.stats.find((r) => r.role === sr && r.agent === name && r.model === (model.split("/").pop() || "default"));
       const st = stOf(statRole) ?? (role === "watchdog" ? stOf("review") : undefined); // no watchdog runs yet: its review record
-      pass.push({ agent: name, model, effort, acct, a, st, pace: chosen?.pace, hot: Boolean(chosen?.hot) });
+      // Looping/hallucination of an implementer sit on its impl and fix rows (a fix round reuses the impl prefix).
+      const judged = (statRole === "impl" ? [st, stOf("fix")] : [st]).filter((r): r is Row => Boolean(r));
+      pass.push({ agent: name, model, effort, acct, a, st, judged, pace: chosen?.pace, hot: Boolean(chosen?.hot) });
     }
     if (res.mode === "fixed") break; // the first that passes wins
   }
@@ -318,6 +340,14 @@ export function pick(inp: PickInput): PickResult {
     const d = axis(m("delivery", "entrega"), prior, deliv, appr ? c.st!.n_appr : n);
     const t = axis(m("economy", "economia"), prior, c.st?.new && refTok ? Math.min(1, refTok / c.st.new) : undefined, n);
     const s = axis(m("speed", "rapidez"), prior, c.st?.min && refMin ? Math.min(1, refMin / Math.max(c.st.min, 0.1)) : undefined, n);
+    // Share of judged runs without the failure, over the rows that measured it.
+    const clean = (key: "loop" | "halluc") => {
+      const rs = c.judged.filter((r) => r[key] != null && (r[`n_${key}`] ?? 0) > 0), nn = rs.reduce((x, r) => x + r[`n_${key}`]!, 0);
+      return { obs: nn ? 1 - rs.reduce((x, r) => x + r[key]! * r[`n_${key}`]!, 0) / 100 / nn : undefined, nn };
+    };
+    const lc = clean("loop"), hc = clean("halluc");
+    const lp = LOOP_ROLES.has(role) ? axis(m("loop-free", "sem-loop"), prior, lc.obs, lc.nn) : undefined;
+    const hl = HALLUC_ROLES.has(role) ? axis(m("grounded", "fundamentado"), prior, hc.obs, hc.nn) : undefined;
     const used = inp.recent.filter((p) => p.agent === c.agent).length;
     // Exploration fades as samples come in and stops after explore_streak picks of the pair in a row (rotation stays per agent).
     const same = (p: { agent: string; model?: string }) => p.agent === c.agent && (p.model === undefined || p.model === c.model);
@@ -326,10 +356,13 @@ export function pick(inp: PickInput): PickResult {
     const capped = few(c.st) && streak >= w.explore_streak;
     const explore = few(c.st) && !capped ? w.explore * (k - n) / k : 0;
     const hot = Boolean(c.hot) && penalty > 0;
-    const score = w.quality * d.v + w.tokens * t.v + w.speed * s.v - w.rotation * used
-      - (reserve ? w.reserve : 0) + explore - (hot ? penalty : 0);
-    const why = `${d.txt} ${t.txt} ${s.txt} ${m("rotation", "rodízio")}=-${used} `
+    const preferred = Boolean(res.mode === "auto" && res.prefer?.includes(c.agent)) && w.prefer > 0;
+    const score = w.quality * d.v + w.tokens * t.v + w.speed * s.v + w.looping * (lp?.v ?? 0) + w.hallucination * (hl?.v ?? 0)
+      - w.rotation * used
+      - (reserve ? w.reserve : 0) + (preferred ? w.prefer : 0) + explore - (hot ? penalty : 0);
+    const why = `${d.txt} ${t.txt} ${s.txt} ${lp ? `${lp.txt} ` : ""}${hl ? `${hl.txt} ` : ""}${m("rotation", "rodízio")}=-${used} `
       + (reserve ? m("reserve ", "reserva ") : "")
+      + (preferred ? `${m("opinion", "opinião")}=+${w.prefer.toFixed(2)} ` : "")
       + (hot ? `${m("pace", "ritmo")}=${Math.round(c.pace!)}%→-${penalty} ` : "")
       + (explore ? `${m("explore", "explorar")}=+${explore.toFixed(2)} ` : "")
       + (capped ? `${m("explore capped", "exploração limitada")}(${streak}x) ` : "")

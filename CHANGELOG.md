@@ -6,9 +6,16 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-11-21
+
+### Added
+- `orq pick` scores looping and hallucination (#104): new `policy.weights.looping` and `policy.weights.hallucination` (default 0.20 each), blended with `prior` like the other axes. Looping is the share of an implementer's issues that reached `max_rounds`, repeated a heavy finding or needed `orq rounds --diagnose`. Hallucination is an implementer answer that says the tests pass while `orq verify` of the same commit has new failures, or names repo files that don't exist (checked by `orq agent` at the end of a write run, in `<prefix>.refs`), and a reviewer finding the conductor marked wrong. `orq stats` shows both as `loop%` and `halluc%`.
+- `orq rounds <ID> --invalid <review> [<n>...] [--why <text>]` marks a review's findings wrong (`.orquestra/<ID>/.invalid.log`); without numbers it lists the findings. The `/issue` playbook uses it for findings that are wrong, not just downgraded.
+
 ## [0.10.2] — 2026-11-18
 
 ### Changed
+- `orq rounds --diagnose` no longer fails when the only opinion agent is out of quota or blocked: without a `[roles.watchdog]`, `orq pick watchdog` scores the opinion and review pools together, with a `policy.weights.prefer` bonus (default 0.30) for the opinion agents, and leaves out the issue's reviewers (from `review-<repo>.pick`, new `--review-agent` flag) besides the implementer while another agent can take it (#159).
 - The `/issue` playbook and the conductor instructions forbid leaving an agent out because of a memory, a note or an earlier session (quota, failures): `orq pick` sees live quota and blocks, and an agent out of quota goes to `orq block <agent> --quota`, which expires, never to the conductor's memory.
 
 ## [0.10.1] — 2026-11-18

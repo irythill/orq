@@ -2501,11 +2501,11 @@ test("orq rounds --diagnose: ok needs no diagnosis; the latest recommendation sh
   assert.match(go().stdout, /diagnosis 0: RECOMMENDATION: ask-user - spec unclear/);
 });
 
-test("watchdog role: own pool, else opinion, else review; models fall back the same way", () => {
+test("watchdog role: own pool, else opinion + review with opinion preferred; models fall back the same way", () => {
   const agents = { a: { roles: ["review"] }, b: { roles: ["opinion"] }, c: { roles: ["watchdog"] } };
   assert.deepEqual(resolveRole({ agents }, "watchdog"), { mode: "auto", pool: ["c"], rule: "other-vendor", section: undefined });
-  assert.deepEqual(resolveRole({ agents: { a: agents.a, b: agents.b } }, "watchdog").mode === "auto" && (resolveRole({ agents: { a: agents.a, b: agents.b } }, "watchdog") as { pool: string[] }).pool, ["b"]);
-  assert.deepEqual((resolveRole({ agents: { a: agents.a } }, "watchdog") as { pool: string[] }).pool, ["a"]);
+  assert.deepEqual(resolveRole({ agents: { a: agents.a, b: agents.b } }, "watchdog"), { mode: "auto", pool: ["b", "a"], rule: "other-vendor", prefer: ["b"] });
+  assert.deepEqual(resolveRole({ agents: { a: agents.a } }, "watchdog"), { mode: "auto", pool: ["a"], rule: "other-vendor" });
   const cfg = { agents: { a: agents.a }, roles: { watchdog: { agent: "w", fallback: ["a"] } } };
   assert.deepEqual(resolveRole(cfg, "watchdog"), { mode: "fixed", order: ["w", "a"], rule: "other-vendor", section: "watchdog" });
   // pick: another vendor than the implementer, with the opinion models when the agent has none for watchdog
@@ -2514,6 +2514,32 @@ test("watchdog role: own pool, else opinion, else review; models fall back the s
     stats: [], quota: {}, blocks: new Set(), recent: [] });
   assert.equal(r.best?.agent, "y");
   assert.equal(r.best?.model, "y-m");
+});
+
+test("watchdog pick: opinion agent preferred, review pool when it's out, never the issue's reviewer if another can", () => {
+  const mk = (vendor: string, role: string) => ({ vendor, run: "x {prompt_text}", roles: [role], quota: [`${vendor}q`], models: { [role]: { default: "m@low" } } });
+  const agents = { cop: mk("github", "opinion"), cdx: mk("openai", "review"), cla: mk("anthropic", "review"), oc: mk("minimax", "review") };
+  const go = (o: Partial<Parameters<typeof pickAgent>[0]> = {}) => pickAgent({ cfg: { agents }, role: "watchdog", level: "simple", implAgent: "cla",
+    implVendor: "anthropic", exclude: new Set(), stats: [], quota: {}, blocks: new Set(), recent: [], ...o });
+  const fresh = go();
+  assert.equal(fresh.best?.agent, "cop");
+  assert.match(fresh.cands[0].why, /opinion=\+0\.30/);
+  // the opinion agent over quota or blocked: a review agent of another vendor than the implementer
+  for (const r of [go({ quota: { githubq: 99 } }), go({ blocks: new Set(["cop"]) })]) {
+    assert.ok(r.best && r.best.agent !== "cop" && r.best.agent !== "cla", JSON.stringify(r.best));
+  }
+  // the issue's reviewer stays out while someone else can diagnose; alone, it still can
+  const noReviewer = go({ blocks: new Set(["cop"]), reviewAgents: new Set(["cdx"]) });
+  assert.equal(noReviewer.best?.agent, "oc");
+  assert.ok(noReviewer.notes.some((n) => /^cdx: it reviewed this issue/.test(n)));
+  const alone = pickAgent({ cfg: { agents: { cdx: agents.cdx } }, role: "watchdog", level: "simple", exclude: new Set(), reviewAgents: new Set(["cdx"]),
+    stats: [], quota: {}, blocks: new Set(), recent: [] });
+  assert.equal(alone.best?.agent, "cdx");
+  // others out of quota or --exclude-agent (the retry after a failed run): the reviewer is the one left
+  const left = go({ blocks: new Set(["cop"]), exclude: new Set(["oc"]), reviewAgents: new Set(["cdx"]) });
+  assert.equal(left.best?.agent, "cdx");
+  // weights.prefer = 0 turns the preference off
+  assert.doesNotMatch(go({ cfg: { agents, policy: { weights: { prefer: 0 } } } }).cands.map((c) => c.why).join(" "), /opinion=/);
 });
 
 test("watchdog: no throwaway worktree outside git, review tools that ignore prompts are not in the pool", () => {
@@ -3216,6 +3242,116 @@ test("stats: agent and model always named; screen runs time to the first turn (#
     assert.ok(a.secs >= 110 && a.secs <= 130, `${a.secs}`); // the first turn, not the next day's
     assert.equal(rows(rs)[0].min, 2);
   } finally { rmSync(ws, { recursive: true, force: true }); }
+});
+
+test("stats: looping and hallucination per run, and the rates in each row (#104)", async () => {
+  const { claimsPass, collectRuns, missingRefs, refPaths, refsLine, rows } = await import("./stats.js");
+  assert.ok(claimsPass("Lint and tsc clean; all tests pass."));
+  assert.ok(claimsPass("Os testes passam."));
+  assert.ok(!claimsPass("Tests: not run (the conductor runs them)."));
+  assert.ok(!claimsPass("I didn't run the tests, as asked; they should pass."));
+  assert.deepEqual(refPaths("Changed `src/a.ts:12`, (lib/b.py) and ./c/d.tsx. See https://x.io/e/f.ts, .orquestra/X/fix-1.md, /abs/g.ts"),
+    ["src/a.ts", "lib/b.py", "c/d.tsx"]);
+
+  // A path the answer names must exist on disk, in HEAD's tree, or at the run's start (deleted by the run); tails match.
+  const repo = mkdtempSync(join(tmpdir(), "orq-refs-")), g = (...a: string[]) => spawnSync("git", ["-C", repo, ...a], { encoding: "utf8" });
+  g("init", "-q"); g("config", "user.email", "t@t"); g("config", "user.name", "t");
+  mkdirSync(join(repo, "pkg", "src"), { recursive: true });
+  mkdirSync(join(repo, "lib"));
+  writeFileSync(join(repo, "pkg", "src", "a.ts"), ""); writeFileSync(join(repo, "lib", "old.ts"), "");
+  g("add", "-A"); g("commit", "-qm", "x");
+  const start = g("rev-parse", "HEAD").stdout.trim();
+  g("rm", "-q", "lib/old.ts"); g("commit", "-qm", "y");
+  writeFileSync(join(repo, "new.ts"), "");
+  const r = missingRefs(repo, "Edited src/a.ts and pkg/src/a.ts, added new.ts at x/new.ts, removed lib/old.ts and lib/ghost.ts", start);
+  assert.deepEqual(r.missing, ["x/new.ts", "lib/ghost.ts"]);
+  assert.equal(missingRefs(repo, "removed sub/old.ts", start).missing.length, 1);
+  assert.equal(missingRefs(repo, "removed `ghost.ts` too", start).checked, 0); // no slash: not a path claim
+  assert.match(refsLine(r), /^head=[0-9a-f]{40} checked=5 missing=x\/new\.ts,lib\/ghost\.ts\n$/);
+  rmSync(repo, { recursive: true, force: true });
+
+  const ws = mkdtempSync(join(tmpdir(), "orq-judge-"));
+  const run = (issue: string, name: string, out: string, extra: Record<string, string> = {}) => {
+    const d = join(ws, ".orquestra", issue);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, `${name}.run.sh`), "#!/usr/bin/env bash\n");
+    writeFileSync(join(d, `${name}.job.json`), JSON.stringify({ agent: "codex", argv: ["codex", "-m", "sol"] }));
+    writeFileSync(join(d, `${name}.out.md`), out);
+    writeFileSync(join(d, `${name}.done`), "status=ok rc=0\n");
+    for (const [f, v] of Object.entries(extra)) writeFileSync(join(d, f), v);
+  };
+  const blocker = "1. [blocker] src/a.ts:3 missing null check on input\n";
+  // L-1: the same blocker in three reviews (loops); the answer said tests pass and verify of that commit has new failures.
+  run("L-1", "impl-app", "All tests pass.", { "impl-app.refs": "head=abc1234def checked=1 missing=\n",
+    "verify-app.done": "status=fail new=2\n", "verify-app.txt": "# verify app abc1234 2026-11-21: 3 tests\n",
+    "fix-1.md": blocker, "fix-2.md": blocker, "review-app-1.out.md": blocker, "review-app-2.out.md": blocker });
+  run("L-1", "review-app", blocker + "2. [suggestion] README.md wording\n");
+  // C-2: approved at once; the answer named a file that isn't there; the review's only blocker was marked invalid.
+  run("C-2", "impl-app", "Done.", { "impl-app.refs": "head=fff checked=2 missing=src/ghost.ts\n" });
+  run("C-2", "review-app", blocker);
+  const { markInvalid, readInvalid } = await import("./rounds.js");
+  const c2 = join(ws, ".orquestra", "C-2");
+  assert.throws(() => markInvalid(c2, "review-app", [2]), /1 finding\(s\), no 2/);
+  assert.equal(markInvalid(c2, "review-app", [1], "the null check is two lines up")[0].severity, "blocker");
+  assert.deepEqual([...readInvalid(c2).get("review-app")!], [1]);
+  // D-3: approved, clean answer, verify of another commit failed: neither loops nor hallucinates; an approval has nothing to judge.
+  run("D-3", "impl-app", "All tests pass.", { "impl-app.refs": "head=999 checked=0 missing=\n",
+    "verify-app.done": "status=fail new=1\n", "verify-app.txt": "# verify app 111 2026-11-21: 3 tests\n" });
+  run("D-3", "review-app", "APPROVED\n");
+  try {
+    const rs = collectRuns(ws, 30, 2);
+    const at = (issue: string, name: string) => rs.find((x) => x.issue === issue && x.name === name)!;
+    assert.deepEqual([at("L-1", "impl-app").loop, at("L-1", "impl-app").halluc], [true, true]);
+    assert.deepEqual([at("C-2", "impl-app").loop, at("C-2", "impl-app").halluc], [false, true]);
+    assert.deepEqual([at("D-3", "impl-app").loop, at("D-3", "impl-app").halluc], [false, false]);
+    assert.deepEqual([at("L-1", "review-app").halluc, at("C-2", "review-app").halluc, at("D-3", "review-app").halluc], [false, true, undefined]);
+    const row = (role: string) => rows(rs).find((x) => x.role === role)!;
+    assert.deepEqual([row("impl").loop, row("impl").n_loop, row("impl").halluc, row("impl").n_halluc], [33, 3, 67, 3]);
+    assert.deepEqual([row("review").halluc, row("review").n_halluc, row("review").loop], [50, 2, null]);
+  } finally { rmSync(ws, { recursive: true, force: true }); }
+});
+
+test("pick: looping and hallucination rates lower the score, blended with the prior (#104)", async () => {
+  const { pick } = await import("./pick.js");
+  const agents = { a: { models: { impl: { default: "ma" }, review: { default: "ma" } } }, b: { models: { impl: { default: "mb" }, review: { default: "mb" } } } };
+  const cfg = { agents, roles: { primary: { pool: ["a", "b"] }, reviewer: { pool: ["a", "b"] } }, policy: { review: "any" } };
+  const row = (role: string, agent: string, model: string, extra = {}) =>
+    ({ role, agent, model, n: 20, ok: 90, approved: null, n_appr: 0, min: 10, new: 1000, tot: 1000, ...extra });
+  const base = { level: "medium", exclude: new Set<string>(), blocks: new Set<string>(), quota: {}, recent: [] };
+  // a loops on half its issues, counted over its impl and fix rows (10 + 10 judged); b never does.
+  const stats = [row("impl", "a", "ma", { loop: 0, n_loop: 10 }), row("fix", "a", "ma", { loop: 100, n_loop: 10 }),
+    row("impl", "b", "mb", { loop: 0, n_loop: 20 })];
+  const r = pick({ ...base, cfg, role: "impl", stats });
+  assert.equal(r.best?.agent, "b");
+  const why = (ag: string, res = r) => res.cands.find((x) => x.agent === ag)!.why;
+  assert.match(why("a"), new RegExp(`loop-free=${((0.6 * 8 + 0.5 * 20) / 28).toFixed(2)}\\(0\\.60→0\\.50\\)`));
+  assert.match(why("a"), /grounded=0\.60 /); // no hallucination data: the prior alone
+  const gap = r.cands[0].score - r.cands[1].score;
+  assert.ok(Math.abs(gap - 0.2 * ((0.6 * 8 + 20) / 28 - (0.6 * 8 + 0.5 * 20) / 28)) < 1e-9, String(gap));
+  // weight 0 turns the axis off; a reviewer has no looping axis, only hallucination.
+  const off = pick({ ...base, cfg: { ...cfg, policy: { weights: { looping: 0 } } }, role: "impl", stats });
+  assert.ok(Math.abs(off.cands[0].score - off.cands[1].score) < 1e-9);
+  const rv = pick({ ...base, cfg, role: "review", implAgent: "x", stats: [row("review", "a", "ma", { halluc: 50, n_halluc: 8 }), row("review", "b", "mb")] });
+  assert.equal(rv.best?.agent, "b");
+  assert.doesNotMatch(why("a", rv), /loop-free/);
+  assert.match(why("a", rv), /grounded=0\.55\(0\.60→0\.50\)/);
+});
+
+test("orq rounds --invalid lists a review's findings, marks them and rejects unknown numbers (#104)", () => {
+  const { root, env } = sandbox();
+  const d = join(root, ".orquestra", "X-4");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, "review-app.out.md"), "1. [blocker] src/a.ts:1 null check\n2. [suggestion] README.md typo\n");
+  const go = (...a: string[]) => spawnSync(process.execPath, [CLI, "rounds", "X-4", "-w", root, ...a], { env, encoding: "utf8" });
+  const ls = go("--invalid", "review-app");
+  assert.equal(ls.status, 0);
+  assert.match(ls.stdout, /^1\. \[blocker\] src\/a\.ts:1 null check\n2\. \[suggestion\]/);
+  assert.equal(go("--invalid", "review-app", "3").status, 2);
+  const ok = go("--invalid", ".orquestra/X-4/review-app.out.md", "1", "--why", "it is checked above");
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(readFileSync(join(d, ".invalid.log"), "utf8"), /^review-app 1 \S+ it is checked above\n$/);
+  assert.equal(go("--invalid", "review-nope", "1").status, 1);
+  assert.equal(go("--invalid", "review-app", "--diagnose").status, 2);
 });
 
 test("release: version from conventional commits; check wants package, lock and both changelogs", async () => {

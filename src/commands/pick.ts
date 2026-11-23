@@ -16,7 +16,7 @@ import { collectRuns, rows } from "../stats.js";
 import { load as loadBlocks } from "./block.js";
 
 export const USAGE = `orq pick <impl|fix|worker|review|opinion|watchdog> [--level simple|medium|heavy] [--impl-vendor <v>|--impl-agent <a>]
-         [--exclude-agent <a>]... [-w <workspace>] [--base <ref>] [--explain] [--no-record]
+         [--exclude-agent <a>]... [--review-agent <a>]... [-w <workspace>] [--base <ref>] [--explain] [--no-record]
 orq pick fix --same <impl pick file>   same agent/model/account as the implementer, effort one level up`;
 
 // The board refreshes this file; fresher than 10 min → no new quota requests.
@@ -41,13 +41,14 @@ export async function pick(argv: string[]): Promise<number> {
   }
   let level = "medium", implVendor: string | undefined, implAgent: string | undefined, ws: string | undefined;
   let explain = false, record = true, base: string | undefined;
-  const exclude = new Set<string>();
+  const exclude = new Set<string>(), reviewAgents = new Set<string>();
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--level") level = argv[++i];
     else if (a === "--impl-vendor") implVendor = argv[++i];
     else if (a === "--impl-agent") implAgent = argv[++i];
     else if (a === "--exclude-agent") exclude.add(argv[++i]);
+    else if (a === "--review-agent") reviewAgents.add(argv[++i]);
     else if (a === "-w") ws = expand(argv[++i]);
     else if (a === "--base") base = argv[++i];
     else if (a === "--explain") explain = true;
@@ -74,7 +75,7 @@ export async function pick(argv: string[]): Promise<number> {
     }
   }
   const w = ((cfg.policy ?? {}) as Obj);
-  const stats = rows(collectRuns((ws ?? cfg._workspace ?? process.cwd()) as string, Number(w.history_days ?? 30)));
+  const stats = rows(collectRuns((ws ?? cfg._workspace ?? process.cwd()) as string, Number(w.history_days ?? 30), Number(w.max_rounds ?? 2)));
   const picksF = join(stateDir(), "picks.jsonl");
   const window = Number((((w.weights ?? {}) as Obj).window) ?? 6);
   const recent = (existsSync(picksF) ? readFileSync(picksF, "utf8").split("\n").filter(Boolean).slice(-200) : [])
@@ -86,7 +87,7 @@ export async function pick(argv: string[]): Promise<number> {
   const r0 = resolveRole(cfg, role);
   const missing = new Map<string, string>();
   for (const n of r0.mode === "fixed" ? r0.order : r0.pool) { const why = agents[n] && missingBinary(cfg, n); if (why) missing.set(n, why); }
-  const res = choose({ cfg, role, level, implVendor, implAgent, exclude, commitBase, missing, stats, quota: parseQuota(qt), windows: parseWindows(qt),
+  const res = choose({ cfg, role, level, implVendor, implAgent, exclude, reviewAgents, commitBase, missing, stats, quota: parseQuota(qt), windows: parseWindows(qt),
     blocks: new Set(Object.keys(loadBlocks())), recent });
   if (!res.best) {
     console.error(`orq pick: ${m("no candidate for ", "nenhum candidato para ")}${role}`

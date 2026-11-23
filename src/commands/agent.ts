@@ -8,6 +8,7 @@
 // same cap and files. The agent calls `orq agent --turn <job> <kind>` at every end of turn, which writes .out.md/.id/
 // .done and notifies; the screen stays open (holding memory) until you close it. -T -R with the screen still open types
 // the follow-up into it; with the screen closed it reopens the session (tui_resume).
+// A write run also leaves <prefix>.refs (HEAD and the files its answer names that don't exist) for orq stats.
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, copyFileSync, createWriteStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -16,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { claudeAccounts } from "../accounts.js";
 import { gateFor } from "../diagnose.js";
 import { hasVerdict } from "../rounds.js";
+import { missingRefs, refsLine } from "../stats.js";
 import { argvModel, baseCommit, commitMessage, isCommitBase, stepIns, stepInNote, useThrowaway, agentDef, ALIASES, expandString, expandTemplate, FORMATS, type Vars } from "../agents.js";
 import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
@@ -328,6 +330,12 @@ export default {
 `;
 }
 
+/** <prefix>.refs for a write run (the worktree is still there to check against); never fails the run. */
+function writeRefs(j: Job, answer: string, start?: string): void {
+  if (j.ro || j.throwaway || j.review || !existsSync(j.dir)) return;
+  try { writeFileSync(`${j.prefix}.refs`, refsLine(missingRefs(j.dir, answer, start))); } catch { /* stats only */ }
+}
+
 /** End of a turn on the agent's screen: answer, session and .done from the agent's own hook payload. Never fails the agent. */
 function turn(file: string, kind: string, rest: string[]): number {
   try {
@@ -356,6 +364,7 @@ function turn(file: string, kind: string, rest: string[]): number {
     const noReview = noReviewMatch(j.noReview, answer), noVerdict = Boolean(j.review) && /\S/.test(answer) && !hasVerdict(answer);
     const why = !/\S/.test(answer) ? " reason=empty" : noReview ? " reason=no-review" : noVerdict ? " reason=no-verdict" : "";
     const st = why ? "fail" : "ok";
+    writeRefs(j, answer);
     writeAtomic(`${O}.done`, `status=${st} rc=0${why} at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
     if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=0${why} answer: ${O}.out.md`);
   } catch (e) { console.error(`orq agent --turn: ${(e as Error).message}`); }
@@ -726,6 +735,7 @@ async function runJob(file: string): Promise<number> {
   // Why a run failed with nothing in rc to say so (a failed filter, an empty or no-review answer, no verdict).
   const why = spawnErr ? ` reason=spawn:${spawnErr.code ?? "error"}` : st !== "fail" ? "" : !verdict ? (rc === 0 ? " reason=filter" : "")
     : noReview ? " reason=no-review" : noVerdict ? " reason=no-verdict" : !/\S/.test(answer) ? " reason=empty" : "";
+  writeRefs(j, answer, headBefore);
   writeAtomic(`${O}.done`, `status=${st} rc=${rc}${why} at=${new Date().toISOString()} agent=${j.agent}\n`);
   rmSync(`${O}.pid`, { force: true });
   state({ status: st, rc, end: new Date().toISOString(), ...(why ? { reason: why.slice(8) } : {}) });

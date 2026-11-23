@@ -230,6 +230,9 @@ repo checklist.
 ## 6. Loop
 **Only `[blocker]` items open a round.** An item tagged blocker without `file:line` and a concrete failure, or that
 only restates a `## Decisions` choice, counts as a suggestion; when you downgrade one, say why in the Plane comment.
+A finding that is **wrong** (the code already does it, the file or function doesn't exist, it misreads the diff) — not
+merely downgraded — gets marked: `orq rounds <ID> --invalid review-<repo>[-<n>] <item> --why "<one line>"` (without
+`<item>` it lists the review's findings with the numbers to use). It counts against that reviewer in `orq pick`.
 No blockers left → APPROVED, even with suggestions.
 Blocking problems → write the list (blockers only) to `$O/fix-<n>.md` (always this name; reviews `$O/review-<repo>-<n>`, never `fix<n>-<repo>` or other variants — a later conductor counts rounds by these files) and continue the implementer's session (any agent):
 `orq agent $(orq pick fix --same $O/impl-<repo>.pick) -g <group> -t "<ID> fix<n> <repo>" -d $WT -o $O/impl-<repo> -R $(cat $O/impl-<repo>.id) -- $O/fix-<n>.md`.
