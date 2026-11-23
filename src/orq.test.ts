@@ -2775,6 +2775,13 @@ test("pick: economy compares tokens per approved delivery, and a shared account 
   const bk = pickAgent({ ...base, cfg: two, quota: { w: 30, h: 40 }, windows: win, now, stats: [] });
   assert.equal(bk.best?.acct, "h");
   assert.deepEqual(bk.cands.map((c) => c.model), ["m2"]);
+  // every model exhausted on the least scarce account: the next account takes the pick
+  const allOut = parseWindows(`w 5h=30% week=10% reset5h=${now + 4 * 3600}\nh 5h=40% week=10% reset5h=${now + 3600}`
+    + "\nh/m1 5h=95% week=10%\nh/m2 5h=95% week=10%");
+  const next = pickAgent({ ...base, cfg: two, quota: { w: 30, h: 40 }, windows: allOut, now, stats: [] });
+  assert.equal(next.best?.acct, "w");
+  assert.deepEqual(next.cands.map((c) => c.model), ["m1", "m2"]);
+  assert.match(next.notes[0], /h: m1 5h 95%, h: m2 5h 95%; using m1, m2/);
 });
 
 test("claim: a non-Claude conductor is not registered as an inherited Claude account", () => {

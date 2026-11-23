@@ -289,14 +289,13 @@ function pickOnce(inp: PickInput): PickResult {
     };
     const ranked = usable.map(([n, v]) => ({ n, v: v!, ...scarcityOf(n, v!) }))
       .sort((x, y) => (w.scarcity > 0 ? x.scarcity - y.scarcity : 0) || x.v - y.v);
-    const chosen = ranked[0];
-    // The chosen account's per-model buckets: an exhausted candidate drops out; with none left, a lighter model of the agent.
-    let mfx = mfs;
-    const acc0 = chosen?.n;
-    const mkeys = acc0 ? Object.keys(inp.windows ?? {}).filter((k) => k.startsWith(`${acc0}/`)).map((k) => k.slice(acc0.length + 1)) : [];
-    if (acc0 && mkeys.length) {
+    // Per-model buckets: an exhausted candidate drops out; with none left, a lighter model of the agent; with none of those,
+    // the next account in scarcity order.
+    const bucketsOf = (acc: string) => {
+      const mkeys = Object.keys(inp.windows ?? {}).filter((k) => k.startsWith(`${acc}/`)).map((k) => k.slice(acc.length + 1));
+      if (!mkeys.length) return { found: mfs, skipped: [] as string[] };
       const over = (model: string) => {
-        const k = modelKey(model, mkeys), q = k ? inp.windows?.[`${acc0}/${k}`] : undefined;
+        const k = modelKey(model, mkeys), q = k ? inp.windows?.[`${acc}/${k}`] : undefined;
         if (!q) return undefined;
         const five = (q.five ?? -1) >= limit5, week = (q.week ?? -1) >= limitWeek;
         if (!five && !week) return undefined;
@@ -313,10 +312,17 @@ function pickOnce(inp: PickInput): PickResult {
           skipped.push(why);
         }
       }
-      if (!found.length) { out(name, `${m("every model over its quota", "todo modelo acima da cota")}: ${skipped.join(", ")}`); continue; }
-      if (skipped.length) out(name, `${m("quota exhausted", "cota esgotada")}: ${skipped.join(", ")}; ${m("using", "usando")} ${found.map((c) => c[0]).join(", ")}`);
-      mfx = found;
+      return { found, skipped };
+    };
+    let mfx = mfs, chosen: (typeof ranked)[number] | undefined;
+    const exhausted: string[] = [];
+    for (const r of ranked) {
+      const { found, skipped } = bucketsOf(r.n);
+      exhausted.push(...skipped.map((x) => (ranked.length > 1 ? `${r.n}: ${x}` : x)));
+      if (found.length) { chosen = r; mfx = found; break; }
     }
+    if (ranked.length && !chosen) { out(name, `${m("every model over its quota", "todo modelo acima da cota")}: ${exhausted.join(", ")}`); continue; }
+    if (exhausted.length) out(name, `${m("quota exhausted", "cota esgotada")}: ${exhausted.join(", ")}; ${m("using", "usando")} ${mfx.map((c) => c[0]).join(", ")}`);
     const acct = qn.length > 1 ? chosen?.n : undefined;
     const statRole = role === "fix" || role === "worker" ? "impl" : role;
     // One candidate per (agent, model) pair, each scored on its own stats row; a fixed role takes the first model.
