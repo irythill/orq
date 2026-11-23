@@ -2758,6 +2758,23 @@ test("pick: economy compares tokens per approved delivery, and a shared account 
   assert.equal(hot.best?.agent, "b");
   const gap = hot.cands[0].score - hot.cands[1].score;
   assert.ok(gap > 0.25, `gap ${gap}`);
+  // shared alone: equal readings, the shared account scores lower
+  const eq = pickAgent({ ...base, cfg: sh, quota: { a: 50, b: 50 }, stats: same });
+  assert.equal(eq.best?.agent, "b");
+  assert.match(eq.cands[1].why, /scarcity=-0\.12\(shared\)/);
+  assert.match(eq.cands[0].why, /scarcity=-0\.05 /);
+  // no limit (-1) or no quota configured: no scarcity
+  const free = pickAgent({ ...base, cfg: { ...cfg, agents: { a: mk("a"), b: { ...mk("b"), quota: [] } } }, quota: { a: -1 }, stats: same });
+  assert.doesNotMatch(free.cands.map((c) => c.why).join(), /scarcity=/);
+  // per-model buckets are checked on the account scarcity picks, not the least used one
+  const two = { agents: { c: { roles: ["impl"], quota: ["w", "h"], models: { impl: { default: ["m1", "m2"] } } } },
+    roles: { primary: { pick: "auto", pool: ["c"] } } };
+  const now = 1_900_000_000;
+  const win = parseWindows(`w 5h=30% week=10% reset5h=${now + 4 * 3600}\nh 5h=40% week=10% reset5h=${now + 3600}`
+    + "\nh/m1 5h=95% week=10%\nw/m2 5h=95% week=10%");
+  const bk = pickAgent({ ...base, cfg: two, quota: { w: 30, h: 40 }, windows: win, now, stats: [] });
+  assert.equal(bk.best?.acct, "h");
+  assert.deepEqual(bk.cands.map((c) => c.model), ["m2"]);
 });
 
 test("claim: a non-Claude conductor is not registered as an inherited Claude account", () => {

@@ -287,9 +287,12 @@ function pickOnce(inp: PickInput): PickResult {
       const pressure = (ratios.length ? Math.max(...ratios) : 0) * (isShared(n) ? w.shared : 1);
       return { scarcity: (Math.min(pressure, 2) / 2) ** 2, pace: Math.max(p5 ?? 0, pw ?? 0) || undefined, shared: isShared(n) };
     };
+    const ranked = usable.map(([n, v]) => ({ n, v: v!, ...scarcityOf(n, v!) }))
+      .sort((x, y) => (w.scarcity > 0 ? x.scarcity - y.scarcity : 0) || x.v - y.v);
+    const chosen = ranked[0];
     // The chosen account's per-model buckets: an exhausted candidate drops out; with none left, a lighter model of the agent.
     let mfx = mfs;
-    const acc0 = usable.length ? [...usable].sort((x, y) => x[1]! - y[1]!)[0][0] : undefined;
+    const acc0 = chosen?.n;
     const mkeys = acc0 ? Object.keys(inp.windows ?? {}).filter((k) => k.startsWith(`${acc0}/`)).map((k) => k.slice(acc0.length + 1)) : [];
     if (acc0 && mkeys.length) {
       const over = (model: string) => {
@@ -314,9 +317,6 @@ function pickOnce(inp: PickInput): PickResult {
       if (skipped.length) out(name, `${m("quota exhausted", "cota esgotada")}: ${skipped.join(", ")}; ${m("using", "usando")} ${found.map((c) => c[0]).join(", ")}`);
       mfx = found;
     }
-    const ranked = usable.map(([n, v]) => ({ n, v: v!, ...scarcityOf(n, v!) }))
-      .sort((x, y) => (w.scarcity > 0 ? x.scarcity - y.scarcity : 0) || x.v - y.v);
-    const chosen = ranked[0];
     const acct = qn.length > 1 ? chosen?.n : undefined;
     const statRole = role === "fix" || role === "worker" ? "impl" : role;
     // One candidate per (agent, model) pair, each scored on its own stats row; a fixed role takes the first model.
