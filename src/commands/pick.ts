@@ -89,6 +89,7 @@ export async function pick(argv: string[]): Promise<number> {
   for (const n of r0.mode === "fixed" ? r0.order : r0.pool) { const why = agents[n] && missingBinary(cfg, n); if (why) missing.set(n, why); }
   const res = choose({ cfg, role, level, implVendor, implAgent, exclude, reviewAgents, commitBase, missing, stats, quota: parseQuota(qt), windows: parseWindows(qt),
     blocks: new Set(Object.keys(loadBlocks())), recent });
+  for (const wn of res.warnings ?? []) console.error(`orq pick: ${m("warning", "aviso")}: ${wn}`);
   if (!res.best) {
     console.error(`orq pick: ${m("no candidate for ", "nenhum candidato para ")}${role}`
       + (res.notes.length ? `; ${res.notes.join("; ")}` : ""));

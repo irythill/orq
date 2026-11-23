@@ -1,6 +1,6 @@
 // Guided setup: turns what a user knows (plans, trust, parallel tasks, RAM) into roles, weights and memory caps,
 // with a reason for each choice. The rules are the ones the case study found by hand (docs/case-study.md):
-//   shares quota with the conductor          → reserve
+//   shares quota with the conductor          → shared
 //   small plan / monthly allowance           → opinion only
 //   pay-as-you-go                            → reviewer pool, not primary
 //   no free shell when headless (agy)        → reviewer only, diff attached
@@ -19,7 +19,7 @@ export interface Answers {
   preset?: "economy" | "quality" | "single-agent";
 }
 export interface Proposal {
-  agents: Record<string, { vendor: string; quota?: string[]; reserve?: boolean; roles: string[] }>;
+  agents: Record<string, { vendor: string; quota?: string[]; shared?: boolean; roles: string[] }>;
   roles: Record<string, { agent?: string; fallback?: string[]; pick?: "auto"; pool?: string[]; rule?: string }>;
   weights: { quality: number; tokens: number; speed: number };
   machine: { agent_mem_max: string; test_mem_max: string };
@@ -79,8 +79,8 @@ export function suggestRoles(a: Answers): Proposal {
     if (opinion.includes(n) && !single) roles.push("opinion");
     agents[n] = { vendor: vendor(n), roles, ...(ans.quota ? { quota: ans.quota } : {}) };
     if (isConductor(n) && n !== primary && !single) {
-      agents[n].reserve = true;
-      reasons.push(`${n}: reserve — ` + m("shares quota with the conductor", "divide cota com o conductor"));
+      agents[n].shared = true;
+      reasons.push(`${n}: shared — ` + m("shares quota with the conductor", "divide cota com o conductor"));
     }
     if (ans.plan === "small" && !single) reasons.push(`${n}: opinion — ` + m("small plan or monthly allowance", "plano pequeno ou franquia mensal"));
     if (ans.plan === "payg" && n !== primary) reasons.push(`${n}: ` + m("pay-as-you-go → reviews (few tokens)", "pague-por-uso → revisa (poucos tokens)"));
@@ -117,7 +117,7 @@ export function toToml(p: Proposal): string {
   for (const [n, a] of Object.entries(p.agents)) {
     out.push(`[agents.${n}]`, `vendor = ${q(a.vendor)}`, `roles  = ${list(a.roles)}`);
     if (a.quota) out.push(`quota  = ${list(a.quota)}`);
-    if (a.reserve) out.push("# reserve follows roles.conductor.agent (or the running conductor)");
+    if (a.shared) out.push("# shared (scarcity weighs more) follows roles.conductor.agent (or the running conductor)");
     out.push("# models.<role>.<level> = \"model[@effort]\" — without models, the CLI's default model is used", "");
   }
   for (const [r, v] of Object.entries(p.roles)) {

@@ -164,7 +164,7 @@ implementa ou revisa?", o setup pergunta o que a pessoa sabe responder e aplica 
 
 | Situação | Sugestão |
 |---|---|
-| Divide quota com o conductor | `reserve` (só quando os outros não cabem) |
+| Divide quota com o conductor | `shared` (a escassez pesa mais) |
 | Plano pequeno ou franquia mensal | só `opinion` (tarefas pesadas, ou impl e review discordam) |
 | Pague-por-uso | pool de `reviewer` (poucos tokens), não `primary` por padrão |
 | Sem shell livre no modo headless (ex.: agy) | só `reviewer`, com o diff anexado |
