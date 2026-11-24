@@ -950,7 +950,7 @@ test("pick: a '-' window (no such limit, e.g. copilot's monthly plan) is never o
   assert.match(r.notes[0], new RegExp(`copilot=97 \\(back ${humanReset(1900100000).replace(/[:.]/g, "\\$&")}\\)`));
 });
 
-test("pick: pacing penalizes a projected overrun (soft); headroom and expired logins drop", async () => {
+test("pick: scarcity penalizes a projected overrun (soft); headroom and expired logins drop", async () => {
   const { pick, parseWindows, projected } = await import("./pick.js");
   const now = 1_900_000_000;
   // 40% used with 2h of the 5h window left (60% elapsed) → 66% projected; 50% with 4h left (20% elapsed) → 250%.
@@ -964,15 +964,22 @@ test("pick: pacing penalizes a projected overrun (soft); headroom and expired lo
   const line = `a 5h=50% week=10% reset5h=${now + 4 * 3600}\nb 5h=50% week=10% reset5h=${now + 2 * 3600}`;
   const w = parseWindows(line);
   const quota = { a: 50, b: 50 };
-  // a: 50% at 20% elapsed → 250% projected (penalized); b: 50% at 60% elapsed → 83% (fine). Equal otherwise.
+  // a: 50% at 20% elapsed → 250% projected, past twice the limit (scarcity 1); b: 50% at 60% elapsed → 83% (≈0.24).
   const r = pick({ ...base, cfg, role: "impl", quota, windows: w });
   assert.equal(r.best?.agent, "b");
-  assert.match(r.cands[1].why, /pace=250%/);
-  // still a candidate (soft), and off when pacing_penalty = 0
+  assert.match(r.cands[1].why, /scarcity=-0\.60\(pace=250%\)/);
+  assert.match(r.cands[0].why, /scarcity=-0\.14\(pace=83%\)/);
+  // still a candidate (soft), and off when weights.scarcity = 0
   assert.equal(r.cands.length, 2);
-  const off = pick({ ...base, cfg: { ...cfg, policy: { pacing_penalty: 0 } }, role: "impl", quota, windows: w });
+  const off = pick({ ...base, cfg: { ...cfg, policy: { weights: { scarcity: 0 } } }, role: "impl", quota, windows: w });
   assert.equal(off.cands[0].score, off.cands[1].score);
-  assert.doesNotMatch(off.cands.map((c) => c.why).join(), /pace=/);
+  assert.doesNotMatch(off.cands.map((c) => c.why).join(), /scarcity=/);
+  // retired keys warn; reserve is still read as shared
+  const old = pick({ ...base, cfg: { ...cfg, policy: { pacing_penalty: 0, weights: { reserve: 0.3 } },
+    agents: { ...agents, a: { ...agents.a, reserve: true } } }, role: "impl", quota, windows: w });
+  assert.equal(old.warnings?.length, 3);
+  assert.match(old.cands.find((c) => c.agent === "a")!.why, /pace=250%,shared/);
+  assert.equal(r.warnings, undefined);
   // a window published with its own length (Copilot's month: 30 days) is projected over that, not over 7 days:
   // 60% with 3 days left is 105% over 7 days but 67% over 30.
   const mo = `a 5h=- week=60% resetweek=${now + 3 * 86400} spanweek=43200\nb 5h=- week=60% resetweek=${now + 3 * 86400}`;
@@ -989,15 +996,14 @@ test("pick: pacing penalizes a projected overrun (soft); headroom and expired lo
     windows: parseWindows("w 5h=90% week=10%\nh 5h=10% week=10% [login expired: run `agy models`; last reading, 5 min ago]") });
   assert.equal(bothOut.best, undefined);
   assert.match(bothOut.notes[0], /w=90, h: login expired: run `agy models`/);
-  // several usable accounts: a non-hot account wins over a lower-usage hot one, then lower usage breaks ties (unless pacing_penalty = 0)
+  // several usable accounts: the least scarce wins over a lower-usage one running hot (by usage alone when weights.scarcity = 0)
   const multi = { agents: { c: { quota: ["w", "h", "p"], models: { impl: { default: "m" } } } },
     roles: { primary: { pick: "auto", pool: ["c"] } } };
   const multiWin = parseWindows(`w 5h=40% week=10% reset5h=${now + 4 * 3600}\nh 5h=48% week=10% reset5h=${now + 2 * 3600}\np 5h=42% week=10% reset5h=${now + 2 * 3600}`);
   const paced = pick({ ...base, role: "impl", quota: { w: 40, h: 48, p: 42 }, cfg: multi, windows: multiWin });
   assert.equal(paced.best?.acct, "p");
-  assert.doesNotMatch(paced.best?.why ?? "", /pace=/);
   const pacedOff = pick({ ...base, role: "impl", quota: { w: 40, h: 48, p: 42 },
-    cfg: { ...multi, policy: { pacing_penalty: 0 } }, windows: multiWin });
+    cfg: { ...multi, policy: { weights: { scarcity: 0 } } }, windows: multiWin });
   assert.equal(pacedOff.best?.acct, "w");
   // headroom: 25 lowers the 5h limit (85) to 60 for that agent only
   const hr = pick({ ...base, cfg: { agents: { a: { ...agents.a, headroom: 25 }, b: agents.b }, roles: cfg.roles },
@@ -1055,7 +1061,7 @@ test("suggestRoles: the maintainer's setup comes out of plain answers", async ()
   assert.deepEqual(p.roles.primary, { agent: "codex", fallback: ["claude"] });
   assert.deepEqual(p.roles.reviewer, { pick: "auto", pool: ["claude", "opencode", "antigravity"], rule: "other-vendor" });
   assert.deepEqual(p.roles.opinion, { pick: "auto", pool: ["copilot"] });
-  assert.equal(p.agents.claude.reserve, true);
+  assert.equal(p.agents.claude.shared, true);
   assert.deepEqual(p.agents.antigravity.roles, ["review"]);
   assert.deepEqual(p.machine, { agent_mem_max: "4G", test_mem_max: "5G" });
   assert.equal(p.weights.tokens, 0.45);
@@ -2713,7 +2719,7 @@ test("conductor: custom interactive CLI receives literal argv, instructions, acc
   assert.deepEqual(JSON.parse(resumed.stdout.trim().split(/\r?\n/).at(-1)!).argv.slice(0, 2), ["--resume", "session-1"]);
 });
 
-test("pick: reserve and headroom follow the configured or active conductor, with explicit overrides", () => {
+test("pick: shared and headroom follow the configured or active conductor, with explicit overrides", () => {
   const agents = Object.fromEntries(["codex", "claude"].map((name) => [name,
     { roles: ["impl"], quota: [name], models: { impl: { default: "m" } } }]));
   const cfg = { agents, roles: { conductor: { agent: "codex" } }, conductor: { headroom: 25 } };
@@ -2721,12 +2727,61 @@ test("pick: reserve and headroom follow the configured or active conductor, with
   assert.equal(pickAgent({ ...base, cfg }).best?.agent, "claude");
   assert.equal(pickAgent({ ...base, cfg: { ...cfg, _conductorAgent: "claude" } }).best?.agent, "codex");
   const quota = { codex: 10, claude: 10 };
-  const reserved = pickAgent({ ...base, cfg, quota });
-  assert.equal(reserved.best?.agent, "claude");
-  assert.match(reserved.cands.find((c) => c.agent === "codex")!.why, /reserve/);
+  const shared = pickAgent({ ...base, cfg, quota });
+  assert.equal(shared.best?.agent, "claude");
+  assert.match(shared.cands.find((c) => c.agent === "codex")!.why, /shared/);
   const explicit = pickAgent({ ...base, quota, cfg: { ...cfg, agents: { ...agents,
-    codex: { ...agents.codex, reserve: false, headroom: 0 } } } });
-  assert.doesNotMatch(explicit.cands.find((c) => c.agent === "codex")!.why, /reserve/);
+    codex: { ...agents.codex, shared: false, headroom: 0 } } } });
+  assert.doesNotMatch(explicit.cands.find((c) => c.agent === "codex")!.why, /shared/);
+  // shared as a list: only those accounts weigh more
+  const accts = { roles: ["impl"], quota: ["work", "home"], shared: ["work"], models: { impl: { default: "m" } } };
+  const listed = pickAgent({ ...base, quota: { work: 50, home: 55 },
+    cfg: { agents: { claude: accts }, roles: { primary: { pick: "auto", pool: ["claude"] } } } });
+  assert.equal(listed.best?.acct, "home");
+  assert.doesNotMatch(listed.best?.why ?? "", /shared/);
+});
+
+test("pick: economy compares tokens per approved delivery, and a shared account near its limit loses to a quiet one", () => {
+  const mk = (n: string) => ({ roles: ["impl"], quota: [n], models: { impl: { default: "m" } } });
+  const row = (agent: string, newTok: number, approved: number) => ({ role: "impl", agent, model: "m", n: 20, ok: 100,
+    approved, n_appr: 20, min: 10, new: newTok, tot: newTok });
+  const base = { role: "impl" as const, level: "medium", exclude: new Set<string>(), blocks: new Set<string>(), recent: [] };
+  const cfg = { agents: { a: mk("a"), b: mk("b") }, roles: { primary: { pick: "auto", pool: ["a", "b"] } } };
+  // a: 100k per run, half approved → 200k per delivery; b: 150k, all approved → 150k. b is the cheaper delivery.
+  const r = pickAgent({ ...base, cfg, quota: { a: 10, b: 10 }, stats: [row("a", 100_000, 50), row("b", 150_000, 100)] });
+  assert.match(r.cands.find((c) => c.agent === "a")!.why, /economy=0\.\d+\(0\.60→0\.75\)/);
+  assert.match(r.cands.find((c) => c.agent === "b")!.why, /economy=\S+\(0\.60→1\.00\)/);
+  // the 2026-11-10 case: a shared account at 80% against one at 13%, otherwise equal
+  const same = [row("a", 100_000, 80), row("b", 100_000, 80)];
+  const sh = { ...cfg, agents: { a: { ...mk("a"), shared: true }, b: mk("b") } };
+  const hot = pickAgent({ ...base, cfg: sh, quota: { a: 80, b: 13 }, stats: same });
+  assert.equal(hot.best?.agent, "b");
+  const gap = hot.cands[0].score - hot.cands[1].score;
+  assert.ok(gap > 0.25, `gap ${gap}`);
+  // shared alone: equal readings, the shared account scores lower
+  const eq = pickAgent({ ...base, cfg: sh, quota: { a: 50, b: 50 }, stats: same });
+  assert.equal(eq.best?.agent, "b");
+  assert.match(eq.cands[1].why, /scarcity=-0\.12\(shared\)/);
+  assert.match(eq.cands[0].why, /scarcity=-0\.05 /);
+  // no limit (-1) or no quota configured: no scarcity
+  const free = pickAgent({ ...base, cfg: { ...cfg, agents: { a: mk("a"), b: { ...mk("b"), quota: [] } } }, quota: { a: -1 }, stats: same });
+  assert.doesNotMatch(free.cands.map((c) => c.why).join(), /scarcity=/);
+  // per-model buckets are checked on the account scarcity picks, not the least used one
+  const two = { agents: { c: { roles: ["impl"], quota: ["w", "h"], models: { impl: { default: ["m1", "m2"] } } } },
+    roles: { primary: { pick: "auto", pool: ["c"] } } };
+  const now = 1_900_000_000;
+  const win = parseWindows(`w 5h=30% week=10% reset5h=${now + 4 * 3600}\nh 5h=40% week=10% reset5h=${now + 3600}`
+    + "\nh/m1 5h=95% week=10%\nw/m2 5h=95% week=10%");
+  const bk = pickAgent({ ...base, cfg: two, quota: { w: 30, h: 40 }, windows: win, now, stats: [] });
+  assert.equal(bk.best?.acct, "h");
+  assert.deepEqual(bk.cands.map((c) => c.model), ["m2"]);
+  // every model exhausted on the least scarce account: the next account takes the pick
+  const allOut = parseWindows(`w 5h=30% week=10% reset5h=${now + 4 * 3600}\nh 5h=40% week=10% reset5h=${now + 3600}`
+    + "\nh/m1 5h=95% week=10%\nh/m2 5h=95% week=10%");
+  const next = pickAgent({ ...base, cfg: two, quota: { w: 30, h: 40 }, windows: allOut, now, stats: [] });
+  assert.equal(next.best?.acct, "w");
+  assert.deepEqual(next.cands.map((c) => c.model), ["m1", "m2"]);
+  assert.match(next.notes[0], /h: m1 5h 95%, h: m2 5h 95%; using m1, m2/);
 });
 
 test("claim: a non-Claude conductor is not registered as an inherited Claude account", () => {

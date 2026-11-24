@@ -164,7 +164,7 @@ explains.
 
 | Situation | Suggestion |
 |---|---|
-| Shares quota with the conductor | `reserve` (only when the others don't fit) |
+| Shares quota with the conductor | `shared` (its scarcity weighs more) |
 | Small plan or monthly allowance | `opinion` only (heavy tasks, or impl and review disagree) |
 | Pay-as-you-go | `reviewer` pool (few tokens), not `primary` by default |
 | No free shell in headless mode (e.g. agy) | `reviewer` only, diff attached |
