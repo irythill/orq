@@ -20,6 +20,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { claudeAccounts } from "./accounts.js";
+import { loadConfig, type Obj } from "./config.js";
 import { writeAtomic } from "./fsutil.js";
 import { readSecret } from "./keyring.js";
 import { stateDir } from "./paths.js";
@@ -212,10 +213,12 @@ export function groupKey(g: AgyGroup): string {
   return id ? id.replace(/-(weekly|5h)$/, "") : (g.name ?? "group").toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
-/** The groups of agy's `/quota` JSON (`command.data.groups`), and the agent's own pair: its group with the most room
- *  left (the agent still has quota while any group does; `orq pick` checks a model against its own group). An exhausted
- *  bucket may omit remaining_fraction (proto default 0 is not serialized), so a reset time with no fraction is 0 left. */
-export function antigravityFromGroups(groups: AgyGroup[]): { five: Cached; week: Cached; groups: Record<string, GroupQuota> } {
+/** The groups of agy's `/quota` JSON (`command.data.groups`), and the agent's own pair: of the groups its configured
+ *  `models` fall in (all groups when none map), the one with the most room left (the agent still has quota while any
+ *  of them does; `orq pick` checks a model against its own group). An exhausted bucket may omit remaining_fraction
+ *  (proto default 0 is not serialized), so a reset time with no fraction is 0 left. */
+export function antigravityFromGroups(groups: AgyGroup[], models: string[] = []):
+    { five: Cached; week: Cached; groups: Record<string, GroupQuota> } {
   const out: Record<string, GroupQuota> = {};
   for (const g of groups ?? []) {
     const q: GroupQuota = { five: { pct: "-" }, week: { pct: "-" } };
@@ -228,7 +231,9 @@ export function antigravityFromGroups(groups: AgyGroup[]): { five: Cached; week:
     out[groupKey(g)] = q;
   }
   const worst = (q: GroupQuota) => Math.max(...[q.five.pct, q.week.pct].map((p) => (typeof p === "number" ? p : 0)));
-  const best = Object.values(out).sort((x, y) => worst(x) - worst(y))[0];
+  const keys = Object.keys(out);
+  const used = new Set(models.map((x) => modelKey(x, keys)).filter((k): k is string => !!k));
+  const best = (used.size ? [...used] : keys).map((k) => out[k]).sort((x, y) => worst(x) - worst(y))[0];
   return { five: best?.five ?? { pct: "-" }, week: best?.week ?? { pct: "-" }, groups: out };
 }
 
@@ -317,6 +322,21 @@ export function agyNote(t: { expiry?: string; refresh: boolean }, now = Date.now
     : m("login expired: run `agy models`", "login expirado: rode `agy models`");
 }
 
+/** The model ids configured for the agents that draw on quota `name` (its `quota` list, or the agent's own name). */
+export function configuredModels(cfg: Obj, name: string): string[] {
+  const out = new Set<string>();
+  const walk = (v: unknown): void => {
+    if (typeof v === "string") { const id = v.split("@")[0].trim(); if (id) out.add(id); }
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === "object") Object.values(v).forEach(walk);
+  };
+  for (const [agent, a] of Object.entries((cfg.agents ?? {}) as Record<string, Obj>)) {
+    const draws = Array.isArray(a?.quota) ? a.quota.map(String).includes(name) : agent === name;
+    if (draws) walk(a?.models);
+  }
+  return [...out];
+}
+
 /** agy's `/quota` in print mode, as JSON; rejects with agy's own message when it can't answer (no login, no agy). */
 function agyQuotaJson(): Promise<{ status?: string; response?: string; command?: { data?: { groups?: AgyGroup[] } } }> {
   return new Promise((res, rej) => execFile("agy", ["-p", "/quota", "--output-format", "json"],
@@ -340,7 +360,9 @@ export async function antigravityQuota(): Promise<QuotaLine[]> {
     const j = await agyQuotaJson();
     const raw = j.command?.data?.groups;
     if (j.status !== "SUCCESS" || !raw?.length) return stale((j.response ?? "").trim().split("\n")[0] || m("no quota groups", "sem grupos de cota"));
-    const { five, week, groups } = antigravityFromGroups(raw);
+    let models: string[] = [];
+    try { models = configuredModels(loadConfig().cfg, name); } catch { /* no config: every group counts */ }
+    const { five, week, groups } = antigravityFromGroups(raw, models);
     const buckets = mergeLearned(groups, cached.buckets);
     return [remember(name, five, week, acct, { groups, buckets }), ...groupLines(name, groups), ...modelLines(name, buckets)];
   } catch (e) {

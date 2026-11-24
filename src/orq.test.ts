@@ -16,7 +16,7 @@ import { FORMATS, parseResetIn, usesPrompt, useThrowaway } from "./agents.js";
 import { buildPrompt, diagnosisGate, recommendation, trim } from "./diagnose.js";
 import { resolveRole } from "./roles.js";
 import { hasVerdict, metrics, parseFindings, repeats, similar, slowRounds, freshRounds, mark } from "./rounds.js";
-import { agyNote, antigravityFromGroups, copilotFromUser, format, fromCache, groupKey, groupLines, humanReset, learnExhausted, mergeLearned, minimaxFromRemains, modelLines } from "./quota.js";
+import { agyNote, antigravityFromGroups, configuredModels, copilotFromUser, format, fromCache, groupKey, groupLines, humanReset, learnExhausted, mergeLearned, minimaxFromRemains, modelLines } from "./quota.js";
 import { writeAtomic } from "./fsutil.js";
 
 process.env.ORQ_LANG = "en"; // messages checked below are the English ones
@@ -784,6 +784,13 @@ test("quota: antigravity reads one pair of windows per model group; a reset time
   // the agent's own pair is its group with the most room: an exhausted group must not block the agent
   assert.equal(q.five.pct, 40); assert.equal(q.week.pct, 1);
   assert.equal(antigravityFromGroups([]).five.pct, "-");
+  // with configured models, only their groups count: the Gemini group's usage shows though Claude/GPT has more room
+  const g = antigravityFromGroups(AGY_GROUPS.map((x, i) => (i ? { ...x, buckets: [{ window: "5h", remaining_fraction: 1 }] } : x)), ["gemini-3.8-flash-high"]);
+  assert.equal(g.five.pct, 40); assert.equal(g.week.pct, 1);
+  assert.equal(antigravityFromGroups(AGY_GROUPS.map((x, i) => (i ? { ...x, buckets: [{ window: "5h", remaining_fraction: 1 }] } : x))).five.pct, 0);
+  assert.deepEqual(configuredModels({ agents: { agy: { quota: ["antigravity"], models: { impl: { simple: "gemini-3.8-flash-low",
+    heavy: ["gemini-4-argon-high@high", "claude-opus-5-5-high"] } } }, codex: { models: { impl: { simple: "gpt-5" } } } } }, "antigravity"),
+    ["gemini-3.8-flash-low", "gemini-4-argon-high", "claude-opus-5-5-high"]);
   assert.equal(groupKey({ buckets: [{ id: "3p-weekly" }] }), "3p");
 });
 
