@@ -126,16 +126,19 @@ export function modelFor(a: Obj, role: PickRole, level: string): [string, string
 }
 
 // --- per-model quota ---------------------------------------------------------------------------------------------------
-// A collector may add lines "<account>/<model> 5h=.. week=.." (antigravity: one bucket per model group). The model a pick is about
+// A collector may add lines "<account>/<model> 5h=.. week=.." or "<account>/<family>+<family> ..." (antigravity: one per model
+// group, plus a model a run found exhausted). The model a pick is about
 // to choose is checked against its own line, and an exhausted one gives way to a lighter model the agent has configured.
 const LEVEL_RANK: Record<string, number> = { simple: 0, medium: 1, default: 1, heavy: 2 };
 
 /** The quota line key for a configured model: the exact id, else the id without its -low/-medium/-high suffix, plain or
- *  as "<base>-tiered" (one bucket serves all three efforts of a tiered model). */
+ *  as "<base>-tiered" (one bucket serves all three efforts of a tiered model), else a group key ("claude+gpt") that
+ *  names the id's first word. */
 export function modelKey(model: string, keys: string[]): string | undefined {
   const id = model.split("/").pop() ?? model;
-  const base = id.replace(/-(low|medium|high)$/, "");
-  return [id, base, `${base}-tiered`].find((k) => keys.includes(k));
+  const base = id.replace(/-(low|medium|high|xhigh)$/, "");
+  const fam = id.split("-")[0].toLowerCase();
+  return [id, base, `${base}-tiered`].find((k) => keys.includes(k)) ?? keys.find((k) => k.split("+").includes(fam));
 }
 
 /** The models of an agent's role section lighter than `level`, the closest first, without repeats of `tried`. */

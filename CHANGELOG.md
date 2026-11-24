@@ -9,6 +9,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 ### Changed
 - `orq pick` weighs cost by the account, not only the agent (#105). **Economy** compares new tokens per approved delivery (the median run ÷ the share approved on the first review, or answered for reviewers) instead of per run. A new continuous **scarcity** penalty (`policy.weights.scarcity`, default 0.60) grows with each account's usage at the pace so far against its pick limit, `(min(pressure, 2) ÷ 2)²`, and an agent with several accounts takes the least scarce one. Accounts shared with the conductors (`agents.<name>.shared = true` or a list of accounts; the conductor's agent by default) count their usage × `policy.weights.shared` (default 1.5). The fixed `reserve` penalty and `policy.pacing_penalty` are gone: `orq pick` warns about them and reads `agents.<name>.reserve` as `shared`. `orq setup` suggests `shared` instead of `reserve`.
 
+### Fixed
+- Antigravity quota reads 0% no matter how much was used: Cloud Code's per-model figures (`fetchAvailableModels`) stopped moving, and the direct call leaves the Gemini group out. The collector now runs `agy -p /quota --output-format json` and lists one line per model group, with its 5h and weekly windows (`antigravity/gemini+orchestrator`, `antigravity/claude+gpt`). `orq pick` checks a model against its group's line; a model a run found exhausted still gets its own line until its reset.
+
 ## [0.11.0] — 2026-11-21
 
 ### Added
