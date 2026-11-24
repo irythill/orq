@@ -1,8 +1,8 @@
 // Quota per agent/account, from the sources in the [quota] config section:
 //   "builtin"            claude: the account's usage (Anthropic OAuth usage endpoint, same login Claude Code uses)
 //                        codex:  the rate_limits Codex writes into its latest session file
-//                        antigravity: per-model quota from Cloud Code (fetchAvailableModels), with the login agy keeps
-//                                 in the OS keyring (src/keyring.ts: Secret Service, Keychain, Credential Manager)
+//                        antigravity: quota per model group from `agy -p /quota` (the keyring login agy keeps only
+//                                 identifies the account: src/keyring.ts, Secret Service, Keychain, Credential Manager)
 //                        opencode: the MiniMax Token Plan (/v1/token_plan/remains) with $MINIMAX_API_KEY or the key
 //                                 OpenCode keeps in its auth.json; $MINIMAX_API_HOST for the China region
 //                        copilot: premium requests left this month (`gh api /copilot_internal/user`; a monthly
@@ -14,12 +14,13 @@
 //   -  = the plan has no such window (not limiting);  ? = no data (expired login, collector failed).
 //   reset5h/resetweek (epoch seconds, optional) sit between the windows and the note: whichever window's reset time
 //   the collector could read, when it's known.
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { claudeAccounts } from "./accounts.js";
+import { loadConfig, type Obj } from "./config.js";
 import { writeAtomic } from "./fsutil.js";
 import { readSecret } from "./keyring.js";
 import { stateDir } from "./paths.js";
@@ -65,8 +66,8 @@ const resetOf = (w: Cached): number | undefined => {
 
 // `acct` identifies the login behind a reading (antigravity: one login per machine, swapped by the user): a cache
 // written under another login must never stand in for this one.
-function remember(name: string, five: Cached, week: Cached, acct?: string, buckets?: Record<string, ModelBucket>): QuotaLine {
-  try { writeAtomic(cacheFile(name), JSON.stringify({ five, week, at: Date.now(), ...(acct ? { acct } : {}), ...(buckets ? { buckets } : {}) })); } catch { /* best effort */ }
+function remember(name: string, five: Cached, week: Cached, acct?: string, extra?: Record<string, unknown>): QuotaLine {
+  try { writeAtomic(cacheFile(name), JSON.stringify({ five, week, at: Date.now(), ...(acct ? { acct } : {}), ...extra })); } catch { /* best effort */ }
   const r5 = resetOf(five), rw = resetOf(week);
   return { name, five: five.pct, week: week.pct, ...(r5 !== undefined ? { reset5h: r5 } : {}), ...(rw !== undefined ? { resetWeek: rw } : {}) };
 }
@@ -192,36 +193,65 @@ export function codexQuota(): QuotaLine {
 }
 
 // --- antigravity ----------------------------------------------------------------------------------------------------
-// Antigravity's quota is per model group (Gemini Flash; Claude and GPT; the top Gemini tier has its own weekly bucket),
-// each with its own window, and `fetchAvailableModels` gives one `quotaInfo` per model id: {remainingFraction, resetTime}.
-// An exhausted bucket omits remainingFraction (proto default 0 is not serialized) but keeps resetTime, so a missing
-// fraction next to a resetTime means 0 left. Models with no resetTime (tab_*, chat_*) have no window and are skipped.
-interface ModelQuota { quotaInfo?: { remainingFraction?: number; resetTime?: string } }
-/** One model's bucket: % used, when it resets, and whether that is the weekly window (reset more than 6 h away). */
+// Antigravity meters quota per model group (Gemini; Claude and GPT), each with a 5-hour and a weekly window. Only agy's
+// own `/quota` sees every group (a direct Cloud Code call with the same login leaves the Gemini group out, and the old
+// per-model `fetchAvailableModels` figures stay at 0% used), so the collector runs `agy -p /quota` and reads its JSON.
+/** A learned bucket for one model: % used, when it resets, and whether that is the weekly window (reset more than 6 h away). */
 export interface ModelBucket { used: number; resetsAt: string; week: boolean; learned?: boolean }
+/** One model group's pair of windows. */
+export interface GroupQuota { five: Cached; week: Cached }
+interface AgyBucket { id?: string; window?: string; remaining_fraction?: number; reset_time?: string }
+interface AgyGroup { name?: string; description?: string; buckets?: AgyBucket[] }
 
-/** Per-model buckets, and the agent's own pair: its least used bucket (the agent still has quota while any
- *  model does; `orq pick` checks the model it is about to choose against that model's own bucket). */
-export function antigravityFromModels(models: Record<string, ModelQuota>, now = Date.now()):
-    { five: Cached; week: Cached; buckets: Record<string, ModelBucket> } {
-  const five: Cached = { pct: "-" }, week: Cached = { pct: "-" };
-  const buckets: Record<string, ModelBucket> = {};
-  for (const [id, { quotaInfo: q } = {}] of Object.entries(models ?? {})) {
-    if (!q?.resetTime) continue;
-    const at = Date.parse(q.resetTime); if (Number.isNaN(at)) continue;
-    const left = typeof q.remainingFraction === "number" ? q.remainingFraction : 0;
-    const used = Math.min(100, Math.max(0, Math.round((1 - left) * 100)));
-    const isWeek = at - now > 6 * 3600_000;
-    buckets[id] = { used, resetsAt: q.resetTime, week: isWeek };
-  }
-  // The agent's pair is its least used bucket overall, in that bucket's window (the other stays "-"): a weekly cap on
-  // one model must not read as the whole agent being out.
-  const best = Object.values(buckets).sort((x, y) => x.used - y.used || Number(x.week) - Number(y.week))[0];
-  if (best) Object.assign(best.week ? week : five, { pct: best.used, resetsAt: best.resetsAt });
-  return { five, week, buckets };
+/** A group's line key: the model families it lists ("Models within this group: Claude Opus 5.5, GPT-OSS 120B" ->
+ *  "claude+gpt"), so `modelKey` maps a model id to it by its first word; else the bucket id's prefix. */
+export function groupKey(g: AgyGroup): string {
+  const list = /:\s*(.+)$/.exec(g.description ?? "")?.[1];
+  const fams = [...new Set((list ?? "").split(",").map((x) => x.trim().split(/[\s-]/)[0].toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean))];
+  if (fams.length) return fams.join("+");
+  const id = g.buckets?.find((b) => b.id)?.id;
+  return id ? id.replace(/-(weekly|5h)$/, "") : (g.name ?? "group").toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
-/** One quota line per model, named "<agent>/<model>", with its bucket in the 5h or the week slot and "-" in the other. */
+/** The groups of agy's `/quota` JSON (`command.data.groups`), and the agent's own pair: of the groups its configured
+ *  `models` fall in (all groups when none map), the one with the most room left (the agent still has quota while any
+ *  of them does; `orq pick` checks a model against its own group). An exhausted bucket may omit remaining_fraction
+ *  (proto default 0 is not serialized), so a reset time with no fraction is 0 left. */
+export function antigravityFromGroups(groups: AgyGroup[], models: string[] = []):
+    { five: Cached; week: Cached; groups: Record<string, GroupQuota> } {
+  const out: Record<string, GroupQuota> = {};
+  for (const g of groups ?? []) {
+    const q: GroupQuota = { five: { pct: "-" }, week: { pct: "-" } };
+    for (const b of g.buckets ?? []) {
+      const slot = b.window === "5h" ? "five" : b.window === "weekly" ? "week" : undefined;
+      if (!slot) continue;
+      const left = typeof b.remaining_fraction === "number" ? b.remaining_fraction : b.reset_time ? 0 : 1;
+      q[slot] = { pct: Math.min(100, Math.max(0, Math.round((1 - left) * 100))), ...(b.reset_time ? { resetsAt: b.reset_time } : {}) };
+    }
+    out[groupKey(g)] = q;
+  }
+  const worst = (q: GroupQuota) => Math.max(...[q.five.pct, q.week.pct].map((p) => (typeof p === "number" ? p : 0)));
+  const keys = Object.keys(out);
+  const used = new Set(models.map((x) => modelKey(x, keys)).filter((k): k is string => !!k));
+  const best = (used.size ? [...used] : keys).map((k) => out[k]).sort((x, y) => worst(x) - worst(y))[0];
+  return { five: best?.five ?? { pct: "-" }, week: best?.week ?? { pct: "-" }, groups: out };
+}
+
+/** One quota line per group, named "<agent>/<group>"; a window whose reset has passed since the reading reads 0%. */
+export function groupLines(name: string, groups: Record<string, GroupQuota>, now = Date.now(), note?: string): QuotaLine[] {
+  const win = (w: Cached): [Pct, number | undefined] => {
+    const at = w.resetsAt ? Date.parse(w.resetsAt) : NaN;
+    if (Number.isNaN(at)) return [w.pct, undefined];
+    return at > now ? [w.pct, Math.floor(at / 1000)] : [0, undefined];
+  };
+  return Object.entries(groups).map(([key, q]) => {
+    const [five, r5] = win(q.five), [week, rw] = win(q.week);
+    return { name: `${name}/${key}`, five, week, ...(r5 !== undefined ? { reset5h: r5 } : {}),
+      ...(rw !== undefined ? { resetWeek: rw } : {}), ...(note ? { note } : {}) };
+  });
+}
+
+/** One quota line per learned model bucket, named "<agent>/<model>", in the 5h or the week slot and "-" in the other. */
 export function modelLines(name: string, buckets: Record<string, ModelBucket>, now = Date.now(), note?: string): QuotaLine[] {
   const out: QuotaLine[] = [];
   for (const [id, b] of Object.entries(buckets)) {
@@ -234,14 +264,15 @@ export function modelLines(name: string, buckets: Record<string, ModelBucket>, n
   return out;
 }
 
-/** Learned exhausted buckets (from a run that hit the limit) outlive API readings until their reset, unless the API
- *  returns that model with something left. The API's own bucket for the model stands in when it also says exhausted. */
-export function mergeLearned(api: Record<string, ModelBucket>, learned: Record<string, ModelBucket>, now = Date.now()): Record<string, ModelBucket> {
-  const out = { ...api };
+/** Learned exhausted buckets (from a run that hit the limit) that still stand: until their reset, unless the model's
+ *  group now has room left in that window. */
+export function mergeLearned(groups: Record<string, GroupQuota>, learned: Record<string, ModelBucket>, now = Date.now()): Record<string, ModelBucket> {
+  const out: Record<string, ModelBucket> = {};
   for (const [id, b] of Object.entries(learned)) {
     if (!b.learned || Date.parse(b.resetsAt) <= now) continue;
-    const key = modelKey(id, Object.keys(api));
-    if (key && api[key].used < 100) continue; // the API says it has quota again
+    const key = modelKey(id, Object.keys(groups));
+    const pct = key ? groups[key][b.week ? "week" : "five"].pct : undefined;
+    if (typeof pct === "number" && pct < 100) continue; // the group has quota again
     out[id] = b;
   }
   return out;
@@ -261,12 +292,12 @@ export function learnExhausted(name: string, model: string, secs: number, acct?:
   return b;
 }
 
-/** The per-model buckets of the last good reading, when it was this login's. */
-function cachedBuckets(name: string, acct?: string): Record<string, ModelBucket> {
+/** The groups and learned model buckets of the last good reading, when it was this login's. */
+function cachedAgy(name: string, acct?: string): { groups: Record<string, GroupQuota>; buckets: Record<string, ModelBucket> } {
   try {
-    const c = JSON.parse(readFileSync(cacheFile(name), "utf8")) as { buckets?: Record<string, ModelBucket>; acct?: string };
-    return acct !== undefined && c.acct !== acct ? {} : c.buckets ?? {};
-  } catch { return {}; }
+    const c = JSON.parse(readFileSync(cacheFile(name), "utf8")) as { groups?: Record<string, GroupQuota>; buckets?: Record<string, ModelBucket>; acct?: string };
+    return acct !== undefined && c.acct !== acct ? { groups: {}, buckets: {} } : { groups: c.groups ?? {}, buckets: c.buckets ?? {} };
+  } catch { return { groups: {}, buckets: {} }; }
 }
 
 export function agyToken(): { access?: string; expiry?: string; refresh: boolean; acct?: string } | undefined {
@@ -291,32 +322,49 @@ export function agyNote(t: { expiry?: string; refresh: boolean }, now = Date.now
     : m("login expired: run `agy models`", "login expirado: rode `agy models`");
 }
 
+/** The model ids configured for the agents that draw on quota `name` (its `quota` list, or the agent's own name). */
+export function configuredModels(cfg: Obj, name: string): string[] {
+  const out = new Set<string>();
+  const walk = (v: unknown): void => {
+    if (typeof v === "string") { const id = v.split("@")[0].trim(); if (id) out.add(id); }
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === "object") Object.values(v).forEach(walk);
+  };
+  for (const [agent, a] of Object.entries((cfg.agents ?? {}) as Record<string, Obj>)) {
+    const draws = Array.isArray(a?.quota) ? a.quota.map(String).includes(name) : agent === name;
+    if (draws) walk(a?.models);
+  }
+  return [...out];
+}
+
+/** agy's `/quota` in print mode, as JSON; rejects with agy's own message when it can't answer (no login, no agy). */
+function agyQuotaJson(): Promise<{ status?: string; response?: string; command?: { data?: { groups?: AgyGroup[] } } }> {
+  return new Promise((res, rej) => execFile("agy", ["-p", "/quota", "--output-format", "json"],
+    { encoding: "utf8", timeout: 30_000, cwd: tmpdir(), windowsHide: true }, (err, out) => {
+      try { return res(JSON.parse(out)); } catch { /* not JSON: fall through to the error */ }
+      rej(new Error((err?.message ?? out).trim().split("\n")[0] || "no output"));
+    }));
+}
+
 export async function antigravityQuota(): Promise<QuotaLine[]> {
   const name = "antigravity";
-  const t = agyToken();
-  if (!t?.access) return [noData(name, m("no agy login in the keyring", "sem login do agy no chaveiro"))];
-  // Never refresh it here (that is agy's login). The access token lives 1h and agy renews it only when it runs, so a
-  // passed expiry with a refresh token is just idle (a note, not an expired login); without one, "run agy once".
-  const expired = m("login expired: run `agy models`", "login expirado: rode `agy models`");
+  // The keyring login only identifies the account (agy swaps logins per machine); agy reads and renews it itself.
+  const acct = agyToken()?.acct;
+  const cached = cachedAgy(name, acct);
   const stale = (why: string): QuotaLine[] => {
-    const line = fromCache(name, why, undefined, t.acct);
-    return [line, ...modelLines(name, cachedBuckets(name, t.acct), Date.now(), line.note)];
+    const line = fromCache(name, why, undefined, acct);
+    return [line, ...groupLines(name, cached.groups, Date.now(), line.note),
+      ...modelLines(name, mergeLearned(cached.groups, cached.buckets), Date.now(), line.note)];
   };
-  const note = agyNote(t);
-  if (note) return stale(note);
   try {
-    const r = await fetch("https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", {
-      method: "POST", body: "{}",
-      // The endpoint answers 403 without a client User-Agent.
-      headers: { Authorization: `Bearer ${t.access}`, "Content-Type": "application/json", "User-Agent": "antigravity" },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (r.status === 401) return stale(expired);
-    if (!r.ok) return stale(`HTTP ${r.status}`);
-    const j = await r.json() as { models?: Record<string, ModelQuota> };
-    const { five, week, buckets: api } = antigravityFromModels(j.models ?? {});
-    const buckets = mergeLearned(api, cachedBuckets(name, t.acct));
-    return [remember(name, five, week, t.acct, buckets), ...modelLines(name, buckets)];
+    const j = await agyQuotaJson();
+    const raw = j.command?.data?.groups;
+    if (j.status !== "SUCCESS" || !raw?.length) return stale((j.response ?? "").trim().split("\n")[0] || m("no quota groups", "sem grupos de cota"));
+    let models: string[] = [];
+    try { models = configuredModels(loadConfig().cfg, name); } catch { /* no config: every group counts */ }
+    const { five, week, groups } = antigravityFromGroups(raw, models);
+    const buckets = mergeLearned(groups, cached.buckets);
+    return [remember(name, five, week, acct, { groups, buckets }), ...groupLines(name, groups), ...modelLines(name, buckets)];
   } catch (e) {
     return stale(m("collector failed", "coletor falhou") + `: ${(e as Error).message}`);
   }
