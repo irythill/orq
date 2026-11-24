@@ -6,6 +6,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-11-24
+
 ### Alterado
 - O `orq pick` pesa o custo pela conta, não só pelo agente (#105). **Economia** compara tokens novos por entrega aprovada (a mediana por execução ÷ a fração aprovada na primeira revisão, ou respondida para revisores) em vez de por execução. Uma nova penalidade contínua de **escassez** (`policy.weights.scarcity`, padrão 0,60) cresce com o uso de cada conta no ritmo até agora contra o limite do pick, `(min(pressão, 2) ÷ 2)²`, e um agente com várias contas fica com a menos escassa. Contas divididas com os conductors (`agents.<nome>.shared = true` ou uma lista de contas; por padrão o agente do conductor) contam o uso × `policy.weights.shared` (padrão 1,5). A penalidade fixa de `reserve` e o `policy.pacing_penalty` saíram: o `orq pick` avisa sobre eles e lê `agents.<nome>.reserve` como `shared`. O `orq setup` sugere `shared` em vez de `reserve`.
 
