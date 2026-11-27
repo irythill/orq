@@ -3,19 +3,21 @@
 //               for an agent the user didn't list.
 //   auto role:  every (agent, model) pair that passes is scored (a level may list several models):
 //     quality * delivery + tokens * economy + speed * quickness − rotation * (picks in the last `window`)
-//     − reserve (agents with reserve = true) + prefer (a watchdog from the opinion pool) + explore (fewer than `min_samples` runs, fading with n, none after
+//     − scarcity * account scarcity + prefer (a watchdog from the opinion pool) + explore (fewer than `min_samples` runs, fading with n, none after
 //     `explore_streak` picks in a row) + looping * loop-free + hallucination * grounded (1 − the rates orq stats measures:
 //     looping for impl/fix/worker on its impl and fix rows; hallucination also for review/opinion/watchdog).
-//     Each axis is (prior·k + observed·n)/(k + n), k = min_samples.
+//     Each axis is (prior·k + observed·n)/(k + n), k = min_samples. Economy compares new tokens per approved delivery
+//     (median per run ÷ approval rate; answered rate for roles without a verdict), not per run.
 // Filters: --exclude-agent, orq block, a CLI that doesn't resolve on PATH, nobody reviews their own code (unless no other agent can),
 // a watchdog is neither the implementer nor the issue's reviewer (unless no other agent can), cross-vendor rule, a model for the role/level,
 // quota under the limits: policy.quota_week (95) on the weekly window, and on the 5h one policy.quota_5h per level
 // (simple 90, medium 85, heavy 80): a heavy task needs more room left to finish.
 // An agent's `headroom` (points) lowers both limits for it: that share of its accounts stays for the conductors.
 // An account whose quota reading says the login expired is skipped, with the fix command in the note.
-// Pacing: an account whose usage, at the pace so far in a window (used ÷ elapsed share), projects past
-// that window's pick limit (the filter's) at its reset is passed over for another account under the limit when the agent has several,
-// and otherwise loses policy.pacing_penalty (default 0.3, 0 = off) of score — soft, never a drop.
+// Scarcity: per account, pressure = the highest of (usage at the pace so far, used ÷ elapsed share, or the reading when it
+// can't be projected) ÷ that window's pick limit; × weights.shared on accounts shared with the conductors (agents.<name>.shared,
+// true or a list of accounts; default: the conductor's agent). scarcity = (min(pressure, 2) ÷ 2)², so it stays near 0 for
+// a quiet account and reaches 1 at twice the limit. An agent with several accounts takes the least scarce one.
 import { agentDef, baseCommit, usesPrompt } from "./agents.js";
 import type { Obj } from "./config.js";
 import { m } from "./i18n.js";
@@ -41,7 +43,7 @@ export interface PickInput {
 export interface Candidate {
   agent: string; model: string; effort?: string; acct?: string; score: number; why: string;
 }
-export interface PickResult { mode: "fixed" | "auto"; best?: Candidate; cands: Candidate[]; notes: string[] }
+export interface PickResult { mode: "fixed" | "auto"; best?: Candidate; cands: Candidate[]; notes: string[]; warnings?: string[] }
 
 /** "<name> 5h=NN% week=NN% [note]" lines → QuotaMap (same reading as the old orq-pick). */
 export function parseQuota(text: string): QuotaMap {
@@ -124,16 +126,19 @@ export function modelFor(a: Obj, role: PickRole, level: string): [string, string
 }
 
 // --- per-model quota ---------------------------------------------------------------------------------------------------
-// A collector may add lines "<account>/<model> 5h=.. week=.." (antigravity: one bucket per model group). The model a pick is about
+// A collector may add lines "<account>/<model> 5h=.. week=.." or "<account>/<family>+<family> ..." (antigravity: one per model
+// group, plus a model a run found exhausted). The model a pick is about
 // to choose is checked against its own line, and an exhausted one gives way to a lighter model the agent has configured.
 const LEVEL_RANK: Record<string, number> = { simple: 0, medium: 1, default: 1, heavy: 2 };
 
 /** The quota line key for a configured model: the exact id, else the id without its -low/-medium/-high suffix, plain or
- *  as "<base>-tiered" (one bucket serves all three efforts of a tiered model). */
+ *  as "<base>-tiered" (one bucket serves all three efforts of a tiered model), else a group key ("claude+gpt") that
+ *  names the id's first word. */
 export function modelKey(model: string, keys: string[]): string | undefined {
   const id = model.split("/").pop() ?? model;
-  const base = id.replace(/-(low|medium|high)$/, "");
-  return [id, base, `${base}-tiered`].find((k) => keys.includes(k));
+  const base = id.replace(/-(low|medium|high|xhigh)$/, "");
+  const fam = id.split("-")[0].toLowerCase();
+  return [id, base, `${base}-tiered`].find((k) => keys.includes(k)) ?? keys.find((k) => k.split("+").includes(fam));
 }
 
 /** The models of an agent's role section lighter than `level`, the closest first, without repeats of `tried`. */
@@ -152,8 +157,8 @@ export function lighterModels(a: Obj, role: PickRole, level: string, tried: stri
   return out;
 }
 
-const WEIGHTS = { quality: 0.4, tokens: 0.45, speed: 0.15, looping: 0.2, hallucination: 0.2, rotation: 0.2, reserve: 0.3, prefer: 0.3,
-  explore: 0.1, explore_streak: 2, min_samples: 8, window: 6 };
+const WEIGHTS = { quality: 0.4, tokens: 0.45, speed: 0.15, looping: 0.2, hallucination: 0.2, rotation: 0.2, scarcity: 0.6, shared: 1.5,
+  prefer: 0.3, explore: 0.1, explore_streak: 2, min_samples: 8, window: 6 };
 export const weights = (cfg: Obj) =>
   ({ ...WEIGHTS, ...((((cfg.policy ?? {}) as Obj).weights ?? {}) as Partial<typeof WEIGHTS>) });
 
@@ -167,13 +172,32 @@ function takesPrompt(cfg: Obj, name: string): boolean {
   try { return usesPrompt(agentDef(cfg, name)); } catch { return false; }
 }
 
+/** Retired config keys: still read where safe (reserve → shared), otherwise ignored, with a warning either way. */
+export function legacyWarnings(cfg: Obj): string[] {
+  const out: string[] = [];
+  const pol = (cfg.policy ?? {}) as Obj;
+  if (pol.pacing_penalty !== undefined)
+    out.push(m("policy.pacing_penalty is ignored: account pace is now part of weights.scarcity (0 = off)",
+      "policy.pacing_penalty é ignorado: o ritmo da conta agora entra em weights.scarcity (0 = desliga)"));
+  if ((pol.weights as Obj | undefined)?.reserve !== undefined)
+    out.push(m("policy.weights.reserve is ignored: use weights.scarcity and weights.shared",
+      "policy.weights.reserve é ignorado: use weights.scarcity e weights.shared"));
+  for (const [n, a] of Object.entries((cfg.agents ?? {}) as Record<string, Obj>))
+    if (a.reserve !== undefined && a.shared === undefined)
+      out.push(m(`agents.${n}.reserve is deprecated: read as shared = ${a.reserve}`,
+        `agents.${n}.reserve está obsoleto: lido como shared = ${a.reserve}`));
+  return out;
+}
+
 export function pick(inp: PickInput): PickResult {
-  if (inp.role !== "watchdog" || !inp.reviewAgents?.size) return pickOnce(inp);
+  const warnings = legacyWarnings(inp.cfg);
+  const done = (r: PickResult) => (warnings.length ? { ...r, warnings } : r);
+  if (inp.role !== "watchdog" || !inp.reviewAgents?.size) return done(pickOnce(inp));
   // The issue's reviewers are out only while someone else passes every filter (quota, blocks, --exclude-agent included).
   const first = pickOnce(inp);
-  if (first.best) return first;
+  if (first.best) return done(first);
   const again = pickOnce({ ...inp, reviewAgents: undefined });
-  return again.best ? again : first;
+  return done(again.best ? again : first);
 }
 
 const LOOP_ROLES = new Set<PickRole>(["impl", "fix", "worker"]);
@@ -188,12 +212,11 @@ function pickOnce(inp: PickInput): PickResult {
   const [base5, baseWeek] = limitsFor(pol, level);
   const w = weights(cfg);
   const now = inp.now ?? Date.now() / 1000;
-  const penalty = Number(pol.pacing_penalty ?? 0.3);
   const res = resolveRole(cfg, role);
   const names = res.mode === "fixed" ? res.order : res.pool;
   const notes: string[] = [];
   const out = (n: string, why: string) => { notes.push(`${n}: ${why}`); };
-  const pass: (Omit<Candidate, "score" | "why"> & { a: Obj; st?: Row; judged: Row[]; pace?: number; hot?: boolean })[] = [];
+  const pass: (Omit<Candidate, "score" | "why"> & { a: Obj; st?: Row; judged: Row[]; scarcity: number; pace?: number; shared: boolean })[] = [];
 
   // Only with someone else to ask: a single agent must still be able to review.
   const someoneElse = names.some((n) => n !== inp.implAgent && agents[n]);
@@ -256,22 +279,26 @@ function pickOnce(inp: PickInput): PickResult {
         + (headroom ? ` (headroom ${headroom})` : "") + ` (${detail})`);
       continue;
     }
-    const paceOf = (n: string) => {
+    const sharedSpec = a.shared ?? a.reserve ?? name === conductor;
+    const isShared = (n: string) => (Array.isArray(sharedSpec) ? sharedSpec.map(String).includes(n) : Boolean(sharedSpec));
+    const scarcityOf = (n: string, v: number) => {
       const q = inp.windows?.[n];
       const p5 = projected(q?.five, q?.resetFive, (q?.spanFive ? q.spanFive * 60 : WINDOW_S.five), now);
       const pw = projected(q?.week, q?.resetWeek, (q?.spanWeek ? q.spanWeek * 60 : WINDOW_S.week), now);
-      const paces = [p5, pw].filter((x): x is number => x !== undefined);
-      // Hot: past the same per-window limit the filter uses (5h by level, week), headroom included, when pacing is on.
-      return { pace: paces.length ? Math.max(...paces) : undefined,
-        hot: penalty > 0 && ((p5 !== undefined && p5 > limit5) || (pw !== undefined && pw > limitWeek)) };
+      const five = p5 ?? (q ? q.five : v), week = pw ?? (q ? q.week : v);
+      const ratios = [[five, limit5], [week, limitWeek]].filter(([x, l]) => x !== undefined && x >= 0 && l! > 0).map(([x, l]) => x! / l!);
+      const pressure = (ratios.length ? Math.max(...ratios) : 0) * (isShared(n) ? w.shared : 1);
+      return { scarcity: (Math.min(pressure, 2) / 2) ** 2, pace: Math.max(p5 ?? 0, pw ?? 0) || undefined, shared: isShared(n) };
     };
-    // The chosen account's per-model buckets: an exhausted candidate drops out; with none left, a lighter model of the agent.
-    let mfx = mfs;
-    const acc0 = usable.length ? [...usable].sort((x, y) => x[1]! - y[1]!)[0][0] : undefined;
-    const mkeys = acc0 ? Object.keys(inp.windows ?? {}).filter((k) => k.startsWith(`${acc0}/`)).map((k) => k.slice(acc0.length + 1)) : [];
-    if (acc0 && mkeys.length) {
+    const ranked = usable.map(([n, v]) => ({ n, v: v!, ...scarcityOf(n, v!) }))
+      .sort((x, y) => (w.scarcity > 0 ? x.scarcity - y.scarcity : 0) || x.v - y.v);
+    // Per-model buckets: an exhausted candidate drops out; with none left, a lighter model of the agent; with none of those,
+    // the next account in scarcity order.
+    const bucketsOf = (acc: string) => {
+      const mkeys = Object.keys(inp.windows ?? {}).filter((k) => k.startsWith(`${acc}/`)).map((k) => k.slice(acc.length + 1));
+      if (!mkeys.length) return { found: mfs, skipped: [] as string[] };
       const over = (model: string) => {
-        const k = modelKey(model, mkeys), q = k ? inp.windows?.[`${acc0}/${k}`] : undefined;
+        const k = modelKey(model, mkeys), q = k ? inp.windows?.[`${acc}/${k}`] : undefined;
         if (!q) return undefined;
         const five = (q.five ?? -1) >= limit5, week = (q.week ?? -1) >= limitWeek;
         if (!five && !week) return undefined;
@@ -288,13 +315,17 @@ function pickOnce(inp: PickInput): PickResult {
           skipped.push(why);
         }
       }
-      if (!found.length) { out(name, `${m("every model over its quota", "todo modelo acima da cota")}: ${skipped.join(", ")}`); continue; }
-      if (skipped.length) out(name, `${m("quota exhausted", "cota esgotada")}: ${skipped.join(", ")}; ${m("using", "usando")} ${found.map((c) => c[0]).join(", ")}`);
-      mfx = found;
+      return { found, skipped };
+    };
+    let mfx = mfs, chosen: (typeof ranked)[number] | undefined;
+    const exhausted: string[] = [];
+    for (const r of ranked) {
+      const { found, skipped } = bucketsOf(r.n);
+      exhausted.push(...skipped.map((x) => (ranked.length > 1 ? `${r.n}: ${x}` : x)));
+      if (found.length) { chosen = r; mfx = found; break; }
     }
-    const ranked = usable.map(([n, v]) => ({ n, v: v!, ...paceOf(n) }))
-      .sort((x, y) => Number(x.hot) - Number(y.hot) || x.v - y.v);
-    const chosen = ranked[0];
+    if (ranked.length && !chosen) { out(name, `${m("every model over its quota", "todo modelo acima da cota")}: ${exhausted.join(", ")}`); continue; }
+    if (exhausted.length) out(name, `${m("quota exhausted", "cota esgotada")}: ${exhausted.join(", ")}; ${m("using", "usando")} ${mfx.map((c) => c[0]).join(", ")}`);
     const acct = qn.length > 1 ? chosen?.n : undefined;
     const statRole = role === "fix" || role === "worker" ? "impl" : role;
     // One candidate per (agent, model) pair, each scored on its own stats row; a fixed role takes the first model.
@@ -303,7 +334,8 @@ function pickOnce(inp: PickInput): PickResult {
       const st = stOf(statRole) ?? (role === "watchdog" ? stOf("review") : undefined); // no watchdog runs yet: its review record
       // Looping/hallucination of an implementer sit on its impl and fix rows (a fix round reuses the impl prefix).
       const judged = (statRole === "impl" ? [st, stOf("fix")] : [st]).filter((r): r is Row => Boolean(r));
-      pass.push({ agent: name, model, effort, acct, a, st, judged, pace: chosen?.pace, hot: Boolean(chosen?.hot) });
+      pass.push({ agent: name, model, effort, acct, a, st, judged, scarcity: chosen?.scarcity ?? 0, pace: chosen?.pace,
+        shared: chosen ? chosen.shared : isShared(name) });
     }
     if (res.mode === "fixed") break; // the first that passes wins
   }
@@ -327,18 +359,22 @@ function pickOnce(inp: PickInput): PickResult {
     const use = solid.length ? solid : vals;
     return use.length ? Math.min(...use.map((x) => x.v)) : undefined;
   };
-  const refTok = best(pass.filter((c) => c.st?.new).map((c) => ({ v: c.st!.new!, solid: !few(c.st) })));
+  // Delivery: implementers by first-review approval once 3 verdicts exist, everyone else by answered runs.
+  const approvedOf = (st?: Row) => role === "impl" && st?.approved != null && st.n_appr >= 3;
+  const successOf = (st?: Row) => (st ? (approvedOf(st) ? st.approved! : st.ok) / 100 : undefined);
+  // New tokens per approved delivery: the median run ÷ the share of runs that deliver (floored, so 0% isn't infinite).
+  const costOf = (st?: Row) => (st?.new ? st.new / Math.max(successOf(st)!, 0.1) : undefined);
+  const refTok = best(pass.filter((c) => costOf(c.st)).map((c) => ({ v: costOf(c.st)!, solid: !few(c.st) })));
   const refMin = best(pass.filter((c) => c.st?.min).map((c) => ({ v: Math.max(c.st!.min!, 0.1), solid: !few(c.st) })));
   const axis = (label: string, prior: number, obs: number | undefined, n: number) => {
     const v = blend(prior, obs, n);
     return { v, txt: `${label}=${v.toFixed(2)}` + (obs === undefined ? "" : `(${prior.toFixed(2)}→${obs.toFixed(2)})`) };
   };
   const cands: Candidate[] = pass.map((c) => {
-    const prior = Number(c.a.prior ?? 0.6), n = c.st?.n ?? 0, reserve = Boolean(c.a.reserve ?? c.agent === conductor);
-    const appr = role === "impl" && c.st?.approved != null && c.st.n_appr >= 3;
-    const deliv = appr ? c.st!.approved! / 100 : c.st ? c.st.ok / 100 : undefined;
-    const d = axis(m("delivery", "entrega"), prior, deliv, appr ? c.st!.n_appr : n);
-    const t = axis(m("economy", "economia"), prior, c.st?.new && refTok ? Math.min(1, refTok / c.st.new) : undefined, n);
+    const prior = Number(c.a.prior ?? 0.6), n = c.st?.n ?? 0;
+    const appr = approvedOf(c.st), cost = costOf(c.st);
+    const d = axis(m("delivery", "entrega"), prior, successOf(c.st), appr ? c.st!.n_appr : n);
+    const t = axis(m("economy", "economia"), prior, cost && refTok ? Math.min(1, refTok / cost) : undefined, n);
     const s = axis(m("speed", "rapidez"), prior, c.st?.min && refMin ? Math.min(1, refMin / Math.max(c.st.min, 0.1)) : undefined, n);
     // Share of judged runs without the failure, over the rows that measured it.
     const clean = (key: "loop" | "halluc") => {
@@ -355,15 +391,16 @@ function pickOnce(inp: PickInput): PickResult {
     for (let i = inp.recent.length - 1; i >= 0 && same(inp.recent[i]); i--) streak++;
     const capped = few(c.st) && streak >= w.explore_streak;
     const explore = few(c.st) && !capped ? w.explore * (k - n) / k : 0;
-    const hot = Boolean(c.hot) && penalty > 0;
+    const scarce = w.scarcity * c.scarcity;
+    const tags = [c.pace ? `${m("pace", "ritmo")}=${Math.round(c.pace)}%` : "", c.shared ? m("shared", "compartilhada") : ""]
+      .filter(Boolean).join(",");
     const preferred = Boolean(res.mode === "auto" && res.prefer?.includes(c.agent)) && w.prefer > 0;
     const score = w.quality * d.v + w.tokens * t.v + w.speed * s.v + w.looping * (lp?.v ?? 0) + w.hallucination * (hl?.v ?? 0)
       - w.rotation * used
-      - (reserve ? w.reserve : 0) + (preferred ? w.prefer : 0) + explore - (hot ? penalty : 0);
+      - scarce + (preferred ? w.prefer : 0) + explore;
     const why = `${d.txt} ${t.txt} ${s.txt} ${lp ? `${lp.txt} ` : ""}${hl ? `${hl.txt} ` : ""}${m("rotation", "rodízio")}=-${used} `
-      + (reserve ? m("reserve ", "reserva ") : "")
+      + (scarce >= 0.005 || c.shared ? `${m("scarcity", "escassez")}=-${scarce.toFixed(2)}${tags ? `(${tags})` : ""} ` : "")
       + (preferred ? `${m("opinion", "opinião")}=+${w.prefer.toFixed(2)} ` : "")
-      + (hot ? `${m("pace", "ritmo")}=${Math.round(c.pace!)}%→-${penalty} ` : "")
       + (explore ? `${m("explore", "explorar")}=+${explore.toFixed(2)} ` : "")
       + (capped ? `${m("explore capped", "exploração limitada")}(${streak}x) ` : "")
       + (few(c.st) ? `${m("few samples", "poucos dados")}(n=${n})` : `n=${n}`);

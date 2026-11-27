@@ -66,13 +66,40 @@ export function problems(version, files) {
   return out;
 }
 
-/** The release files with `version` applied: package and lock versions, and a `## [<version>] — <date>` heading under
- *  [Unreleased] in each changelog (left alone when it already has one). */
+/** "### Added\n- a\n\n### Fixed\n- b" → [["Added", "- a"], ["Fixed", "- b"]] (text before the first ### is kept under ""). */
+const sections = (body) => {
+  const [pre, ...parts] = body.split(/^### /m), out = [];
+  if (/\S/.test(pre)) out.push(["", pre.trim()]);
+  for (const part of parts) {
+    const nl = part.indexOf("\n");
+    out.push(nl < 0 ? [part.trim(), ""] : [part.slice(0, nl).trim(), part.slice(nl + 1).trim()]);
+  }
+  return out;
+};
+
+/** Move [Unreleased] into `## [<version>]`, creating it under [Unreleased] when missing. When the version already has
+ *  a section (a release prepared but not published, and more landed since), the entries are merged into it, heading by
+ *  heading (new entries first), and its date becomes `date`. */
+export function intoVersion(text, version, date) {
+  const u = /^## \[Unreleased\]\n([\s\S]*?)(?=^## \[)/m.exec(text);
+  if (!text.includes(`## [${version}]`)) return text.replace(/^## \[Unreleased\]\n/m, `## [Unreleased]\n\n## [${version}] — ${date}\n`);
+  if (!u || !/\S/.test(u[1])) return text;
+  const esc = version.replace(/\./g, "\\.");
+  const v = new RegExp(`^## \\[${esc}\\][^\\n]*\\n([\\s\\S]*?)(?=^## \\[|(?![\\s\\S]))`, "m").exec(text);
+  const merged = new Map(sections(u[1]));
+  for (const [h, body] of sections(v[1])) merged.set(h, merged.has(h) ? `${merged.get(h)}\n${body}` : body);
+  const out = [...merged].map(([h, body]) => (h ? `### ${h}\n${body}` : body)).join("\n\n");
+  return text.slice(0, u.index) + `## [Unreleased]\n\n` + text.slice(u.index + u[0].length, v.index) +
+    `## [${version}] — ${date}\n\n${out}\n\n` + text.slice(v.index + v[0].length);
+}
+
+/** The release files with `version` applied: package and lock versions, and [Unreleased] moved under
+ *  `## [<version>] — <date>` in each changelog (see intoVersion). */
 export function bumped(version, date, files) {
   const json = (o) => JSON.stringify(o, null, 2) + "\n";
   const lock = { ...files.lock, version };
   if (lock.packages?.[""]) lock.packages = { ...lock.packages, "": { ...lock.packages[""], version } };
-  const log = (t) => (t.includes(`## [${version}]`) ? t : t.replace(/^## \[Unreleased\]\n/m, `## [Unreleased]\n\n## [${version}] — ${date}\n`));
+  const log = (t) => intoVersion(t, version, date);
   return { pkg: json({ ...files.pkg, version }), lock: json(lock), en: log(files.en), pt: log(files.pt) };
 }
 

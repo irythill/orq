@@ -113,9 +113,10 @@ escolhido: `SKILL.md` + `CLAUDE.md` (Claude Code), `AGENTS.md` (Codex, OpenCode)
 
 ```toml
 [machine]
-agent_mem_max = "4G"       # padrão para todo agente; "off" desliga
+agent_mem_max = "5G"       # padrão para todo agente; "off" desliga; ferramentas node recebem heap deste valor - 1 GB
 test_mem_max  = "6G"
 mem_enforce   = "auto"     # auto | kernel | watchdog | off
+agent_priority = "low"     # low | idle | normal: agentes cedem CPU/disco ao desktop quando a máquina está ocupada
 tui_idle_close_min = 30    # minutos que um agente -T que terminou espera por follow-up antes de fechar; 0 = nunca
 [agents.codex]
 mem_max = "6G"             # sobrescreve só para este agente
@@ -164,7 +165,7 @@ implementa ou revisa?", o setup pergunta o que a pessoa sabe responder e aplica 
 
 | Situação | Sugestão |
 |---|---|
-| Divide quota com o conductor | `reserve` (só quando os outros não cabem) |
+| Divide quota com o conductor | `shared` (a escassez pesa mais) |
 | Plano pequeno ou franquia mensal | só `opinion` (tarefas pesadas, ou impl e review discordam) |
 | Pague-por-uso | pool de `reviewer` (poucos tokens), não `primary` por padrão |
 | Sem shell livre no modo headless (ex.: agy) | só `reviewer`, com o diff anexado |

@@ -16,7 +16,7 @@ tui_idle_close_min = 30   # minutes a finished -T agent waits for a follow-up be
 #   quota    name(s) in `agent-quota` output whose quota limits this agent
 #   models.<role>.<level>  "model[@effort]"; level = simple | medium | heavy | default
 #   prior    starting score (0–1) while the history has few runs
-#   reserve  true = only when the others don't fit (e.g. it shares quota with the conductor)
+#   shared   true (or a list of accounts) = shares quota with the conductor: its scarcity weighs × weights.shared
 # ---------------------------------------------------------------------------------------------------------------
 [agents.codex]
 vendor = "openai"
@@ -36,7 +36,7 @@ vendor = "anthropic"
 roles  = ["impl", "fix", "review"]
 quota  = ["work", "personal"]   # accounts from `claude-accounts`; the least used one is suggested
 prior  = 0.8
-reserve = true            # shares quota with the conductors (Opus): only when the others don't fit
+shared = true             # shares quota with the conductors (Opus): its scarcity weighs more
 # no_hook_grace = 90        # -T on herdr: seconds of quiet screen before a missing end-of-turn hook is signalled (tentatively)
 # tui_busy = "esc to interrupt"   # regex on the screen's last lines = still working (built in for Claude: subagents, background tasks)
 [agents.claude.models.impl]
@@ -98,7 +98,9 @@ default = "auto"          # "auto" = the plan's default model
 # Pick policy (orq-pick). Each candidate's score:
 #   quality * delivery + tokens * economy + speed * quickness − rotation * (times picked in the last `window` picks)
 #   delivery  = impl: approved on the first review; review/opinion: answered (status ok with text)
-#   economy   = the lowest median of new tokens among candidates ÷ this candidate's (1 = the cheapest)
+#   economy   = the lowest new tokens per approved delivery among candidates ÷ this candidate's (1 = the cheapest);
+#               per delivery = median new tokens per run ÷ approval rate (impl) or answered rate (others)
+#   − scarcity * (min(pressure, 2) ÷ 2)², pressure = usage at the pace so far ÷ the pick limit (× shared on shared accounts)
 #   quickness = the same, with the median duration
 #   loop-free = impl: 1 − share of its issues that hit max_rounds, repeated a heavy finding or needed the watchdog
 #   grounded  = 1 − share of runs with a false claim (impl: tests "pass" but orq verify of that commit fails, or a named
@@ -115,7 +117,6 @@ max_per_account = 2        # an account already holding this many alive conducto
 [policy]
 quota_week = 95           # ≥ this of the week → candidate out
 quota_5h = { simple = 90, medium = 85, heavy = 80 }   # same for the 5h window, by task level
-pacing_penalty = 0.3       # score penalty if usage at the current pace would pass the pick limit (5h: by task level, week: quota_week) by the reset; 0 = off
 # Per agent: `headroom = 25` in [agents.claude] keeps 25 points of its accounts for conductors (children stop at limit − 25).
 max_rounds  = 2
 review      = "other-vendor"   # other-vendor | any
@@ -128,7 +129,8 @@ speed    = 0.15
 looping  = 0.20
 hallucination = 0.20
 rotation = 0.20
-reserve  = 0.30           # penalty for agents with reserve = true
+scarcity = 0.60           # account scarcity penalty at twice the pick limit (0.15 when it reaches the limit by the reset); 0 = off
+shared   = 1.50           # usage multiplier for accounts shared with the conductors
 prefer   = 0.30           # watchdog without [roles.watchdog]: bonus for the opinion agents over the review pool
 explore  = 0.10
 explore_streak = 2        # consecutive picks of an under-sampled agent before its explore bonus stops

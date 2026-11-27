@@ -114,9 +114,10 @@ format: `SKILL.md` + `CLAUDE.md` (Claude Code), `AGENTS.md` (Codex, OpenCode), C
 
 ```toml
 [machine]
-agent_mem_max = "4G"       # default for every agent; "off" disables
+agent_mem_max = "5G"       # default for every agent; "off" disables; node tools get a heap of this - 1 GB
 test_mem_max  = "6G"
 mem_enforce   = "auto"     # auto | kernel | watchdog | off
+agent_priority = "low"     # low | idle | normal: agents yield CPU/IO to the desktop when the machine is busy
 tui_idle_close_min = 30    # minutes a finished -T agent waits for a follow-up before closing; 0 = never
 [agents.codex]
 mem_max = "6G"             # per-agent override
@@ -164,7 +165,7 @@ explains.
 
 | Situation | Suggestion |
 |---|---|
-| Shares quota with the conductor | `reserve` (only when the others don't fit) |
+| Shares quota with the conductor | `shared` (its scarcity weighs more) |
 | Small plan or monthly allowance | `opinion` only (heavy tasks, or impl and review disagree) |
 | Pay-as-you-go | `reviewer` pool (few tokens), not `primary` by default |
 | No free shell in headless mode (e.g. agy) | `reviewer` only, diff attached |

@@ -174,30 +174,36 @@ issue_pattern = "(?<![a-z0-9])(?<issue>[a-z][a-z0-9]*-\\d+)(?![a-z0-9])"   # Nom
 [policy]
 quota_week = 95                          # ≥ 95% of the week → agent out
 quota_5h = { simple = 90, medium = 85, heavy = 80 }  # same for the 5h window, by task level
-pacing_penalty = 0.3                     # score penalty when usage at the current pace would pass the pick limit (5h by level, week: quota_week) by the reset (0 = off)
 # [conductor] headroom = 25             # pontos reservados para o conductor ativo: filhos param em limite − 25
 [policy.weights]
 quality  = 0.40                          # did it deliver? (impl: approved on the first review)
-tokens   = 0.45                          # did it spend little?
+tokens   = 0.45                          # gastou pouco? (tokens novos por entrega aprovada)
 speed    = 0.15
 looping  = 0.20                          # did its issues converge? (no max_rounds hit, no repeated blocker, no watchdog)
 hallucination = 0.20                     # were its claims true? (tests it said pass, files it named, findings marked invalid)
 rotation = 0.20                          # penalty for having been picked recently
+scarcity = 0.60                          # penalidade para a conta que está acabando (ritmo vs reset, contra o limite do pick); 0 = desliga
+shared   = 1.50                          # conta dividida com os conductors conta o uso × isto
 ```
 
 ### Como o `orq pick` escolhe
 1. **Filtros:** só agentes com aquele papel cuja CLI está no PATH, abaixo do limite de quota, não bloqueados
    (`orq block`) e, para reviews, de um vendor diferente do implementador (e, para o delta de uma rodada, capazes de
-   revisar um commit: `base_commit`). Com várias contas, prefere uma cujo ritmo fique dentro do limite e, como
-   desempate, a menos usada.
+   revisar um commit: `base_commit`). Com várias contas, fica com a menos escassa e, como desempate, a menos usada.
 2. **Pontuação:** `quality × delivery + tokens × economy + speed × quickness + looping × loop-free + hallucination × grounded
-   − rotation × recent picks`. Os números vêm do histórico (`orq stats`); um agente com poucas execuções usa o `prior` da
+   − rotation × recent picks − scarcity × escassez da conta`. Os números vêm do histórico (`orq stats`); um agente com poucas execuções usa o `prior` da
    config e ganha um bônus de exploração. **Looping** (implementadores): a fração das issues dele que chegou a `max_rounds`,
    repetiu um achado grave entre revisões ou precisou de `orq rounds --diagnose`. **Alucinação**: um implementador cuja
    resposta diz que os testes passam enquanto o `orq verify` do mesmo commit tem falhas novas, ou cita arquivos do repo que
    não existem (o `orq agent` confere ao fim de uma execução de escrita, em `<prefix>.refs`); um revisor com um achado que o
    conductor marcou como errado (`orq rounds <ID> --invalid <review> <n>`).
-3. **Agentes reservados** (`reserve = true`, ou o conductor ativo por padrão) recebem uma penalidade na pontuação para preservar cota para a orquestração.
+3. **Escassez da conta:** o uso de cada janela no ritmo até agora (usado ÷ fração decorrida; a própria leitura no começo
+   da janela) dividido pelo limite do pick daquela janela, o maior dos dois. Contas divididas com os conductors
+   (`agents.<nome>.shared = true`, ou uma lista de contas; por padrão o agente do conductor ativo) contam isso × `weights.shared`.
+   A penalidade é `scarcity × (min(pressão, 2) ÷ 2)²`: perto de zero numa conta folgada, 0,15 numa que chega ao limite no
+   reset, o peso inteiro no dobro do limite. Nunca tira um agente; isso continua com os limites de cota.
+   **Economia** compara tokens novos por entrega aprovada (a mediana por execução ÷ a fração aprovada na primeira revisão,
+   ou respondida para revisores). `reserve` e `policy.pacing_penalty` saíram: o `orq pick` avisa e lê `reserve` como `shared`.
 4. **O watchdog** (`orq rounds --diagnose`), sem `[roles.watchdog]`, pontua os pools de opinion e review juntos: agentes de opinion ganham um
    bônus `weights.prefer` (0,30), então um único agente de opinion sem cota não deixa o diagnóstico sem agente. Ele não é o implementador
    nem o revisor da issue (`--review-agent`) enquanto outro agente puder assumir.
@@ -255,8 +261,8 @@ headroom = 25 # pontos percentuais reservados para o agente que estiver conduzin
 
 Os templates aceitam `{dir}`, `{instructions}` (caminho do arquivo), `{prompt_text}` (prompt para ler as instruções),
 `{model}`, `{account}`, `{session}` e `{name}`. Contas e `env` são mapas de variáveis de ambiente. O conductor exporta
-`ORQ_CONDUCTOR_AGENT`, então o `orq pick` aplica a penalidade de reserva e `[conductor].headroom` ao agente em uso,
-inclusive após uma troca só nessa sessão. Valores explícitos de `agents.<nome>.reserve` e `headroom` têm precedência.
+`ORQ_CONDUCTOR_AGENT`, então o `orq pick` trata as contas desse agente como divididas e aplica `[conductor].headroom` a ele,
+inclusive após uma troca só nessa sessão. Valores explícitos de `agents.<nome>.shared` e `headroom` têm precedência.
 
 Com vários conductors, dê a cada um um nome fixo (`export ORQ_CONDUCTOR_ID=<nome>`; no herdr, vale o label do
 workspace) para o `orq claim` distingui-los: a sessão do Claude se chama `conductor-<workspace>:<nome>`, e o
@@ -274,7 +280,7 @@ Para ver tudo de uma vez, deixe o **`orq board`** aberto numa aba ou janela (qua
 `herdr-board` o chama): fila de testes, agentes rodando (modelo, memória contra o limite, última ação), conductors e
 suas issues, memória, quota, CI/CD de cada issue reivindicada, bloqueios e o placar de 7 dias. Um run que falhou mostra
 o motivo (`no-verdict`, `empty`...) quando o código de saída não diz; a quota de uma conta que nenhum agente usa aparece
-como desligada, e as linhas por modelo (`antigravity/<modelo>`) se juntam à do agente, a não ser que uma esteja em 70% ou
+como desligada, e as linhas por modelo e por grupo (`antigravity/<grupo>`) se juntam à do agente, a não ser que uma esteja em 70% ou
 mais. `--once` imprime uma vez (coletando antes o CI de uma workspace nunca coletada), `--json` para scripts.
 Um agente `-T` no herdr cujo hook de fim de turno nunca dispara é sinalizado depois que a tela fica quieta (ociosa no
 herdr, nenhum subagente ou tarefa em background na linha de status, tela e worktree sem mudança) por

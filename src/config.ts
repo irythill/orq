@@ -12,9 +12,10 @@ export type Obj = Record<string, unknown>;
 
 export const DEFAULTS: Obj = {
   machine: {
-    agent_mem_max: "4G", // memory cap per agent
+    agent_mem_max: "5G", // memory cap per agent (node tools inside it get a V8 heap of this minus 1 GB)
     agent_swap_max: "1G",
     test_mem_max: "6G", // cap per test suite (orq verify, orq baseline)
+    agent_priority: "low", // CPU/IO priority of agents: low (yield to the desktop when busy) | idle | normal (unchanged)
     mem_enforce: "auto", // auto (kernel cap where possible, else watchdog) | kernel | watchdog | off
     test_slots: 1, // test suites in parallel on the machine
     close_tab_after: 20, // seconds until a finished child tab closes (0 = never)
@@ -25,7 +26,6 @@ export const DEFAULTS: Obj = {
   agents: {}, // only agents declared here are available; run templates: built in for 5 (src/agents.ts), or `run = ...`
   policy: {
     quota_limit: 90, // also caps the 5h pick limit; marks ! in `orq quota --line`
-    pacing_penalty: 0.3, // score penalty when usage at the current pace would pass the pick limit by the window's reset (0 = off)
     quota_week: 95, // weekly % from which an agent/account is skipped
     quota_5h: { simple: 90, medium: 85, heavy: 80 }, // same for the 5h window, per task level
     max_rounds: 2, // fix rounds before stopping and calling the user

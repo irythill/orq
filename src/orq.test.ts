@@ -16,7 +16,7 @@ import { FORMATS, parseResetIn, usesPrompt, useThrowaway } from "./agents.js";
 import { buildPrompt, diagnosisGate, recommendation, trim } from "./diagnose.js";
 import { resolveRole } from "./roles.js";
 import { hasVerdict, metrics, parseFindings, repeats, similar, slowRounds, freshRounds, mark } from "./rounds.js";
-import { agyNote, antigravityFromModels, copilotFromUser, format, fromCache, humanReset, learnExhausted, mergeLearned, minimaxFromRemains, modelLines } from "./quota.js";
+import { agyNote, antigravityFromGroups, configuredModels, copilotFromUser, format, fromCache, groupKey, groupLines, humanReset, learnExhausted, mergeLearned, minimaxFromRemains, modelLines } from "./quota.js";
 import { writeAtomic } from "./fsutil.js";
 
 process.env.ORQ_LANG = "en"; // messages checked below are the English ones
@@ -53,7 +53,7 @@ test("parseLocal reads a bare date as local midnight", () => {
 
 test("config: defaults, layers, get, files", () => {
   const { root, env, run } = sandbox();
-  assert.equal(run("config", "get", "machine.agent_mem_max").stdout.trim(), "4G");
+  assert.equal(run("config", "get", "machine.agent_mem_max").stdout.trim(), "5G");
   assert.equal(run("config", "files").stdout.trim(), "(no file; defaults only)");
   mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
   writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.toml"), "[machine]\nagent_mem_max = \"8G\"\n");
@@ -765,32 +765,40 @@ test("quota: copilot's bare reset date reads as local midnight, matching the day
 // Shapes captured from fetchAvailableModels (ids and times kept, everything else dropped). An exhausted bucket has no
 // remainingFraction (proto default 0 is not serialized) but keeps its resetTime; internal models carry neither a reset.
 const AGY_NOW = Date.parse("2026-11-05T15:00:00Z");
-const AGY_MODELS = {
-  "gemini-3.8-flash-tiered": { quotaInfo: { remainingFraction: 0.95047426, resetTime: "2026-11-05T16:53:48Z" } },
-  "gemini-3.5-flash-lite": { quotaInfo: { remainingFraction: 0.95047426, resetTime: "2026-11-05T16:53:48Z" } },
-  "claude-sonnet-5-5-high": { quotaInfo: { remainingFraction: 1, resetTime: "2026-11-05T20:45:32Z" } },
-  "gemini-4-argon-high": { quotaInfo: { resetTime: "2026-11-10T18:00:00Z" } },
-  "tab_flash_lite_preview": { quotaInfo: { remainingFraction: 1 } },
-  "chat_20706": { quotaInfo: { remainingFraction: 1 } },
-};
+// `agy -p /quota --output-format json` -> command.data.groups
+const AGY_GROUPS = [
+  { name: "Gemini Models", description: "Models within this group: Gemini 4 Neon, Gemini 4 Argon, Orchestrator (Neon), Gemini 3.8 Flash",
+    buckets: [{ id: "gemini-weekly", window: "weekly", remaining_fraction: 0.9888, reset_time: "2026-11-10T20:18:32Z" },
+      { id: "gemini-5h", window: "5h", remaining_fraction: 0.6, reset_time: "2026-11-05T18:00:00Z" }] },
+  { name: "Claude and GPT models", description: "Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B",
+    buckets: [{ id: "3p-weekly", window: "weekly", reset_time: "2026-11-11T20:00:00Z" },
+      { id: "3p-5h", window: "5h", remaining_fraction: 1, reset_time: "2026-11-05T20:00:00Z" }] },
+];
 
-test("quota: antigravity keeps a bucket per model; a missing remainingFraction with a resetTime is 100% used", () => {
-  const q = antigravityFromModels(AGY_MODELS, AGY_NOW);
-  assert.deepEqual(Object.keys(q.buckets).sort(), ["claude-sonnet-5-5-high", "gemini-3.5-flash-lite", "gemini-3.8-flash-tiered", "gemini-4-argon-high"]);
-  assert.equal(q.buckets["gemini-4-argon-high"].used, 100);
-  assert.equal(q.buckets["gemini-4-argon-high"].week, true);
-  assert.equal(q.buckets["gemini-3.8-flash-tiered"].used, 5);
-  assert.equal(q.buckets["gemini-3.8-flash-tiered"].week, false);
-  // the agent's own pair is its least used bucket per window: one exhausted model must not block the agent
-  assert.equal(q.five.pct, 0); assert.equal(q.week.pct, "-");
-  assert.equal(antigravityFromModels({}, AGY_NOW).five.pct, "-");
+test("quota: antigravity reads one pair of windows per model group; a reset time with no fraction is 100% used", () => {
+  const q = antigravityFromGroups(AGY_GROUPS);
+  assert.deepEqual(Object.keys(q.groups), ["gemini+orchestrator", "claude+gpt"]);
+  assert.deepEqual(q.groups["gemini+orchestrator"].five, { pct: 40, resetsAt: "2026-11-05T18:00:00Z" });
+  assert.equal(q.groups["gemini+orchestrator"].week.pct, 1);
+  assert.equal(q.groups["claude+gpt"].week.pct, 100);
+  // the agent's own pair is its group with the most room: an exhausted group must not block the agent
+  assert.equal(q.five.pct, 40); assert.equal(q.week.pct, 1);
+  assert.equal(antigravityFromGroups([]).five.pct, "-");
+  // with configured models, only their groups count: the Gemini group's usage shows though Claude/GPT has more room
+  const g = antigravityFromGroups(AGY_GROUPS.map((x, i) => (i ? { ...x, buckets: [{ window: "5h", remaining_fraction: 1 }] } : x)), ["gemini-3.8-flash-high"]);
+  assert.equal(g.five.pct, 40); assert.equal(g.week.pct, 1);
+  assert.equal(antigravityFromGroups(AGY_GROUPS.map((x, i) => (i ? { ...x, buckets: [{ window: "5h", remaining_fraction: 1 }] } : x))).five.pct, 0);
+  assert.deepEqual(configuredModels({ agents: { agy: { quota: ["antigravity"], models: { impl: { simple: "gemini-3.8-flash-low",
+    heavy: ["gemini-4-argon-high@high", "claude-opus-5-5-high"] } } }, codex: { models: { impl: { simple: "gpt-5" } } } } }, "antigravity"),
+    ["gemini-3.8-flash-low", "gemini-4-argon-high", "claude-opus-5-5-high"]);
+  assert.equal(groupKey({ buckets: [{ id: "3p-weekly" }] }), "3p");
 });
 
-test("quota: antigravity lists one line per model, in the window its bucket belongs to", () => {
-  const lines = modelLines("antigravity", antigravityFromModels(AGY_MODELS, AGY_NOW).buckets, AGY_NOW).map(format);
-  assert.ok(lines.includes("antigravity/gemini-4-argon-high 5h=- week=100% resetweek=" + Date.parse("2026-11-10T18:00:00Z") / 1000));
-  assert.ok(lines.some((l) => l.startsWith("antigravity/gemini-3.8-flash-tiered 5h=5% week=- reset5h=")));
-  assert.equal(modelLines("antigravity", antigravityFromModels(AGY_MODELS, AGY_NOW).buckets, Date.parse("2026-11-11T00:00:00Z")).length, 0);
+test("quota: antigravity lists one line per group; a window reset since the reading reads 0%", () => {
+  const lines = groupLines("antigravity", antigravityFromGroups(AGY_GROUPS).groups, AGY_NOW).map(format);
+  assert.equal(lines[0], `antigravity/gemini+orchestrator 5h=40% week=1% reset5h=${Date.parse("2026-11-05T18:00:00Z") / 1000} resetweek=${Date.parse("2026-11-10T20:18:32Z") / 1000}`);
+  const later = groupLines("antigravity", antigravityFromGroups(AGY_GROUPS).groups, Date.parse("2026-11-05T19:00:00Z"));
+  assert.equal(later[0].five, 0); assert.equal(later[0].reset5h, undefined); assert.equal(later[0].week, 1);
 });
 
 test("pick: antigravity skips an exhausted model and falls back to a lighter one of the same agent", async () => {
@@ -817,9 +825,15 @@ test("pick: antigravity skips an exhausted model and falls back to a lighter one
   const r = run("heavy", all);
   assert.equal(r.best, undefined);
   assert.match(r.notes.join("\n"), /every model over its quota/);
+  // group lines: the Gemini group's 5h out passes over every Gemini model; the group with room keeps them
+  const groups = "antigravity 5h=0% week=0%\nantigravity/gemini+orchestrator 5h=100% week=1%\nantigravity/claude+gpt 5h=0% week=0%";
+  assert.equal(run("heavy", groups).best, undefined);
+  assert.equal(run("heavy", groups.replace("5h=100% week=1%", "5h=40% week=1%")).best?.model, "gemini-4-argon-high");
   assert.equal(modelKey("gemini-3.8-flash-high", ["gemini-3.8-flash-tiered"]), "gemini-3.8-flash-tiered");
   assert.equal(modelKey("claude-opus-5-5-high", ["claude-opus-5-5-high"]), "claude-opus-5-5-high");
   assert.equal(modelKey("gemini-4-argon-low", ["gemini-3.8-flash-tiered"]), undefined);
+  assert.equal(modelKey("gemini-4-argon-xhigh", ["claude+gpt", "gemini+orchestrator"]), "gemini+orchestrator");
+  assert.equal(modelKey("gpt-oss-120b-medium", ["claude+gpt", "gemini+orchestrator"]), "claude+gpt");
 });
 
 test("roles: legacy agents.roles become an auto pool; [roles] fixed and pool win", async () => {
@@ -950,7 +964,7 @@ test("pick: a '-' window (no such limit, e.g. copilot's monthly plan) is never o
   assert.match(r.notes[0], new RegExp(`copilot=97 \\(back ${humanReset(1900100000).replace(/[:.]/g, "\\$&")}\\)`));
 });
 
-test("pick: pacing penalizes a projected overrun (soft); headroom and expired logins drop", async () => {
+test("pick: scarcity penalizes a projected overrun (soft); headroom and expired logins drop", async () => {
   const { pick, parseWindows, projected } = await import("./pick.js");
   const now = 1_900_000_000;
   // 40% used with 2h of the 5h window left (60% elapsed) → 66% projected; 50% with 4h left (20% elapsed) → 250%.
@@ -964,15 +978,22 @@ test("pick: pacing penalizes a projected overrun (soft); headroom and expired lo
   const line = `a 5h=50% week=10% reset5h=${now + 4 * 3600}\nb 5h=50% week=10% reset5h=${now + 2 * 3600}`;
   const w = parseWindows(line);
   const quota = { a: 50, b: 50 };
-  // a: 50% at 20% elapsed → 250% projected (penalized); b: 50% at 60% elapsed → 83% (fine). Equal otherwise.
+  // a: 50% at 20% elapsed → 250% projected, past twice the limit (scarcity 1); b: 50% at 60% elapsed → 83% (≈0.24).
   const r = pick({ ...base, cfg, role: "impl", quota, windows: w });
   assert.equal(r.best?.agent, "b");
-  assert.match(r.cands[1].why, /pace=250%/);
-  // still a candidate (soft), and off when pacing_penalty = 0
+  assert.match(r.cands[1].why, /scarcity=-0\.60\(pace=250%\)/);
+  assert.match(r.cands[0].why, /scarcity=-0\.14\(pace=83%\)/);
+  // still a candidate (soft), and off when weights.scarcity = 0
   assert.equal(r.cands.length, 2);
-  const off = pick({ ...base, cfg: { ...cfg, policy: { pacing_penalty: 0 } }, role: "impl", quota, windows: w });
+  const off = pick({ ...base, cfg: { ...cfg, policy: { weights: { scarcity: 0 } } }, role: "impl", quota, windows: w });
   assert.equal(off.cands[0].score, off.cands[1].score);
-  assert.doesNotMatch(off.cands.map((c) => c.why).join(), /pace=/);
+  assert.doesNotMatch(off.cands.map((c) => c.why).join(), /scarcity=/);
+  // retired keys warn; reserve is still read as shared
+  const old = pick({ ...base, cfg: { ...cfg, policy: { pacing_penalty: 0, weights: { reserve: 0.3 } },
+    agents: { ...agents, a: { ...agents.a, reserve: true } } }, role: "impl", quota, windows: w });
+  assert.equal(old.warnings?.length, 3);
+  assert.match(old.cands.find((c) => c.agent === "a")!.why, /pace=250%,shared/);
+  assert.equal(r.warnings, undefined);
   // a window published with its own length (Copilot's month: 30 days) is projected over that, not over 7 days:
   // 60% with 3 days left is 105% over 7 days but 67% over 30.
   const mo = `a 5h=- week=60% resetweek=${now + 3 * 86400} spanweek=43200\nb 5h=- week=60% resetweek=${now + 3 * 86400}`;
@@ -989,15 +1010,14 @@ test("pick: pacing penalizes a projected overrun (soft); headroom and expired lo
     windows: parseWindows("w 5h=90% week=10%\nh 5h=10% week=10% [login expired: run `agy models`; last reading, 5 min ago]") });
   assert.equal(bothOut.best, undefined);
   assert.match(bothOut.notes[0], /w=90, h: login expired: run `agy models`/);
-  // several usable accounts: a non-hot account wins over a lower-usage hot one, then lower usage breaks ties (unless pacing_penalty = 0)
+  // several usable accounts: the least scarce wins over a lower-usage one running hot (by usage alone when weights.scarcity = 0)
   const multi = { agents: { c: { quota: ["w", "h", "p"], models: { impl: { default: "m" } } } },
     roles: { primary: { pick: "auto", pool: ["c"] } } };
   const multiWin = parseWindows(`w 5h=40% week=10% reset5h=${now + 4 * 3600}\nh 5h=48% week=10% reset5h=${now + 2 * 3600}\np 5h=42% week=10% reset5h=${now + 2 * 3600}`);
   const paced = pick({ ...base, role: "impl", quota: { w: 40, h: 48, p: 42 }, cfg: multi, windows: multiWin });
   assert.equal(paced.best?.acct, "p");
-  assert.doesNotMatch(paced.best?.why ?? "", /pace=/);
   const pacedOff = pick({ ...base, role: "impl", quota: { w: 40, h: 48, p: 42 },
-    cfg: { ...multi, policy: { pacing_penalty: 0 } }, windows: multiWin });
+    cfg: { ...multi, policy: { weights: { scarcity: 0 } } }, windows: multiWin });
   assert.equal(pacedOff.best?.acct, "w");
   // headroom: 25 lowers the 5h limit (85) to 60 for that agent only
   const hr = pick({ ...base, cfg: { agents: { a: { ...agents.a, headroom: 25 }, b: agents.b }, roles: cfg.roles },
@@ -1055,7 +1075,7 @@ test("suggestRoles: the maintainer's setup comes out of plain answers", async ()
   assert.deepEqual(p.roles.primary, { agent: "codex", fallback: ["claude"] });
   assert.deepEqual(p.roles.reviewer, { pick: "auto", pool: ["claude", "opencode", "antigravity"], rule: "other-vendor" });
   assert.deepEqual(p.roles.opinion, { pick: "auto", pool: ["copilot"] });
-  assert.equal(p.agents.claude.reserve, true);
+  assert.equal(p.agents.claude.shared, true);
   assert.deepEqual(p.agents.antigravity.roles, ["review"]);
   assert.deepEqual(p.machine, { agent_mem_max: "4G", test_mem_max: "5G" });
   assert.equal(p.weights.tokens, 0.45);
@@ -1181,6 +1201,38 @@ test("process: sizes, tree memory, and the watchdog kills a tree over the cap", 
   assert.equal(await runCapped(process.execPath, ["-e", hog], { cap: 300 * 2 ** 20, mode: "watchdog", intervalMs: 300 }), 137);
   assert.equal(await runCapped(process.execPath, ["-e", "process.exit(3)"], { cap: 2 ** 30, mode: "watchdog" }), 3);
   assert.equal(await runCapped(process.execPath, ["-e", "0"], { mode: "auto" }), 0); // no cap
+});
+
+test("process: agent_priority lowers the agent (and what it starts) in every mode; normal changes nothing", async () => {
+  const { parsePriority, priorityProps, runCapped, hasKernelCap } = await import("./process.js");
+  assert.equal(parsePriority(undefined), undefined); assert.equal(parsePriority("low"), "low");
+  assert.throws(() => parsePriority("high"));
+  assert.deepEqual(priorityProps(undefined), []); assert.deepEqual(priorityProps("normal"), []);
+  assert.deepEqual(priorityProps("low"), ["-p", "CPUWeight=20", "-p", "IOWeight=20"]);
+  // The child reports the niceness of a process it starts itself: inherited, like tsc under an agent.
+  const nice = "const{execFileSync}=require('child_process');process.exit(+execFileSync(process.execPath,['-e','process.stdout.write(String(require(\\'os\\').getPriority()))']))";
+  // An exit code is 0–255: a negative niceness (macOS runners start at -10) comes back as 246.
+  const niceOf = async (o: Parameters<typeof runCapped>[2]) => { const c = await runCapped(process.execPath, ["-e", nice], o); return c > 127 ? c - 256 : c; };
+  const base = await niceOf({ mode: "off" });
+  if (process.platform !== "win32") {
+    assert.equal(await niceOf({ mode: "off", priority: "low" }), Math.max(base, 10)); // lowers, never raises
+    assert.equal(await niceOf({ mode: "off", priority: "normal" }), base);
+    assert.equal(await niceOf({ cap: 2 ** 30, mode: "watchdog", priority: "idle" }), Math.max(base, 19));
+    if (hasKernelCap()) assert.equal(await niceOf({ cap: 2 ** 30, mode: "kernel", priority: "low" }), Math.max(base, 10));
+  }
+});
+
+test("process: the V8 heap follows the agent's memory cap, replacing a fixed one and keeping other flags", async () => {
+  const { heapMB, withHeap, parseSize } = await import("./process.js");
+  assert.equal(heapMB(undefined), undefined);
+  assert.equal(heapMB(parseSize("5G")), 4096); assert.equal(heapMB(parseSize("4G")), 3072);
+  assert.equal(heapMB(parseSize("2G")), 1024); assert.equal(heapMB(parseSize("1G")), 512); // small caps: half
+  assert.equal(withHeap(undefined, undefined), undefined);
+  assert.equal(withHeap("--enable-source-maps", undefined), "--enable-source-maps");
+  assert.equal(withHeap(undefined, 4096), "--max-old-space-size=4096");
+  assert.equal(withHeap("--max-old-space-size=2048", 4096), "--max-old-space-size=4096");
+  assert.equal(withHeap("--enable-source-maps --max-old-space-size 8192 --trace-warnings", 3072),
+    "--enable-source-maps --trace-warnings --max-old-space-size=3072");
 });
 
 test("process: a command that cannot start (E2BIG thrown, ENOENT emitted) resolves SPAWN_FAILED with the error", async () => {
@@ -2713,7 +2765,7 @@ test("conductor: custom interactive CLI receives literal argv, instructions, acc
   assert.deepEqual(JSON.parse(resumed.stdout.trim().split(/\r?\n/).at(-1)!).argv.slice(0, 2), ["--resume", "session-1"]);
 });
 
-test("pick: reserve and headroom follow the configured or active conductor, with explicit overrides", () => {
+test("pick: shared and headroom follow the configured or active conductor, with explicit overrides", () => {
   const agents = Object.fromEntries(["codex", "claude"].map((name) => [name,
     { roles: ["impl"], quota: [name], models: { impl: { default: "m" } } }]));
   const cfg = { agents, roles: { conductor: { agent: "codex" } }, conductor: { headroom: 25 } };
@@ -2721,12 +2773,61 @@ test("pick: reserve and headroom follow the configured or active conductor, with
   assert.equal(pickAgent({ ...base, cfg }).best?.agent, "claude");
   assert.equal(pickAgent({ ...base, cfg: { ...cfg, _conductorAgent: "claude" } }).best?.agent, "codex");
   const quota = { codex: 10, claude: 10 };
-  const reserved = pickAgent({ ...base, cfg, quota });
-  assert.equal(reserved.best?.agent, "claude");
-  assert.match(reserved.cands.find((c) => c.agent === "codex")!.why, /reserve/);
+  const shared = pickAgent({ ...base, cfg, quota });
+  assert.equal(shared.best?.agent, "claude");
+  assert.match(shared.cands.find((c) => c.agent === "codex")!.why, /shared/);
   const explicit = pickAgent({ ...base, quota, cfg: { ...cfg, agents: { ...agents,
-    codex: { ...agents.codex, reserve: false, headroom: 0 } } } });
-  assert.doesNotMatch(explicit.cands.find((c) => c.agent === "codex")!.why, /reserve/);
+    codex: { ...agents.codex, shared: false, headroom: 0 } } } });
+  assert.doesNotMatch(explicit.cands.find((c) => c.agent === "codex")!.why, /shared/);
+  // shared as a list: only those accounts weigh more
+  const accts = { roles: ["impl"], quota: ["work", "home"], shared: ["work"], models: { impl: { default: "m" } } };
+  const listed = pickAgent({ ...base, quota: { work: 50, home: 55 },
+    cfg: { agents: { claude: accts }, roles: { primary: { pick: "auto", pool: ["claude"] } } } });
+  assert.equal(listed.best?.acct, "home");
+  assert.doesNotMatch(listed.best?.why ?? "", /shared/);
+});
+
+test("pick: economy compares tokens per approved delivery, and a shared account near its limit loses to a quiet one", () => {
+  const mk = (n: string) => ({ roles: ["impl"], quota: [n], models: { impl: { default: "m" } } });
+  const row = (agent: string, newTok: number, approved: number) => ({ role: "impl", agent, model: "m", n: 20, ok: 100,
+    approved, n_appr: 20, min: 10, new: newTok, tot: newTok });
+  const base = { role: "impl" as const, level: "medium", exclude: new Set<string>(), blocks: new Set<string>(), recent: [] };
+  const cfg = { agents: { a: mk("a"), b: mk("b") }, roles: { primary: { pick: "auto", pool: ["a", "b"] } } };
+  // a: 100k per run, half approved → 200k per delivery; b: 150k, all approved → 150k. b is the cheaper delivery.
+  const r = pickAgent({ ...base, cfg, quota: { a: 10, b: 10 }, stats: [row("a", 100_000, 50), row("b", 150_000, 100)] });
+  assert.match(r.cands.find((c) => c.agent === "a")!.why, /economy=0\.\d+\(0\.60→0\.75\)/);
+  assert.match(r.cands.find((c) => c.agent === "b")!.why, /economy=\S+\(0\.60→1\.00\)/);
+  // the 2026-11-10 case: a shared account at 80% against one at 13%, otherwise equal
+  const same = [row("a", 100_000, 80), row("b", 100_000, 80)];
+  const sh = { ...cfg, agents: { a: { ...mk("a"), shared: true }, b: mk("b") } };
+  const hot = pickAgent({ ...base, cfg: sh, quota: { a: 80, b: 13 }, stats: same });
+  assert.equal(hot.best?.agent, "b");
+  const gap = hot.cands[0].score - hot.cands[1].score;
+  assert.ok(gap > 0.25, `gap ${gap}`);
+  // shared alone: equal readings, the shared account scores lower
+  const eq = pickAgent({ ...base, cfg: sh, quota: { a: 50, b: 50 }, stats: same });
+  assert.equal(eq.best?.agent, "b");
+  assert.match(eq.cands[1].why, /scarcity=-0\.12\(shared\)/);
+  assert.match(eq.cands[0].why, /scarcity=-0\.05 /);
+  // no limit (-1) or no quota configured: no scarcity
+  const free = pickAgent({ ...base, cfg: { ...cfg, agents: { a: mk("a"), b: { ...mk("b"), quota: [] } } }, quota: { a: -1 }, stats: same });
+  assert.doesNotMatch(free.cands.map((c) => c.why).join(), /scarcity=/);
+  // per-model buckets are checked on the account scarcity picks, not the least used one
+  const two = { agents: { c: { roles: ["impl"], quota: ["w", "h"], models: { impl: { default: ["m1", "m2"] } } } },
+    roles: { primary: { pick: "auto", pool: ["c"] } } };
+  const now = 1_900_000_000;
+  const win = parseWindows(`w 5h=30% week=10% reset5h=${now + 4 * 3600}\nh 5h=40% week=10% reset5h=${now + 3600}`
+    + "\nh/m1 5h=95% week=10%\nw/m2 5h=95% week=10%");
+  const bk = pickAgent({ ...base, cfg: two, quota: { w: 30, h: 40 }, windows: win, now, stats: [] });
+  assert.equal(bk.best?.acct, "h");
+  assert.deepEqual(bk.cands.map((c) => c.model), ["m2"]);
+  // every model exhausted on the least scarce account: the next account takes the pick
+  const allOut = parseWindows(`w 5h=30% week=10% reset5h=${now + 4 * 3600}\nh 5h=40% week=10% reset5h=${now + 3600}`
+    + "\nh/m1 5h=95% week=10%\nh/m2 5h=95% week=10%");
+  const next = pickAgent({ ...base, cfg: two, quota: { w: 30, h: 40 }, windows: allOut, now, stats: [] });
+  assert.equal(next.best?.acct, "w");
+  assert.deepEqual(next.cands.map((c) => c.model), ["m1", "m2"]);
+  assert.match(next.notes[0], /h: m1 5h 95%, h: m2 5h 95%; using m1, m2/);
 });
 
 test("claim: a non-Claude conductor is not registered as an inherited Claude account", () => {
@@ -3157,13 +3258,14 @@ test("quota: a learned exhausted bucket survives API readings until reset, unles
     assert.equal(b.used, 100); assert.equal(b.week, true);
     assert.equal(b.resetsAt, new Date(now + (123 * 3600 + 12 * 60 + 32) * 1000).toISOString());
     const learned = { "gemini-4-argon-high": b };
-    const api = antigravityFromModels({ "gemini-3.8-flash-tiered": { quotaInfo: { remainingFraction: 0.9, resetTime: "2026-11-05T16:00:00Z" } } }, now).buckets;
-    const merged = mergeLearned(api, learned, now + 1000);
-    assert.equal(merged["gemini-4-argon-high"].used, 100);   // API has no bucket for it: kept
+    const out = antigravityFromGroups([{ ...AGY_GROUPS[0], buckets: [{ window: "weekly", reset_time: "2026-11-12T00:00:00Z" }] }]).groups;
+    const merged = mergeLearned(out, learned, now + 1000);
+    assert.equal(merged["gemini-4-argon-high"].used, 100);   // its group is out too: kept
     assert.ok(modelLines("antigravity", merged, now + 1000).some((l) => l.name === "antigravity/gemini-4-argon-high" && l.week === 100));
-    const back = antigravityFromModels({ "gemini-4-argon-high": { quotaInfo: { remainingFraction: 0.5, resetTime: "2026-11-12T00:00:00Z" } } }, now).buckets;
-    assert.equal(mergeLearned(back, learned, now + 1000)["gemini-4-argon-high"].used, 50); // API has quota again
-    assert.equal(mergeLearned(api, learned, Date.parse(b.resetsAt) + 1)["gemini-4-argon-high"], undefined); // reset passed
+    const back = antigravityFromGroups(AGY_GROUPS).groups;
+    assert.equal(mergeLearned(back, learned, now + 1000)["gemini-4-argon-high"], undefined); // the group has quota again
+    assert.equal(mergeLearned(out, learned, Date.parse(b.resetsAt) + 1)["gemini-4-argon-high"], undefined); // reset passed
+    assert.equal(mergeLearned({}, learned, now + 1000)["gemini-4-argon-high"].used, 100); // no group for it: kept
     assert.equal(JSON.parse(readFileSync(join(root, "orq", "quota", "antigravity.json"), "utf8")).buckets["gemini-4-argon-high"].learned, true);
   } finally { if (old === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = old; rmSync(root, { recursive: true, force: true }); }
 });
@@ -3384,6 +3486,14 @@ test("release: version from conventional commits; check wants package, lock and 
   assert.equal(parsed.lock.packages["node_modules/x"].version, "1.0.0");
   assert.match(b.en, /## \[Unreleased\]\n\n## \[0\.7\.0\] — 2026-11-18\n\n### Fixed\n- y\n\n## \[0\.6\.1\]/);
   assert.equal(bumped("0.7.0", "2026-11-19", parsed).en, b.en);
+  // A version prepared but not published, with more landing since: merged into it heading by heading, new first, new date.
+  const late = `# C\n\n## [Unreleased]\n\n### Added\n- new\n\n### Changed\n- c2\n\n## [0.7.0] — 2026-11-18\n\n### Changed\n- c1\n\n### Fixed\n- y\n\n## [0.6.1] — d\n- x\n`;
+  const m2 = bumped("0.7.0", "2026-11-27", { ...parsed, en: late, pt: late });
+  assert.equal(m2.en, `# C\n\n## [Unreleased]\n\n## [0.7.0] — 2026-11-27\n\n### Added\n- new\n\n### Changed\n- c2\n- c1\n\n### Fixed\n- y\n\n## [0.6.1] — d\n- x\n`);
+  assert.deepEqual(problems("0.7.0", { ...parsed, en: m2.en, pt: m2.pt }), []);
+  // ...also when the version is the last section of the file
+  const tail = `# C\n\n## [Unreleased]\n\n### Fixed\n- z\n\n## [0.7.0] — d\n\n### Fixed\n- y\n`;
+  assert.equal(bumped("0.7.0", "e", { ...parsed, en: tail, pt: tail }).en, `# C\n\n## [Unreleased]\n\n## [0.7.0] — e\n\n### Fixed\n- z\n- y\n\n`);
 });
 
 test("harness: wait strategy follows capabilities, not background-process support (#119)", async () => {

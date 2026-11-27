@@ -171,30 +171,36 @@ issue_pattern = "(?<![a-z0-9])(?<issue>[a-z][a-z0-9]*-\\d+)(?![a-z0-9])"   # Bra
 [policy]
 quota_week = 95                          # ≥ 95% of the week → agent out
 quota_5h = { simple = 90, medium = 85, heavy = 80 }  # same for the 5h window, by task level
-pacing_penalty = 0.3                     # score penalty when usage at the current pace would pass the pick limit (5h by level, week: quota_week) by the reset (0 = off)
 # [conductor] headroom = 25             # points kept for the active conductor: children stop at limit − 25
 [policy.weights]
 quality  = 0.40                          # did it deliver? (impl: approved on the first review)
-tokens   = 0.45                          # did it spend little?
+tokens   = 0.45                          # did it spend little? (new tokens per approved delivery)
 speed    = 0.15
 looping  = 0.20                          # did its issues converge? (no max_rounds hit, no repeated blocker, no watchdog)
 hallucination = 0.20                     # were its claims true? (tests it said pass, files it named, findings marked invalid)
 rotation = 0.20                          # penalty for having been picked recently
+scarcity = 0.60                          # penalty for an account running out (pace vs reset, against the pick limit); 0 = off
+shared   = 1.50                          # an account shared with the conductors counts its usage × this
 ```
 
 ### How `orq pick` chooses
 1. **Filters:** only agents with that role whose CLI is on the PATH, under the quota limit, not blocked (`orq block`)
    and, for reviews, from a vendor other than the implementer's (and, for a round's delta, able to review a commit:
-   `base_commit`). With several accounts, it prefers one whose pace stays within the limit, then
-   the least used.
+   `base_commit`). With several accounts, it takes the least scarce one, then the least used.
 2. **Scores:** `quality × delivery + tokens × economy + speed × quickness + looping × loop-free + hallucination × grounded
-   − rotation × recent picks`. The numbers come from the history (`orq stats`); an agent with few runs uses the config's
-   `prior` and gets an exploration bonus. **Looping** (implementers): the share of their issues that reached `max_rounds`,
+   − rotation × recent picks − scarcity × account scarcity`. The numbers come from the history (`orq stats`); an agent with few runs uses the config's
+   `prior` and gets an exploration bonus. **Economy** compares new tokens per approved delivery (the median run ÷ the
+   share of runs approved on the first review, or answered for reviewers), so a cheap run that often fails isn't cheap. **Looping** (implementers): the share of their issues that reached `max_rounds`,
    repeated a heavy finding across reviews or needed `orq rounds --diagnose`. **Hallucination**: an implementer whose
    answer says the tests pass while `orq verify` of the same commit has new failures, or names repo files that don't
    exist (`orq agent` checks them at the end of a write run, in `<prefix>.refs`); a reviewer with a finding the conductor
    marked wrong (`orq rounds <ID> --invalid <review> <n>`).
-3. **Reserved agents** (`reserve = true`, or the active conductor by default) receive a score penalty to keep quota for orchestration.
+3. **Account scarcity:** each window's usage at the pace so far (used ÷ elapsed share; the reading itself early in the
+   window) divided by that window's pick limit, the highest of the two. Accounts shared with the conductors
+   (`agents.<name>.shared = true`, or a list of accounts; the active conductor's agent by default) count it × `weights.shared`.
+   The penalty is `scarcity × (min(pressure, 2) ÷ 2)²`: near zero for a quiet account, 0.15 for one about to reach the
+   limit by its reset, the full weight at twice the limit. It never drops an agent; the quota limits still do.
+   `reserve` and `policy.pacing_penalty` are retired: `orq pick` warns, and reads `reserve` as `shared`.
 4. **The watchdog** (`orq rounds --diagnose`), without a `[roles.watchdog]`, scores the opinion and review pools together: opinion agents get
    a `weights.prefer` bonus (0.30), so a single opinion agent out of quota doesn't leave the diagnosis without an agent. It is neither the
    implementer nor the issue's reviewer (`--review-agent`) while someone else can take it.
@@ -253,8 +259,8 @@ headroom = 25 # percentage points kept for whichever agent conducts
 
 Templates accept `{dir}`, `{instructions}` (file path), `{prompt_text}` (read-instructions prompt), `{model}`,
 `{account}`, `{session}` and `{name}`. Account entries and `env` are environment-variable maps. The running conductor
-exports `ORQ_CONDUCTOR_AGENT`, so `orq pick` applies the reserve penalty and `[conductor].headroom` to that agent,
-even after a session override. Explicit `agents.<name>.reserve` and `headroom` take precedence.
+exports `ORQ_CONDUCTOR_AGENT`, so `orq pick` treats that agent's accounts as shared and applies `[conductor].headroom` to it,
+even after a session override. Explicit `agents.<name>.shared` and `headroom` take precedence.
 
 With several conductors, give each a fixed name (`export ORQ_CONDUCTOR_ID=<name>`; in herdr, the workspace label is
 used) so `orq claim` can tell them apart: the Claude session is named `conductor-<workspace>:<name>`, and
@@ -271,7 +277,7 @@ You only come back when it asks for a decision or says it's done.
 To see everything at once, keep **`orq board`** open in a tab or window (any terminal, any OS; `herdr-board` calls it):
 test queue, running agents (model, memory against the cap, last action), conductors and their issues, memory, quota,
 CI/CD per claimed issue, blocks and the 7-day scoreboard. A failed run names its reason (`no-verdict`, `empty`...) when
-its exit code doesn't; quota of an account no agent uses shows as off, and per-model rows (`antigravity/<model>`) fold
+its exit code doesn't; quota of an account no agent uses shows as off, and per-model and per-group rows (`antigravity/<group>`) fold
 into their agent's unless one is at 70% or more. `--once` prints it once (collecting CI first for a workspace never
 collected), `--json` for scripts.
 A `-T` agent on herdr whose end-of-turn hook never fires is signalled after its screen stays quiet (idle in herdr, no
