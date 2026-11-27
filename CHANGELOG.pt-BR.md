@@ -6,16 +6,14 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-11-27
+
 ### Adicionado
 - `machine.agent_priority` (#169): os agentes rodam com prioridade de CPU e de disco mais baixa, para o desktop continuar respondendo enquanto eles compilam. `low` (o padrão) aplica niceness 10, herdada por tudo o que o agente inicia (`tsc`, `npm`, `bun`), e, com o limite de memória do kernel, `CPUWeight=20` e `IOWeight=20` no scope do agente, que só fazem efeito quando a máquina está ocupada. `idle` vai além (niceness 19, `CPUWeight=idle`); `normal` mantém o comportamento antigo. Vale em todos os modos de `mem_enforce`, inclusive `off`. Os conductors não mudam.
 - `orq agent` define o heap do V8 do agente a partir do limite de memória dele: `NODE_OPTIONS=--max-old-space-size=<limite - 1 GB>` (metade do limite quando ele é de 2 GB ou menos). Assim `tsc`, `eslint` e builds dentro do agente ficam sem heap antes de o limite matar o agente inteiro. Um `--max-old-space-size` que já exista é substituído; as outras flags do `NODE_OPTIONS` continuam. O skill `/issue` não fixa mais o heap.
 
 ### Alterado
 - `machine.agent_mem_max` passa a ter `5G` como padrão (era `4G`), para o heap derivado (4 GB) cobrir o `tsc` de repositórios grandes: 3 GB não bastou para um deles.
-
-## [0.12.0] — 2026-11-24
-
-### Alterado
 - O `orq pick` pesa o custo pela conta, não só pelo agente (#105). **Economia** compara tokens novos por entrega aprovada (a mediana por execução ÷ a fração aprovada na primeira revisão, ou respondida para revisores) em vez de por execução. Uma nova penalidade contínua de **escassez** (`policy.weights.scarcity`, padrão 0,60) cresce com o uso de cada conta no ritmo até agora contra o limite do pick, `(min(pressão, 2) ÷ 2)²`, e um agente com várias contas fica com a menos escassa. Contas divididas com os conductors (`agents.<nome>.shared = true` ou uma lista de contas; por padrão o agente do conductor) contam o uso × `policy.weights.shared` (padrão 1,5). A penalidade fixa de `reserve` e o `policy.pacing_penalty` saíram: o `orq pick` avisa sobre eles e lê `agents.<nome>.reserve` como `shared`. O `orq setup` sugere `shared` em vez de `reserve`.
 
 ### Corrigido
