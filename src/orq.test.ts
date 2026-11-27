@@ -3581,3 +3581,38 @@ test("release: a squash release excludes already published commits when calculat
     assert.deepEqual(commits("v0.9.0").map((c: { subject: string }) => c.subject), ["fix: after a normal tag"]);
   } finally { process.chdir(cwd); rmSync(root, { recursive: true, force: true }); }
 });
+
+test("quota guard: breach at the pick limits minus headroom, never on unknown readings", async () => {
+  const { quotaBreach, guardFor } = await import("./quota-guard.js");
+  const g = guardFor({ name: "alpha", dir: "/x" }, [90, 95], 25);
+  assert.deepEqual([g.limit5, g.limitWeek], [65, 70]);
+  assert.equal(quotaBreach({ five: 64, week: 10 }, g), undefined);
+  assert.match(quotaBreach({ five: 98, week: 10 }, g)!, /^5h=98%/);
+  assert.match(quotaBreach({ five: 1, week: 70 }, g)!, /^week=70%/);
+  assert.equal(quotaBreach({ five: "?", week: "-" }, g), undefined);
+});
+
+test("quota guard: watchQuota stops once on a breach and survives failed readings", async () => {
+  const { watchQuota } = await import("./quota-guard.js");
+  const g = { account: "alpha", dir: "/x", limit5: 50, limitWeek: 90 };
+  const reads = [() => Promise.reject(new Error("429")), () => Promise.resolve({ five: 10, week: 1 }), () => Promise.resolve({ five: 60, week: 1 })];
+  let i = 0; const stops: string[] = [];
+  const t = watchQuota(g, () => reads[Math.min(i++, reads.length - 1)](), (w) => stops.push(w), 5);
+  await new Promise((r) => setTimeout(r, 80)); clearInterval(t);
+  assert.equal(stops.length, 1);
+  assert.match(stops[0], /5h=60%/);
+});
+
+test("carrySession: -R on another account copies the session file under the same project slug", async () => {
+  const { carrySession } = await import("./quota-guard.js");
+  const root = mkdtempSync(join(tmpdir(), "orq-carry-"));
+  const alpha = join(root, "alpha"), beta = join(root, "beta");
+  mkdirSync(join(alpha, "projects", "-repo"), { recursive: true });
+  writeFileSync(join(alpha, "projects", "-repo", "abc-1.jsonl"), "{}\n");
+  const accs = [{ name: "alpha", dir: alpha }, { name: "beta", dir: beta }];
+  assert.equal(carrySession(accs, "beta", "abc-1"), "alpha");
+  assert.equal(readFileSync(join(beta, "projects", "-repo", "abc-1.jsonl"), "utf8"), "{}\n");
+  assert.equal(carrySession(accs, "beta", "abc-1"), undefined); // already there
+  assert.equal(carrySession(accs, "beta", "../evil"), undefined);
+  rmSync(root, { recursive: true, force: true });
+});

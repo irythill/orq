@@ -23,7 +23,9 @@ import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
 import { alive } from "../lock.js";
-import { agyToken, humanReset, learnExhausted } from "../quota.js";
+import { agyToken, claudeQuota, humanReset, learnExhausted } from "../quota.js";
+import { carrySession, guardFor, type QuotaGuard, watchQuota } from "../quota-guard.js";
+import { limitsFor } from "../pick.js";
 import { stateDir } from "../paths.js";
 import { heapMB, killedRc, killTree, type MemMode, parsePriority, parseSize, type Priority, resolveMode, runCapped, withHeap } from "../process.js";
 import { closeOwnTab, detectHost, type Host, launch, screenOpen, shq, typeInto } from "../terminal.js";
@@ -45,6 +47,7 @@ interface Job {
   mode: MemMode; priority?: Priority; throwaway: boolean; promptInDir: boolean; closeAfter: number; keep: boolean; tui?: boolean;
   okExit?: number[]; filter?: string; noReview?: string; idleCloseMin?: number; ro?: boolean; review?: boolean;
   orqCommits?: boolean; orqFetches?: boolean; scopeNote?: string; tuiBusy?: string; noHookGraceS?: number;
+  quotaGuard?: QuotaGuard;
 }
 
 const git = (dir: string, ...a: string[]) => {
@@ -234,11 +237,22 @@ export async function agent(argv: string[]): Promise<number> {
     return 2;
   }
   const env: Record<string, string> = {};
+  let quotaGuard: QuotaGuard | undefined;
   for (const [k, val] of Object.entries(def.env ?? {})) env[k] = expandString(String(val), vars);
   if (acc) {
     const ac = claudeAccounts().find((x) => x.name === acc);
     if (!ac) { console.error(m(`account '${acc}' does not exist`, `a conta '${acc}' não existe`)); return 2; }
     env.CLAUDE_CONFIG_DIR = ac.dir;
+    // -R on another account (e.g. after a quota stop): bring the session over, or Claude won't find it.
+    if (resume) {
+      const from = carrySession(claudeAccounts(), acc, resume);
+      if (from) console.log(m(`[orq agent] session ${resume} copied from account ${from} to ${acc}`, `[orq agent] sessão ${resume} copiada da conta ${from} para ${acc}`));
+    }
+    // Stop the run once the account reaches the pick limits (policy.quota_guard = false turns it off).
+    if (getPath(cfg, "policy.quota_guard") !== false) {
+      const ad = ((cfg.agents ?? {}) as Record<string, Obj>)[a] ?? {};
+      quotaGuard = guardFor(ac, limitsFor((cfg.policy ?? {}) as Obj, "high"), Number(ad.headroom ?? 0));
+    }
   }
   const closeAfter = Number(process.env.HERDR_CLOSE_DELAY ?? mach.close_tab_after ?? 20);
   const unit = `herdr-agent-${Math.floor(Date.now() / 1000)}-${process.pid}`; // herdr-board lists herdr-agent-* scopes
@@ -255,7 +269,7 @@ export async function agent(argv: string[]): Promise<number> {
     // A review (-r, prefix review*) must end with a verdict; policy.review_verdict = false turns the check off.
     review: ro && /^review/i.test(basename(O)) && getPath(cfg, "policy.review_verdict") !== false,
     idleCloseMin: tui ? Number(mach.tui_idle_close_min ?? 30) : undefined,
-    tuiBusy: tui ? def.tui_busy : undefined, noHookGraceS: tui ? def.no_hook_grace : undefined,
+    tuiBusy: tui ? def.tui_busy : undefined, noHookGraceS: tui ? def.no_hook_grace : undefined, quotaGuard,
   };
   writeAtomic(`${O}.job.json`, JSON.stringify(job, null, 1));
   countRound?.();
@@ -543,6 +557,24 @@ function orqCommit(dir: string, msg: string): string {
     : `FAILED (exit ${c.status}): ${(c.stderr || c.stdout).trim()}. The changes are still in the worktree.`;
 }
 
+const GUARD_MS = () => Math.max(30, Number(process.env.ORQ_QUOTA_GUARD_S ?? 180)) * 1000;
+
+/** Answer and .done of a run stopped by the quota guard: the conductor re-picks and resumes the session with -R. */
+function quotaStopped(j: Job, why: string): void {
+  const g = j.quotaGuard!, O = j.prefix;
+  const sid = existsSync(`${O}.id`) ? readFileSync(`${O}.id`, "utf8").trim() : j.session ?? "";
+  writeFileSync(`${O}.out.md`, `quota exhausted: account ${g.account} (${why}); stopped by orq before the limit\n\n` +
+    `The work so far stays in the worktree${sid ? ` and in session ${sid}` : ""}. Re-pick (the account is blocked until it resets) ` +
+    `and continue with \`orq agent ... -c <other account> -R ${sid || "<session>"}\` (the session is copied to the new account).\n`);
+  writeAtomic(`${O}.done`, `status=fail rc=3 reason=quota account=${g.account} at=${new Date().toISOString()} agent=${j.agent}${j.tui ? " mode=tui" : ""}\n`);
+  if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=fail rc=3 reason=quota account=${g.account} answer: ${O}.out.md`);
+}
+
+/** Block the account in orq pick until its window resets (best effort, same as `orq block <acct> --quota`). */
+function blockAccount(acct: string, why: string): void {
+  spawnSync(process.execPath, [CLI, "block", acct, "--quota", "--reason", `quota guard: ${why}`], { stdio: "ignore", timeout: 30_000 });
+}
+
 async function runJob(file: string): Promise<number> {
   const j = JSON.parse(readFileSync(file, "utf8")) as Job, O = j.prefix;
   writeFileSync(`${O}.pid`, String(process.pid));
@@ -581,11 +613,12 @@ async function runJob(file: string): Promise<number> {
   };
   if (j.tui) {
     // The agent's own screen: the terminal is its; answers come from the end-of-turn hook (`--turn`).
-    let ended = false, tuiErr: NodeJS.ErrnoException | undefined;
+    let ended = false, tuiErr: NodeJS.ErrnoException | undefined, quotaWhy = "";
     const end = (code: number, killed = false): string => {
       if (ended) return "fail";
       ended = true;
       post();
+      if (quotaWhy) { quotaStopped(j, quotaWhy); rmSync(`${O}.pid`, { force: true }); return "fail"; }
       // Closed before any turn ended (or mid follow-up): a failure, so `orq wait` doesn't hang.
       const ok = !killed && /\bstatus=ok\b/.test(existsSync(`${O}.done`) ? readFileSync(`${O}.done`, "utf8") : "");
       if (killed) {
@@ -606,7 +639,7 @@ async function runJob(file: string): Promise<number> {
       for (const k of j.unset) delete env[k];
       // Ctrl+C belongs to the agent (it reaches us too, as part of the terminal's foreground group). The screen going
       // away (tab or tmux server closed) still ends the agent and cleans up.
-      let child: number | undefined, idleT: NodeJS.Timeout | undefined, idleClosed = false;
+      let child: number | undefined, idleT: NodeJS.Timeout | undefined, guardT: NodeJS.Timeout | undefined, idleClosed = false;
       process.on("SIGINT", () => { /* the agent's */ });
       // The screen going away or being killed from outside: end the agent, and close the tab too (a dead tab stayed open).
       const gone = () => { if (child) killTree(child, false); end(129); closeOwnTab(j.host); process.exit(0); };
@@ -615,6 +648,12 @@ async function runJob(file: string): Promise<number> {
         onError: (e) => { tuiErr = e; writeFileSync(`${O}.out.md`, spawnFailText(j, e)); },
         onSpawn: (c) => {
           child = c.pid;
+          if (j.quotaGuard) guardT = watchQuota(j.quotaGuard, (g) => claudeQuota(g.account, g.dir), (why) => {
+            quotaWhy = why;
+            console.log(m(`[orq agent] account ${j.quotaGuard!.account} at the limit (${why}): stopping the agent`, `[orq agent] conta ${j.quotaGuard!.account} no limite (${why}): parando o agente`));
+            blockAccount(j.quotaGuard!.account, why);
+            if (child) killTree(child, false);
+          }, GUARD_MS());
           // A finished agent waits for a follow-up forever and holds its memory: after the idle timeout without a new
           // turn, kill it; the normal end below cleans up and closes the tab. "New turn" = .done removed (`-R` typed
           // into the screen removes it) or rewritten (the next end of turn), so idle = .done untouched that long.
@@ -641,7 +680,7 @@ async function runJob(file: string): Promise<number> {
           }, pane ? 15_000 : Math.min(30_000, Math.max(1_000, idleMs / 2)));
           idleT.unref();
         } });
-      clearInterval(idleT);
+      clearInterval(idleT); clearInterval(guardT);
       if (idleClosed) rc = 0; // closed on purpose after a finished turn: not a kill
     }
     const st = end(rc, killedRc(rc)), reason = st === "fail" ? /\breason=(\S+)/.exec(existsSync(`${O}.done`) ? readFileSync(`${O}.done`, "utf8") : "")?.[1] : undefined;
@@ -651,13 +690,14 @@ async function runJob(file: string): Promise<number> {
     return 0;
   }
   const log = createWriteStream(`${O}.log`);
+  let quotaWhy = "";
   let spawnErr: NodeJS.ErrnoException | undefined;
   if (!pre()) rc = 2;
   else {
     const env: NodeJS.ProcessEnv = { ...process.env, ...j.env, NODE_OPTIONS: withHeap(j.env.NODE_OPTIONS ?? process.env.NODE_OPTIONS, heapMB(j.cap)) };
     for (const k of j.unset) delete env[k];
     const kmode = resolveMode(j.mode, j.cap);
-    let lastLine = "", lastAt = Date.now(), watch: NodeJS.Timeout | undefined, streams: Promise<unknown> = Promise.resolve();
+    let lastLine = "", lastAt = Date.now(), watch: NodeJS.Timeout | undefined, guardT: NodeJS.Timeout | undefined, streams: Promise<unknown> = Promise.resolve();
     const onLine = (l: string, isOut: boolean) => {
       log.write(`${l}\n`); logText += `${l}\n`; lastLine = l; lastAt = Date.now();
       if (j.format === "text") { if (isOut) { stdout += `${l}\n`; process.stdout.write(`${l}\n`); } return; }
@@ -670,6 +710,13 @@ async function runJob(file: string): Promise<number> {
         stdio: [j.stdin ? openSync(j.prompt, "r") : "ignore", "pipe", "pipe"],
         onError: (e) => { spawnErr = e; log.write(`[orq agent] could not start ${j.argv[0]}: ${e.message}\n`); },
         onSpawn: (c) => {
+          if (j.quotaGuard) guardT = watchQuota(j.quotaGuard, (g) => claudeQuota(g.account, g.dir), (why) => {
+            quotaWhy = why;
+            log.write(`[orq agent] account ${j.quotaGuard!.account} at the limit (${why}): stopping the agent\n`);
+            blockAccount(j.quotaGuard!.account, why);
+            if (kmode === "kernel") spawnSync("systemctl", ["--user", "stop", `${j.unit}.scope`], { stdio: "ignore" });
+            else if (c.pid) killTree(c.pid);
+          }, GUARD_MS());
           streams = Promise.all([lines(c.stdout, (l) => onLine(l, true)), lines(c.stderr, (l) => onLine(l, false))]);
           // OpenCode sometimes doesn't exit after its final event (helpers hold the pipe): stop it after 30 s of quiet.
           if (fmt.idle) watch = setInterval(() => {
@@ -681,7 +728,7 @@ async function runJob(file: string): Promise<number> {
           }, 10_000);
         },
       });
-    } finally { clearInterval(watch); }
+    } finally { clearInterval(watch); clearInterval(guardT); }
     await Promise.race([streams, sleep(5000)]);
   }
   await new Promise((r) => log.end(r));
@@ -737,6 +784,13 @@ async function runJob(file: string): Promise<number> {
   const why = spawnErr ? ` reason=spawn:${spawnErr.code ?? "error"}` : st !== "fail" ? "" : !verdict ? (rc === 0 ? " reason=filter" : "")
     : noReview ? " reason=no-review" : noVerdict ? " reason=no-verdict" : !/\S/.test(answer) ? " reason=empty" : "";
   writeRefs(j, answer, headBefore);
+  if (quotaWhy) {
+    quotaStopped(j, quotaWhy);
+    rmSync(`${O}.pid`, { force: true });
+    state({ status: "fail", rc: 3, end: new Date().toISOString(), reason: "quota" });
+    if (j.host !== "plain" && !j.keep) { await sleep(j.closeAfter * 1000); closeOwnTab(j.host); }
+    return 0;
+  }
   writeAtomic(`${O}.done`, `status=${st} rc=${rc}${why} at=${new Date().toISOString()} agent=${j.agent}\n`);
   rmSync(`${O}.pid`, { force: true });
   state({ status: st, rc, end: new Date().toISOString(), ...(why ? { reason: why.slice(8) } : {}) });
