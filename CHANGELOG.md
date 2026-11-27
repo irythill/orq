@@ -6,6 +6,9 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 
+### Added
+- `machine.agent_priority` (#169): agents run at a lower CPU and disk priority so the desktop stays responsive while they compile. `low` (the default) sets niceness 10, inherited by everything the agent starts (`tsc`, `npm`, `bun`), and, with the kernel memory cap, `CPUWeight=20` and `IOWeight=20` on the agent's scope, which only take effect when the machine is busy. `idle` goes further (niceness 19, `CPUWeight=idle`); `normal` keeps the old behavior. Applies in every `mem_enforce` mode, including `off`. Conductors are not affected.
+
 ## [0.12.0] — 2026-11-24
 
 ### Changed

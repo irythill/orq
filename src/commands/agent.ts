@@ -25,7 +25,7 @@ import { m } from "../i18n.js";
 import { alive } from "../lock.js";
 import { agyToken, humanReset, learnExhausted } from "../quota.js";
 import { stateDir } from "../paths.js";
-import { killedRc, killTree, type MemMode, parseSize, resolveMode, runCapped } from "../process.js";
+import { killedRc, killTree, type MemMode, parsePriority, parseSize, type Priority, resolveMode, runCapped } from "../process.js";
 import { closeOwnTab, detectHost, type Host, launch, screenOpen, shq, typeInto } from "../terminal.js";
 import { ackPrefix } from "../notice.js";
 import { dropWorktree, notify } from "../testrun.js";
@@ -42,7 +42,7 @@ interface Job {
   agent: string; title: string; repo: string; dir: string; prefix: string; prompt: string; argv: string[];
   env: Record<string, string>; unset: string[]; stdin: boolean; format: string; answer: string;
   session?: string; fromLog?: string; parent: string; host: Host; unit: string; cap?: number; swap?: number;
-  mode: MemMode; throwaway: boolean; promptInDir: boolean; closeAfter: number; keep: boolean; tui?: boolean;
+  mode: MemMode; priority?: Priority; throwaway: boolean; promptInDir: boolean; closeAfter: number; keep: boolean; tui?: boolean;
   okExit?: number[]; filter?: string; noReview?: string; idleCloseMin?: number; ro?: boolean; review?: boolean;
   orqCommits?: boolean; orqFetches?: boolean; scopeNote?: string; tuiBusy?: string; noHookGraceS?: number;
 }
@@ -248,6 +248,7 @@ export async function agent(argv: string[]): Promise<number> {
     fromLog: typeof def.session === "object" ? def.session.from_log : undefined, parent: process.env.HERDR_PANE_ID ?? "",
     host, unit, cap: parseSize(def.mem_max ?? (mach.agent_mem_max as string | undefined) ?? "off"),
     swap: parseSize(mach.agent_swap_max as string | undefined), mode: (mach.mem_enforce as MemMode | undefined) ?? "auto",
+    priority: parsePriority(mach.agent_priority),
     throwaway, promptInDir: Boolean(def.prompt_in_dir), closeAfter,
     keep: process.env.HERDR_KEEP_TAB === "1" || process.env.ORQ_KEEP_TAB === "1" || closeAfter <= 0, tui,
     okExit: def.ok_exit, filter: def.filter, noReview: def.no_review, ro, orqCommits: steps.commit, orqFetches: steps.fetch, scopeNote,
@@ -610,7 +611,7 @@ async function runJob(file: string): Promise<number> {
       // The screen going away or being killed from outside: end the agent, and close the tab too (a dead tab stayed open).
       const gone = () => { if (child) killTree(child, false); end(129); closeOwnTab(j.host); process.exit(0); };
       for (const sig of ["SIGHUP", "SIGTERM"] as NodeJS.Signals[]) process.on(sig, gone);
-      rc = await runCapped(j.argv[0], j.argv.slice(1), { cap: j.cap, swap: j.swap, mode: j.mode, unit: j.unit, cwd: j.dir, env, quote: true, tty: true,
+      rc = await runCapped(j.argv[0], j.argv.slice(1), { cap: j.cap, swap: j.swap, mode: j.mode, unit: j.unit, priority: j.priority, cwd: j.dir, env, quote: true, tty: true,
         onError: (e) => { tuiErr = e; writeFileSync(`${O}.out.md`, spawnFailText(j, e)); },
         onSpawn: (c) => {
           child = c.pid;
@@ -665,7 +666,7 @@ async function runJob(file: string): Promise<number> {
     };
     try {
       rc = await runCapped(j.argv[0], j.argv.slice(1), {
-        cap: j.cap, swap: j.swap, mode: j.mode, unit: j.unit, cwd: j.dir, env, quote: true,
+        cap: j.cap, swap: j.swap, mode: j.mode, unit: j.unit, priority: j.priority, cwd: j.dir, env, quote: true,
         stdio: [j.stdin ? openSync(j.prompt, "r") : "ignore", "pipe", "pipe"],
         onError: (e) => { spawnErr = e; log.write(`[orq agent] could not start ${j.argv[0]}: ${e.message}\n`); },
         onSpawn: (c) => {

@@ -6,6 +6,9 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+### Adicionado
+- `machine.agent_priority` (#169): os agentes rodam com prioridade de CPU e de disco mais baixa, para o desktop continuar respondendo enquanto eles compilam. `low` (o padrão) aplica niceness 10, herdada por tudo o que o agente inicia (`tsc`, `npm`, `bun`), e, com o limite de memória do kernel, `CPUWeight=20` e `IOWeight=20` no scope do agente, que só fazem efeito quando a máquina está ocupada. `idle` vai além (niceness 19, `CPUWeight=idle`); `normal` mantém o comportamento antigo. Vale em todos os modos de `mem_enforce`, inclusive `off`. Os conductors não mudam.
+
 ## [0.12.0] — 2026-11-24
 
 ### Alterado

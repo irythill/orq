@@ -117,6 +117,7 @@ format: `SKILL.md` + `CLAUDE.md` (Claude Code), `AGENTS.md` (Codex, OpenCode), C
 agent_mem_max = "4G"       # default for every agent; "off" disables
 test_mem_max  = "6G"
 mem_enforce   = "auto"     # auto | kernel | watchdog | off
+agent_priority = "low"     # low | idle | normal: agents yield CPU/IO to the desktop when the machine is busy
 tui_idle_close_min = 30    # minutes a finished -T agent waits for a follow-up before closing; 0 = never
 [agents.codex]
 mem_max = "6G"             # per-agent override

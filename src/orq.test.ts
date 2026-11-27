@@ -1203,6 +1203,23 @@ test("process: sizes, tree memory, and the watchdog kills a tree over the cap", 
   assert.equal(await runCapped(process.execPath, ["-e", "0"], { mode: "auto" }), 0); // no cap
 });
 
+test("process: agent_priority lowers the agent (and what it starts) in every mode; normal changes nothing", async () => {
+  const { parsePriority, priorityProps, runCapped, hasKernelCap } = await import("./process.js");
+  assert.equal(parsePriority(undefined), undefined); assert.equal(parsePriority("low"), "low");
+  assert.throws(() => parsePriority("high"));
+  assert.deepEqual(priorityProps(undefined), []); assert.deepEqual(priorityProps("normal"), []);
+  assert.deepEqual(priorityProps("low"), ["-p", "CPUWeight=20", "-p", "IOWeight=20"]);
+  // The child reports the niceness of a process it starts itself: inherited, like tsc under an agent.
+  const nice = "const{execFileSync}=require('child_process');process.exit(+execFileSync(process.execPath,['-e','process.stdout.write(String(require(\\'os\\').getPriority()))']))";
+  const base = await runCapped(process.execPath, ["-e", nice], { mode: "off" });
+  if (process.platform !== "win32") {
+    assert.equal(await runCapped(process.execPath, ["-e", nice], { mode: "off", priority: "low" }), Math.max(base, 10));
+    assert.equal(await runCapped(process.execPath, ["-e", nice], { mode: "off", priority: "normal" }), base);
+    assert.equal(await runCapped(process.execPath, ["-e", nice], { cap: 2 ** 30, mode: "watchdog", priority: "idle" }), 19);
+    if (hasKernelCap()) assert.equal(await runCapped(process.execPath, ["-e", nice], { cap: 2 ** 30, mode: "kernel", priority: "low" }), Math.max(base, 10));
+  }
+});
+
 test("process: a command that cannot start (E2BIG thrown, ENOENT emitted) resolves SPAWN_FAILED with the error", async () => {
   const { runCapped, SPAWN_FAILED } = await import("./process.js");
   const { argvTooBig, spawnFailText } = await import("./commands/agent.js");
