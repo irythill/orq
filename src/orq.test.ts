@@ -3486,6 +3486,14 @@ test("release: version from conventional commits; check wants package, lock and 
   assert.equal(parsed.lock.packages["node_modules/x"].version, "1.0.0");
   assert.match(b.en, /## \[Unreleased\]\n\n## \[0\.7\.0\] — 2026-11-18\n\n### Fixed\n- y\n\n## \[0\.6\.1\]/);
   assert.equal(bumped("0.7.0", "2026-11-19", parsed).en, b.en);
+  // A version prepared but not published, with more landing since: merged into it heading by heading, new first, new date.
+  const late = `# C\n\n## [Unreleased]\n\n### Added\n- new\n\n### Changed\n- c2\n\n## [0.7.0] — 2026-11-18\n\n### Changed\n- c1\n\n### Fixed\n- y\n\n## [0.6.1] — d\n- x\n`;
+  const m2 = bumped("0.7.0", "2026-11-27", { ...parsed, en: late, pt: late });
+  assert.equal(m2.en, `# C\n\n## [Unreleased]\n\n## [0.7.0] — 2026-11-27\n\n### Added\n- new\n\n### Changed\n- c2\n- c1\n\n### Fixed\n- y\n\n## [0.6.1] — d\n- x\n`);
+  assert.deepEqual(problems("0.7.0", { ...parsed, en: m2.en, pt: m2.pt }), []);
+  // ...also when the version is the last section of the file
+  const tail = `# C\n\n## [Unreleased]\n\n### Fixed\n- z\n\n## [0.7.0] — d\n\n### Fixed\n- y\n`;
+  assert.equal(bumped("0.7.0", "e", { ...parsed, en: tail, pt: tail }).en, `# C\n\n## [Unreleased]\n\n## [0.7.0] — e\n\n### Fixed\n- z\n- y\n\n`);
 });
 
 test("harness: wait strategy follows capabilities, not background-process support (#119)", async () => {
