@@ -6,6 +6,8 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-27
+
 ## [0.12.0] — 2026-11-27
 
 ### Added
