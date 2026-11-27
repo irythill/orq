@@ -6,6 +6,8 @@ English: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-27
+
 ## [0.12.0] — 2026-11-27
 
 ### Adicionado
