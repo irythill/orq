@@ -113,7 +113,7 @@ escolhido: `SKILL.md` + `CLAUDE.md` (Claude Code), `AGENTS.md` (Codex, OpenCode)
 
 ```toml
 [machine]
-agent_mem_max = "4G"       # padrão para todo agente; "off" desliga
+agent_mem_max = "5G"       # padrão para todo agente; "off" desliga; ferramentas node recebem heap deste valor - 1 GB
 test_mem_max  = "6G"
 mem_enforce   = "auto"     # auto | kernel | watchdog | off
 agent_priority = "low"     # low | idle | normal: agentes cedem CPU/disco ao desktop quando a máquina está ocupada

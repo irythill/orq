@@ -29,6 +29,21 @@ export function parsePriority(v: unknown): Priority | undefined {
   throw new Error(m(`invalid agent_priority: ${String(v)} (low | normal | idle)`, `agent_priority inválido: ${String(v)} (low | normal | idle)`));
 }
 
+/** V8 heap (MB) for node tools an agent runs under `cap` bytes: the cap covers the whole tree, so leave 1 GB for the
+ * agent itself and non-heap memory, or half the cap when it is small. undefined = no cap, leave node alone. */
+export function heapMB(cap: number | undefined): number | undefined {
+  if (cap === undefined) return undefined;
+  const mb = cap / 2 ** 20;
+  return Math.floor(Math.max(mb / 2, mb - 1024));
+}
+
+/** NODE_OPTIONS with --max-old-space-size set to `mb` (an existing one is replaced; other flags are kept). */
+export function withHeap(nodeOptions: string | undefined, mb: number | undefined): string | undefined {
+  if (mb === undefined) return nodeOptions;
+  const rest = (nodeOptions ?? "").replace(/--max-old-space-size(=|\s+)\S+/g, "").trim().replace(/\s+/g, " ");
+  return `${rest ? `${rest} ` : ""}--max-old-space-size=${mb}`;
+}
+
 /** systemd-run -p arguments for a priority. */
 export const priorityProps = (p: Priority | undefined): string[] => (p ? PRIO[p].props : []).flatMap((x) => ["-p", x]);
 

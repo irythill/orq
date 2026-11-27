@@ -53,7 +53,7 @@ test("parseLocal reads a bare date as local midnight", () => {
 
 test("config: defaults, layers, get, files", () => {
   const { root, env, run } = sandbox();
-  assert.equal(run("config", "get", "machine.agent_mem_max").stdout.trim(), "4G");
+  assert.equal(run("config", "get", "machine.agent_mem_max").stdout.trim(), "5G");
   assert.equal(run("config", "files").stdout.trim(), "(no file; defaults only)");
   mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
   writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.toml"), "[machine]\nagent_mem_max = \"8G\"\n");
@@ -1218,6 +1218,19 @@ test("process: agent_priority lowers the agent (and what it starts) in every mod
     assert.equal(await runCapped(process.execPath, ["-e", nice], { cap: 2 ** 30, mode: "watchdog", priority: "idle" }), 19);
     if (hasKernelCap()) assert.equal(await runCapped(process.execPath, ["-e", nice], { cap: 2 ** 30, mode: "kernel", priority: "low" }), Math.max(base, 10));
   }
+});
+
+test("process: the V8 heap follows the agent's memory cap, replacing a fixed one and keeping other flags", async () => {
+  const { heapMB, withHeap, parseSize } = await import("./process.js");
+  assert.equal(heapMB(undefined), undefined);
+  assert.equal(heapMB(parseSize("5G")), 4096); assert.equal(heapMB(parseSize("4G")), 3072);
+  assert.equal(heapMB(parseSize("2G")), 1024); assert.equal(heapMB(parseSize("1G")), 512); // small caps: half
+  assert.equal(withHeap(undefined, undefined), undefined);
+  assert.equal(withHeap("--enable-source-maps", undefined), "--enable-source-maps");
+  assert.equal(withHeap(undefined, 4096), "--max-old-space-size=4096");
+  assert.equal(withHeap("--max-old-space-size=2048", 4096), "--max-old-space-size=4096");
+  assert.equal(withHeap("--enable-source-maps --max-old-space-size 8192 --trace-warnings", 3072),
+    "--enable-source-maps --trace-warnings --max-old-space-size=3072");
 });
 
 test("process: a command that cannot start (E2BIG thrown, ENOENT emitted) resolves SPAWN_FAILED with the error", async () => {

@@ -114,7 +114,7 @@ format: `SKILL.md` + `CLAUDE.md` (Claude Code), `AGENTS.md` (Codex, OpenCode), C
 
 ```toml
 [machine]
-agent_mem_max = "4G"       # default for every agent; "off" disables
+agent_mem_max = "5G"       # default for every agent; "off" disables; node tools get a heap of this - 1 GB
 test_mem_max  = "6G"
 mem_enforce   = "auto"     # auto | kernel | watchdog | off
 agent_priority = "low"     # low | idle | normal: agents yield CPU/IO to the desktop when the machine is busy

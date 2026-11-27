@@ -8,6 +8,10 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ### Added
 - `machine.agent_priority` (#169): agents run at a lower CPU and disk priority so the desktop stays responsive while they compile. `low` (the default) sets niceness 10, inherited by everything the agent starts (`tsc`, `npm`, `bun`), and, with the kernel memory cap, `CPUWeight=20` and `IOWeight=20` on the agent's scope, which only take effect when the machine is busy. `idle` goes further (niceness 19, `CPUWeight=idle`); `normal` keeps the old behavior. Applies in every `mem_enforce` mode, including `off`. Conductors are not affected.
+- `orq agent` sets the agent's V8 heap from its memory cap: `NODE_OPTIONS=--max-old-space-size=<cap - 1 GB>` (half the cap when it is 2 GB or less), so `tsc`, `eslint` and builds inside the agent run out of heap before the cap kills the whole agent. An existing `--max-old-space-size` is replaced; other `NODE_OPTIONS` flags are kept. The `/issue` skill no longer hardcodes a heap.
+
+### Changed
+- `machine.agent_mem_max` defaults to `5G` (was `4G`), so the derived heap (4 GB) covers `tsc` on large repos: 3 GB was not enough for one.
 
 ## [0.12.0] — 2026-11-24
 

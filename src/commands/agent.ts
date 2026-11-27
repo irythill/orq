@@ -25,7 +25,7 @@ import { m } from "../i18n.js";
 import { alive } from "../lock.js";
 import { agyToken, humanReset, learnExhausted } from "../quota.js";
 import { stateDir } from "../paths.js";
-import { killedRc, killTree, type MemMode, parsePriority, parseSize, type Priority, resolveMode, runCapped } from "../process.js";
+import { heapMB, killedRc, killTree, type MemMode, parsePriority, parseSize, type Priority, resolveMode, runCapped, withHeap } from "../process.js";
 import { closeOwnTab, detectHost, type Host, launch, screenOpen, shq, typeInto } from "../terminal.js";
 import { ackPrefix } from "../notice.js";
 import { dropWorktree, notify } from "../testrun.js";
@@ -602,7 +602,7 @@ async function runJob(file: string): Promise<number> {
     };
     if (!pre()) rc = 2;
     else {
-      const env: NodeJS.ProcessEnv = { ...process.env, ...j.env };
+      const env: NodeJS.ProcessEnv = { ...process.env, ...j.env, NODE_OPTIONS: withHeap(j.env.NODE_OPTIONS ?? process.env.NODE_OPTIONS, heapMB(j.cap)) };
       for (const k of j.unset) delete env[k];
       // Ctrl+C belongs to the agent (it reaches us too, as part of the terminal's foreground group). The screen going
       // away (tab or tmux server closed) still ends the agent and cleans up.
@@ -654,7 +654,7 @@ async function runJob(file: string): Promise<number> {
   let spawnErr: NodeJS.ErrnoException | undefined;
   if (!pre()) rc = 2;
   else {
-    const env: NodeJS.ProcessEnv = { ...process.env, ...j.env };
+    const env: NodeJS.ProcessEnv = { ...process.env, ...j.env, NODE_OPTIONS: withHeap(j.env.NODE_OPTIONS ?? process.env.NODE_OPTIONS, heapMB(j.cap)) };
     for (const k of j.unset) delete env[k];
     const kmode = resolveMode(j.mode, j.cap);
     let lastLine = "", lastAt = Date.now(), watch: NodeJS.Timeout | undefined, streams: Promise<unknown> = Promise.resolve();
