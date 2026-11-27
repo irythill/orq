@@ -215,6 +215,39 @@ orq block antigravity --days 3                   # out of the picks (e.g. weekly
 orq pick fix --same .orquestra/<ID>/impl-<repo>.pick   # a fix round: the implementer's agent/model/account, effort +1
 ```
 
+### Guarda em execução: loops, orçamento e tokens descontrolados
+O `orq pick` só julga uma execução depois que ela termina. Enquanto ela roda, o runner a acompanha: a cada 30 s lê o
+stream de eventos do próprio agente (Claude e OpenCode headless) ou o transcript do Claude em disco (`-T`) e confere
+contra `[policy.budget]`. Os outros agentes ficam sem leituras (nada é estimado), e uma leitura que o stream não traz
+(tokens, contexto) fica de fora.
+
+| checagem | config (padrões) | no limite |
+|---|---|---|
+| turnos, tokens novos (entrada + escrita de cache + saída), contexto reenviado por turno | `turns = [400, 1000]`, `tokens = [3_000_000, 10_000_000]`, `context = [300_000, 600_000]` (`[soft, hard]`) | soft: uma linha `[ORQ AGENT WARN]` para o conductor; hard: para, `reason=budget` |
+| o mesmo arquivo editado N vezes | `same_file_edits = 40` | para, `reason=loop` |
+| o mesmo comando N vezes sem edição entre eles | `same_command = 8` | para, `reason=loop` |
+| o mesmo erro de ferramenta N vezes seguidas (números ignorados: um erro do tsc em outra linha conta igual) | `same_error = 6` | para, `reason=loop` |
+| N turnos sem mudança no worktree (execuções de escrita) | `no_progress_turns = 150` | para, `reason=loop` |
+| um follow-up (`-R`) que cita muitos arquivos que a execução nunca tocou | `scope_new_files = 6` | aviso no lançamento: um agente separado pode ser melhor |
+| `-R` numa sessão cujo último turno reenviou mais que o limite soft de `context` | (o soft de `context`) | aviso no lançamento: um agente novo com um resumo custa menos |
+| uma resposta que cita arquivos do repo que não existem | sempre | `refs-missing=N` no `.done` e na linha de término |
+| uma resposta dizendo que os testes passam enquanto o `orq verify` falha no mesmo commit | sempre | `claimed-pass=<prefixo>` no `.done` do verify, no relatório e na linha de término |
+
+Uma parada é `status=fail rc=3 reason=budget|loop`: o trabalho fica no worktree e na sessão, o `<prefixo>.out.md` diz o
+motivo e com quais leituras, e o `<prefixo>.guard` registra cada aviso e parada. Replaneje em vez de repetir as mesmas
+instruções com `-R`. O `orq board` mostra os turnos, tokens e contexto de cada execução (`412t 1.2M 180k ctx`) e o
+último aviso; o `<prefixo>.meter.json` guarda as leituras. `0` desliga uma checagem, `policy.guard = false` desliga
+todas; `[policy.budget.impl]`, `[policy.budget.review]` (execuções só leitura) e `[policy.budget.<nível>]`
+(`orq agent --level <nível>`) sobrescrevem os valores base.
+
+```toml
+[policy.budget]
+same_file_edits = 60
+no_progress_turns = 0       # desligado
+[policy.budget.review]
+turns = [150, 400]
+```
+
 ### Idioma e tema
 O orq fala inglês e português: mensagens da CLI, `orq board`, avisos e `install.sh`. Ele segue `[ui] lang` na sua
 config (`"auto"` = idioma do sistema, `"en"`, `"pt"`) ou a variável de ambiente `ORQ_LANG`. Para trocar a qualquer

@@ -30,6 +30,13 @@ export const DEFAULTS: Obj = {
     quota_5h: { simple: 90, medium: 85, heavy: 80 }, // same for the 5h window, per task level
     max_rounds: 2, // fix rounds before stopping and calling the user
     review: "other-vendor", // other-vendor | any
+    // Runtime guard of a child run (src/run-guard.ts); guard = false turns it all off, 0 turns one check off.
+    // [soft, hard]: soft warns the conductor once, hard stops the run (reason=budget). [policy.budget.impl|review|<level>] override.
+    budget: {
+      turns: [400, 1000], tokens: [3_000_000, 10_000_000], context: [300_000, 600_000], // tokens = new: input + cache writes + output
+      same_file_edits: 40, same_command: 8, same_error: 6, no_progress_turns: 150, // loops (reason=loop)
+      scope_new_files: 6, // -R: files the follow-up names that the run never touched
+    },
   },
   ui: { lang: "auto", theme: "gunmetal", desktop_notify: true, board_hide_hours: 6 }, // board_hide_hours: finished/dead agents older than this leave `orq board` (still in --json) · lang: auto | en | pt · theme: gunmetal | chrome | lcd | terminal · desktop_notify: desktop popup for failures (Linux, notify-send)
   // Where quota comes from, per agent: "builtin" | "none" | false | { command = "..." } (see src/quota.ts).

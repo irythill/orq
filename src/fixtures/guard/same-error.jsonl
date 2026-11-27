@@ -1,0 +1,20 @@
+{"type": "assistant", "message": {"id": "msg_0", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "npx tsc --noEmit"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": [{"type": "text", "text": "src/a.ts(10,5): error TS2322: Type 'string' is not assignable to type 'number'."}], "is_error": true}]}}
+{"type": "assistant", "message": {"id": "msg_100", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Edit", "input": {"file_path": "/w/src/a.ts", "old_string": "a", "new_string": "b"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_1", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "npx tsc --noEmit"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": [{"type": "text", "text": "src/a.ts(11,5): error TS2322: Type 'string' is not assignable to type 'number'."}], "is_error": true}]}}
+{"type": "assistant", "message": {"id": "msg_101", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Edit", "input": {"file_path": "/w/src/a.ts", "old_string": "a", "new_string": "b"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_2", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "npx tsc --noEmit"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": [{"type": "text", "text": "src/a.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'."}], "is_error": true}]}}
+{"type": "assistant", "message": {"id": "msg_102", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Edit", "input": {"file_path": "/w/src/a.ts", "old_string": "a", "new_string": "b"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_3", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "npx tsc --noEmit"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": [{"type": "text", "text": "src/a.ts(13,5): error TS2322: Type 'string' is not assignable to type 'number'."}], "is_error": true}]}}
+{"type": "assistant", "message": {"id": "msg_103", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Edit", "input": {"file_path": "/w/src/a.ts", "old_string": "a", "new_string": "b"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_4", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "npx tsc --noEmit"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": [{"type": "text", "text": "src/a.ts(14,5): error TS2322: Type 'string' is not assignable to type 'number'."}], "is_error": true}]}}
+{"type": "assistant", "message": {"id": "msg_104", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Edit", "input": {"file_path": "/w/src/a.ts", "old_string": "a", "new_string": "b"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
