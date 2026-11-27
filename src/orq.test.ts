@@ -53,7 +53,7 @@ test("parseLocal reads a bare date as local midnight", () => {
 
 test("config: defaults, layers, get, files", () => {
   const { root, env, run } = sandbox();
-  assert.equal(run("config", "get", "machine.agent_mem_max").stdout.trim(), "4G");
+  assert.equal(run("config", "get", "machine.agent_mem_max").stdout.trim(), "5G");
   assert.equal(run("config", "files").stdout.trim(), "(no file; defaults only)");
   mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
   writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.toml"), "[machine]\nagent_mem_max = \"8G\"\n");
@@ -1201,6 +1201,38 @@ test("process: sizes, tree memory, and the watchdog kills a tree over the cap", 
   assert.equal(await runCapped(process.execPath, ["-e", hog], { cap: 300 * 2 ** 20, mode: "watchdog", intervalMs: 300 }), 137);
   assert.equal(await runCapped(process.execPath, ["-e", "process.exit(3)"], { cap: 2 ** 30, mode: "watchdog" }), 3);
   assert.equal(await runCapped(process.execPath, ["-e", "0"], { mode: "auto" }), 0); // no cap
+});
+
+test("process: agent_priority lowers the agent (and what it starts) in every mode; normal changes nothing", async () => {
+  const { parsePriority, priorityProps, runCapped, hasKernelCap } = await import("./process.js");
+  assert.equal(parsePriority(undefined), undefined); assert.equal(parsePriority("low"), "low");
+  assert.throws(() => parsePriority("high"));
+  assert.deepEqual(priorityProps(undefined), []); assert.deepEqual(priorityProps("normal"), []);
+  assert.deepEqual(priorityProps("low"), ["-p", "CPUWeight=20", "-p", "IOWeight=20"]);
+  // The child reports the niceness of a process it starts itself: inherited, like tsc under an agent.
+  const nice = "const{execFileSync}=require('child_process');process.exit(+execFileSync(process.execPath,['-e','process.stdout.write(String(require(\\'os\\').getPriority()))']))";
+  // An exit code is 0–255: a negative niceness (macOS runners start at -10) comes back as 246.
+  const niceOf = async (o: Parameters<typeof runCapped>[2]) => { const c = await runCapped(process.execPath, ["-e", nice], o); return c > 127 ? c - 256 : c; };
+  const base = await niceOf({ mode: "off" });
+  if (process.platform !== "win32") {
+    assert.equal(await niceOf({ mode: "off", priority: "low" }), Math.max(base, 10)); // lowers, never raises
+    assert.equal(await niceOf({ mode: "off", priority: "normal" }), base);
+    assert.equal(await niceOf({ cap: 2 ** 30, mode: "watchdog", priority: "idle" }), Math.max(base, 19));
+    if (hasKernelCap()) assert.equal(await niceOf({ cap: 2 ** 30, mode: "kernel", priority: "low" }), Math.max(base, 10));
+  }
+});
+
+test("process: the V8 heap follows the agent's memory cap, replacing a fixed one and keeping other flags", async () => {
+  const { heapMB, withHeap, parseSize } = await import("./process.js");
+  assert.equal(heapMB(undefined), undefined);
+  assert.equal(heapMB(parseSize("5G")), 4096); assert.equal(heapMB(parseSize("4G")), 3072);
+  assert.equal(heapMB(parseSize("2G")), 1024); assert.equal(heapMB(parseSize("1G")), 512); // small caps: half
+  assert.equal(withHeap(undefined, undefined), undefined);
+  assert.equal(withHeap("--enable-source-maps", undefined), "--enable-source-maps");
+  assert.equal(withHeap(undefined, 4096), "--max-old-space-size=4096");
+  assert.equal(withHeap("--max-old-space-size=2048", 4096), "--max-old-space-size=4096");
+  assert.equal(withHeap("--enable-source-maps --max-old-space-size 8192 --trace-warnings", 3072),
+    "--enable-source-maps --trace-warnings --max-old-space-size=3072");
 });
 
 test("process: a command that cannot start (E2BIG thrown, ENOENT emitted) resolves SPAWN_FAILED with the error", async () => {

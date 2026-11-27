@@ -7,9 +7,52 @@
 // mode "auto" = kernel when available, else watchdog. (Windows Job Objects need a native addon: later, if the
 // watchdog proves too coarse.)
 import { type ChildProcess, execFile, spawn, spawnSync, type StdioOptions } from "node:child_process";
+import { getPriority, setPriority } from "node:os";
 import { m } from "./i18n.js";
 
 export type MemMode = "auto" | "kernel" | "watchdog" | "off";
+
+// Scheduling priority for agents (machine.agent_priority). Agents batch-compile while a person uses the desktop: under
+// contention they should yield. CPUWeight/IOWeight only bite when the machine is busy, so an idle box runs them at full
+// speed. Nice is inherited by the agent's children (tsc, npm, bun), where the CPU actually goes.
+export type Priority = "low" | "normal" | "idle";
+const PRIO: Record<Priority, { nice: number; props: string[] }> = {
+  normal: { nice: 0, props: [] },
+  low: { nice: 10, props: ["CPUWeight=20", "IOWeight=20"] },
+  idle: { nice: 19, props: ["CPUWeight=idle", "IOWeight=1"] },
+};
+
+/** "low" | "normal" | "idle" (anything else, or nothing: undefined = leave the priority alone). */
+export function parsePriority(v: unknown): Priority | undefined {
+  if (v === undefined || v === "") return undefined;
+  if (v === "low" || v === "normal" || v === "idle") return v;
+  throw new Error(m(`invalid agent_priority: ${String(v)} (low | normal | idle)`, `agent_priority inválido: ${String(v)} (low | normal | idle)`));
+}
+
+/** V8 heap (MB) for node tools an agent runs under `cap` bytes: the cap covers the whole tree, so leave 1 GB for the
+ * agent itself and non-heap memory, or half the cap when it is small. undefined = no cap, leave node alone. */
+export function heapMB(cap: number | undefined): number | undefined {
+  if (cap === undefined) return undefined;
+  const mb = cap / 2 ** 20;
+  return Math.floor(Math.max(mb / 2, mb - 1024));
+}
+
+/** NODE_OPTIONS with --max-old-space-size set to `mb` (an existing one is replaced; other flags are kept). */
+export function withHeap(nodeOptions: string | undefined, mb: number | undefined): string | undefined {
+  if (mb === undefined) return nodeOptions;
+  const rest = (nodeOptions ?? "").replace(/--max-old-space-size(=|\s+)\S+/g, "").trim().replace(/\s+/g, " ");
+  return `${rest ? `${rest} ` : ""}--max-old-space-size=${mb}`;
+}
+
+/** systemd-run -p arguments for a priority. */
+export const priorityProps = (p: Priority | undefined): string[] => (p ? PRIO[p].props : []).flatMap((x) => ["-p", x]);
+
+/** Lower the started command's priority, never raise it (orq itself may already run niced); no-op for
+ * normal/undefined; a gone process or a denied call is ignored. */
+export function applyPriority(pid: number | undefined, p: Priority | undefined): void {
+  if (!pid || !p || PRIO[p].nice === 0) return;
+  try { if (getPriority(pid) < PRIO[p].nice) setPriority(pid, PRIO[p].nice); } catch { /* exited already, or not allowed */ }
+}
 
 /** "4G", "512M", "1.5G", "off" → bytes (undefined = no cap). */
 export function parseSize(s: string | number | undefined): number | undefined {
@@ -98,7 +141,7 @@ export function killTree(pid: number, group = true): void {
 }
 
 export interface RunOpts {
-  cap?: number; swap?: number; mode?: MemMode; unit?: string; intervalMs?: number; cwd?: string;
+  cap?: number; swap?: number; mode?: MemMode; unit?: string; intervalMs?: number; cwd?: string; priority?: Priority;
   stdio?: StdioOptions; env?: NodeJS.ProcessEnv; onSpawn?: (c: ChildProcess) => void;
   quote?: boolean; // Windows shell (.cmd shims): quote each argument instead of passing a command line as is
   tty?: boolean; // an interactive screen (-T): stays in the terminal's session; the watchdog kills its tree pid by pid
@@ -126,9 +169,10 @@ export function runCapped(cmd: string, args: string[], o: RunOpts = {}): Promise
   const mode = resolveMode(o.mode ?? "auto", o.cap);
   if (mode === "kernel") {
     const sd = ["--user", "--scope", "-q", ...noExp(), ...(o.unit ? [`--unit=${o.unit}`] : []), "-p", `MemoryMax=${o.cap}`,
-      ...(o.swap !== undefined ? ["-p", `MemorySwapMax=${o.swap}`] : []), "--", cmd, ...args];
+      ...(o.swap !== undefined ? ["-p", `MemorySwapMax=${o.swap}`] : []), ...priorityProps(o.priority), "--", cmd, ...args];
     let c: ChildProcess;
     try { c = spawn("systemd-run", sd, { stdio: o.stdio ?? "inherit", cwd: o.cwd, env: o.env }); } catch (e) { return startFailed(e, o); }
+    applyPriority(c.pid, o.priority); // --scope execs the command in this same process
     o.onSpawn?.(c);
     return wait(c, o);
   }
@@ -141,6 +185,7 @@ export function runCapped(cmd: string, args: string[], o: RunOpts = {}): Promise
     child = spawn(q ? winQuote(cmd) : cmd, q ? args.map(winQuote) : args,
       { stdio: o.stdio ?? "inherit", cwd: o.cwd, env: o.env, detached: !win && !o.tty, shell, windowsHide: true });
   } catch (e) { return startFailed(e, o); }
+  applyPriority(child.pid, o.priority);
   o.onSpawn?.(child);
   if (mode === "off" || !child.pid) return wait(child, o);
   const fwd = (sig: NodeJS.Signals) => () => { try { process.kill(-child.pid!, sig); } catch { child.kill(sig); } };

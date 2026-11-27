@@ -12,9 +12,10 @@ export type Obj = Record<string, unknown>;
 
 export const DEFAULTS: Obj = {
   machine: {
-    agent_mem_max: "4G", // memory cap per agent
+    agent_mem_max: "5G", // memory cap per agent (node tools inside it get a V8 heap of this minus 1 GB)
     agent_swap_max: "1G",
     test_mem_max: "6G", // cap per test suite (orq verify, orq baseline)
+    agent_priority: "low", // CPU/IO priority of agents: low (yield to the desktop when busy) | idle | normal (unchanged)
     mem_enforce: "auto", // auto (kernel cap where possible, else watchdog) | kernel | watchdog | off
     test_slots: 1, // test suites in parallel on the machine
     close_tab_after: 20, // seconds until a finished child tab closes (0 = never)
