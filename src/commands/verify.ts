@@ -12,6 +12,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { getPath, loadConfig } from "../config.js";
 import { m } from "../i18n.js";
 import { ackPrefix } from "../notice.js";
+import { falsePassClaims } from "../run-guard.js";
 import { type Ctx, dropWorktree, failures, git, inJob, JS_EXT, launchJob, linkModules, runnerArgs, runnerOf, runTests, type TestJob,
   testCap, today, unsupported } from "../testrun.js";
 
@@ -43,7 +44,7 @@ export async function verify(argv: string[]): Promise<number> {
 async function run(j: TestJob): Promise<number> {
   const O = j.out, R = j.repo, B = j.base, WT = j.wt;
   const { cfg } = loadConfig(j.ws);
-  let NEW = 0;
+  let NEW = 0, claims: string[] = [];
   return inJob(j, `verify ${basename(dirname(O))} ${R}`, Number(getPath(cfg, "machine.test_slots") ?? 1), async (c) => {
     const diff = git(WT, "diff", "--name-only", "--diff-filter=d", `origin/${B}...HEAD`);
     if (diff === undefined) throw new Error(m(`git diff against origin/${B} failed in ${WT}`, `o git diff contra origin/${B} falhou em ${WT}`));
@@ -73,13 +74,19 @@ async function run(j: TestJob): Promise<number> {
     if (failed.length) baseInfo = await onBase(j, c, failed, async (dir, list) => (await tests(dir, "files", list))?.failed, (f) => { baseFailed = f; });
     const newList = failed.filter((f) => !baseFailed.includes(f)), oldList = failed.filter((f) => baseFailed.includes(f));
     NEW = newList.length;
+    // An answer that said the tests pass on this very commit: flagged now, not only in orq stats later.
+    if (NEW) claims = falsePassClaims(dirname(O), git(WT, "rev-parse", "HEAD") ?? "", basename(O));
     const text = [`# verify ${R} ${head} ${today()}: ${mine.total} tests related to ${files.length} changed files`, `# base: ${baseInfo}`,
       "", `## New failures (${NEW})`, ...(newList.length ? newList : ["none"]),
-      "", `## Already failing on origin/${B}`, ...(oldList.length ? oldList : ["none"])].join("\n") + "\n";
+      "", `## Already failing on origin/${B}`, ...(oldList.length ? oldList : ["none"]),
+      ...(claims.length ? ["", `## Answers that said the tests pass on this commit`, ...claims.map((c) => `${c}.out.md`)] : [])].join("\n") + "\n";
     writeFileSync(`${O}.txt`, text);
     process.stdout.write(text);
     return NEW === 0;
-  }, (st) => ({ fields: `status=${st} new=${NEW}`, notice: `verify ${R} status=${st} new=${NEW} answer: ${O}.txt` }));
+  }, (st) => {
+    const c = claims.length ? ` claimed-pass=${claims.join(",")}` : "";
+    return { fields: `status=${st} new=${NEW}${c}`, notice: `verify ${R} status=${st} new=${NEW}${c} answer: ${O}.txt` };
+  });
 }
 
 /** The failing test files again, on a fresh origin/<base> in a temporary worktree (only those that exist there). */

@@ -212,6 +212,38 @@ orq block antigravity --days 3                   # out of the picks (e.g. weekly
 orq pick fix --same .orquestra/<ID>/impl-<repo>.pick   # a fix round: the implementer's agent/model/account, effort +1
 ```
 
+### Runtime guard: loops, budget and runaway tokens
+`orq pick` judges a run only after it ends. While it runs, the runner watches it: every 30 s it reads the agent's own
+event stream (headless Claude and OpenCode) or Claude's transcript on disk (`-T`), and checks it against `[policy.budget]`.
+Other agents get no readings (nothing is guessed), and a reading the stream doesn't carry (tokens, context) is left out.
+
+| check | config (defaults) | at the limit |
+|---|---|---|
+| turns, new tokens (input + cache writes + output), context re-sent per turn | `turns = [400, 1000]`, `tokens = [3_000_000, 10_000_000]`, `context = [300_000, 600_000]` (`[soft, hard]`) | soft: one `[ORQ AGENT WARN]` line to the conductor; hard: stop, `reason=budget` |
+| the same file edited N times | `same_file_edits = 40` | stop, `reason=loop` |
+| the same command run N times with no edit between | `same_command = 8` | stop, `reason=loop` |
+| the same tool error N times in a row (numbers ignored, so a tsc error at a moved line matches) | `same_error = 6` | stop, `reason=loop` |
+| N turns with no change in the worktree (write runs) | `no_progress_turns = 150` | stop, `reason=loop` |
+| a follow-up (`-R`) that names many files the run never touched | `scope_new_files = 6` | warning at launch: a separate agent may fit better |
+| `-R` on a session whose last turn re-sent more than the `context` soft limit | (the `context` soft limit) | warning at launch: a fresh agent with a summary costs less |
+| an answer naming repo files that don't exist | always | `refs-missing=N` in `.done` and the done line |
+| an answer saying the tests pass while `orq verify` fails on the same commit | always | `claimed-pass=<prefix>` in the verify's `.done`, its report and the done line |
+
+A stop is `status=fail rc=3 reason=budget|loop`: the work stays in the worktree and the session, `<prefix>.out.md`
+says why and with which readings, and `<prefix>.guard` logs every warning and stop. Re-plan rather than repeat the same
+instructions with `-R`. `orq board` shows each run's turns, tokens and context (`412t 1.2M 180k ctx`) and its latest
+warning; `<prefix>.meter.json` keeps the readings. `0` turns one check off, `policy.guard = false` all of them;
+`[policy.budget.impl]`, `[policy.budget.review]` (read only runs) and `[policy.budget.<level>]` (`orq agent --level <level>`)
+override the base values.
+
+```toml
+[policy.budget]
+same_file_edits = 60
+no_progress_turns = 0       # off
+[policy.budget.review]
+turns = [150, 400]
+```
+
 ### Language and theme
 orq speaks English and Portuguese: CLI messages, `orq board`, notices and `install.sh`. It follows
 `[ui] lang` in your config (`"auto"` = system locale, `"en"`, `"pt"`), or the `ORQ_LANG` environment variable.

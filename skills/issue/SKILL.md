@@ -26,6 +26,15 @@ conductor outside herdr.
   prefix while the agent is open and returns the final status). Read the screen tail: clearly finished (its summary is
   there, work committed) → go on as with `status=ok`; still working, or unclear → keep waiting as usual (end your turn
   or keep looping), never ask the user to ping you and never dispatch a fix for it.
+- **`status=fail rc=3 reason=quota|budget|loop`**: orq stopped the child itself; the work stays in the worktree and the
+  session, and the answer says why. `quota`: the account hit the pick limits; re-pick and continue with
+  `-c <other account> -R <session>`. `budget` (turns, tokens or context past `[policy.budget]`) or `loop` (the same file
+  edited, command run or error hit again and again, or no change in the worktree): not a fix round. Look at the
+  worktree, then give a narrower task or a fresh agent with a summary of what was done; repeating the same prompt with
+  `-R` repeats the loop. A `[ORQ AGENT WARN] <title> ...` line is a soft limit while the child keeps going: no action
+  needed, just weigh it at the end. `refs-missing=N` on a done line (files the answer names that don't exist) and
+  `claimed-pass=<prefix>` on a verify's (that answer said the tests pass on this failing commit): don't trust that
+  answer's claims, check them.
 - **Waiting strategy** (your conductor instructions name it; `orq instructions strategy` shows it). It depends on what
   your harness can do, not on whether it can start a background process:
   - *background task* — only when a finished background task starts a new turn by itself (Claude Code: Bash with

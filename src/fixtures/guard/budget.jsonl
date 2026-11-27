@@ -1,0 +1,10 @@
+{"type": "assistant", "message": {"id": "msg_0", "role": "assistant", "content": [{"type": "text", "text": "thinking"}], "usage": {"input_tokens": 10, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": 200000, "output_tokens": 500}}}
+{"type": "assistant", "message": {"id": "msg_0", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "ls"}}], "usage": {"input_tokens": 10, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": 200000, "output_tokens": 500}}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_1", "role": "assistant", "content": [{"type": "text", "text": "thinking"}], "usage": {"input_tokens": 10, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": 250000, "output_tokens": 500}}}
+{"type": "assistant", "message": {"id": "msg_1", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "ls"}}], "usage": {"input_tokens": 10, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": 250000, "output_tokens": 500}}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_2", "role": "assistant", "content": [{"type": "text", "text": "thinking"}], "usage": {"input_tokens": 10, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": 300000, "output_tokens": 500}}}
+{"type": "assistant", "message": {"id": "msg_2", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "ls"}}], "usage": {"input_tokens": 10, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": 300000, "output_tokens": 500}}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "result", "subtype": "success", "num_turns": 3, "result": "done"}

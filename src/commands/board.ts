@@ -23,6 +23,7 @@ import { expand, stateDir } from "../paths.js";
 import { killedRc, processTableAsync, treeMem, treePids } from "../process.js";
 import { collect, type Source } from "../quota.js";
 import { collectRounds, mark, roundsSig, type Metrics } from "../rounds.js";
+import { kfmt } from "../run-guard.js";
 import { collectRuns, type Row, rows } from "../stats.js";
 import { pendingNotices, type Pending, readLog } from "../notice.js";
 import { load as loadBlocks } from "./block.js";
@@ -39,6 +40,8 @@ type Table = Map<number, [number, number]>;
 export interface Agent {
   unit: string; title: string; agent: string; model?: string; host?: string; pid: number; issue: string; label: string;
   state: "running" | "idle" | "died" | "ok" | "fail" | "killed"; rc?: number; reason?: string; secs: number; age: number; idleSecs?: number; mem?: number; cap?: number; activity?: string;
+  /** Run guard readings (src/run-guard.ts), only those the agent's stream reports, and its latest warning. */
+  meter?: { turns: number; tokens?: number; context?: number }; warning?: string;
 }
 export interface QItem { label: string; pid: number; secs: number; mem?: number }
 export interface Conductor { id: string; kind: string; account: string; alive: boolean; issues: string[]; name: string; rounds?: Record<string, Pick<Metrics, "rounds" | "max" | "level">> }
@@ -154,6 +157,12 @@ function agents(table: Table | undefined, now: number): Agent[] {
       host: s.host as string | undefined, pid, issue: basename(dirname(prefix)), label: basename(prefix), state: st,
       secs: Math.max(0, Math.round(((end ?? now) - at) / 1000)), age: Math.max(0, Math.round((now - (end ?? at)) / 1000)), cap: typeof s.cap === "number" ? s.cap : undefined };
     if (s.rc !== undefined) a.rc = Number(s.rc);
+    const mt = s.meter as Record<string, unknown> | undefined;
+    if (mt && typeof mt.turns === "number") {
+      a.meter = { turns: mt.turns, ...(typeof mt.tokens === "number" ? { tokens: mt.tokens } : {}), ...(typeof mt.context === "number" ? { context: mt.context } : {}) };
+      const w = Array.isArray(mt.warnings) ? mt.warnings : [];
+      if (w.length) a.warning = String(w[w.length - 1]);
+    }
     if (st === "fail") { const r = typeof s.reason === "string" ? s.reason : reasonOf(prefix, a.unit, at, end); if (r) a.reason = r; }
     if (st === "running") {
       if (table) {
@@ -354,6 +363,11 @@ function inks(theme: string, mode = colorMode()): Ink {
     wrn: fg(8), err: fg(9), b: "\x1b[1m", r: `\x1b[22m${base}` };
 }
 
+/** "412t 1.2M 180k ctx": turns, new tokens, context, as far as the agent reported them. */
+export function meterText(x: NonNullable<Agent["meter"]>): string {
+  return [`${x.turns}t`, x.tokens !== undefined ? kfmt(x.tokens) : "", x.context !== undefined ? `${kfmt(x.context)} ctx` : ""].filter(Boolean).join(" ");
+}
+
 export function dur(s: number): string {
   const p = (n: number) => String(Math.floor(n)).padStart(2, "0");
   if (s < 60) return `${s}s`;
@@ -417,11 +431,13 @@ export function render(s: Snapshot, theme: string, cols: number, mode = colorMod
       const pct = a.cap && a.mem ? Math.round(100 * a.mem / a.cap) : 0, used = 1 + 2 + 2 + 10 + 23 + 12 + 17 + 1 + 8 + 6 + 1 + 7 + 1;
       const idle = a.state === "idle", mark = idle ? `${c.wrn}◌` : `${c.acc}●`;
       const warn = !idle && a.secs > 3 * 3600 ? ` ${c.err}⚠ ${m("for", "há")} ${dur(a.secs)}${c.r}` : "";
-      const what = idle ? `${c.wrn}${m("idle", "ocioso")} ${dur(a.idleSecs ?? 0)}` : fit(a.activity ?? "", Math.max(0, W - used - 2)).trimEnd();
-      out.push(` ${mark}${c.r} ${n}  ${who} ${meter(pct, 4)} ${c.ink2}${gb(a.mem).padEnd(6)}${c.r} ${c.mut}${what}${c.r}${warn}`);
+      const mt = a.meter ? `${meterText(a.meter)} · ` : "", room = Math.max(0, W - used - 2 - mt.length);
+      const what = idle ? `${c.wrn}${m("idle", "ocioso")} ${dur(a.idleSecs ?? 0)}` : fit(a.activity ?? "", room).trimEnd();
+      out.push(` ${mark}${c.r} ${n}  ${who} ${meter(pct, 4)} ${c.ink2}${gb(a.mem).padEnd(6)}${c.r} ${c.ink2}${mt}${c.r}${c.mut}${what}${c.r}${warn}`);
+      if (a.warning) out.push(`       ${c.wrn}⚠ ${fit(a.warning, Math.max(0, W - 9))}${c.r}`);
     } else if (a.state === "died")
       out.push(` ${c.err}●${c.r} ${n}  ${who} ${c.err}${m("runner gone without finishing", "runner sumiu sem terminar")}${c.r}`);
-    else out.push(` ${a.state === "ok" ? c.ok : c.err}${a.state === "ok" ? "✓" : "✗"}${c.r} ${n}  ${c.mut}${a.issue.padEnd(9).slice(0, 9)} ${fit(a.label, 22)} ${fit(a.agent, 11)} ${fit(a.model ?? m("default", "padrão"), 17)} ${dur(a.secs).padEnd(7)} ${a.state}${a.reason ? ` ${a.reason}` : ""}${a.rc === undefined ? " rc=?" : a.rc ? ` rc=${a.rc}` : ""}${c.r}`);
+    else out.push(` ${a.state === "ok" ? c.ok : c.err}${a.state === "ok" ? "✓" : "✗"}${c.r} ${n}  ${c.mut}${a.issue.padEnd(9).slice(0, 9)} ${fit(a.label, 22)} ${fit(a.agent, 11)} ${fit(a.model ?? m("default", "padrão"), 17)} ${dur(a.secs).padEnd(7)} ${a.state}${a.reason ? ` ${a.reason}` : ""}${a.rc === undefined ? " rc=?" : a.rc ? ` rc=${a.rc}` : ""}${a.meter ? `  ${meterText(a.meter)}` : ""}${a.warning ? ` ⚠` : ""}${c.r}`);
   });
   if (!shownAgents.length) out.push(` ${c.mut}${m("none", "nenhum")}${c.r}`);
   if (hidden) out.push(` ${c.mut}${m(`+${hidden} older finished hidden`, `+${hidden} antigos finalizados ocultos`)}${c.r}`);
