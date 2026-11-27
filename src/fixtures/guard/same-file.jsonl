@@ -1,0 +1,14 @@
+{"type": "system", "subtype": "init", "session_id": "s1"}
+{"type": "assistant", "message": {"id": "msg_0", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Edit", "input": {"file_path": "/w/src/order.service.ts", "old_string": "a", "new_string": "b"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_1", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Edit", "input": {"file_path": "/w/src/order.service.ts", "old_string": "a", "new_string": "b"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_2", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Edit", "input": {"file_path": "/w/src/order.service.ts", "old_string": "a", "new_string": "b"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_3", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Edit", "input": {"file_path": "/w/src/order.service.ts", "old_string": "a", "new_string": "b"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_4", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Edit", "input": {"file_path": "/w/src/order.service.ts", "old_string": "a", "new_string": "b"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_5", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Edit", "input": {"file_path": "/w/src/order.service.ts", "old_string": "a", "new_string": "b"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_99", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Edit", "input": {"file_path": "/w/src/other.ts", "old_string": "a", "new_string": "b"}}]}}

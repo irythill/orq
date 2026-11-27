@@ -23,14 +23,18 @@ import { getPath, loadConfig, type Obj } from "../config.js";
 import { writeAtomic } from "../fsutil.js";
 import { m } from "../i18n.js";
 import { alive } from "../lock.js";
-import { agyToken, humanReset, learnExhausted } from "../quota.js";
+import { agyToken, claudeQuota, humanReset, learnExhausted } from "../quota.js";
+import { carrySession, guardFor, type QuotaGuard, watchQuota } from "../quota-guard.js";
+import { limitsFor } from "../pick.js";
+import { type Budget, budgetFor, claudeTranscript, feed, judge, kfmt, lastContext, type Meter, meterLine, newMeter, newScope, progress, readMeter, snapshot, tailLines } from "../run-guard.js";
+import { homedir } from "node:os";
 import { stateDir } from "../paths.js";
 import { heapMB, killedRc, killTree, type MemMode, parsePriority, parseSize, type Priority, resolveMode, runCapped, withHeap } from "../process.js";
 import { closeOwnTab, detectHost, type Host, launch, screenOpen, shq, typeInto } from "../terminal.js";
 import { ackPrefix } from "../notice.js";
 import { dropWorktree, notify } from "../testrun.js";
 
-export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base [--base-branch <branch>]] [-r] [-R session [-F [-F]] [--reason review|verify|unblock]] [-T] -- <prompt.md>   run a child agent";
+export const USAGE = "orq agent -a <agent> -t <title> -d <dir> -o <prefix> [-g group] [-m model] [-e effort] [-c account] [-i file]... [-b base [--base-branch <branch>]] [-r] [-R session [-F [-F]] [--reason review|verify|unblock]] [-T] [--level <level>] -- <prompt.md>   run a child agent";
 
 /** Why a follow-up (-R) runs: only `review` (fixing a reviewer's findings) counts towards policy.max_rounds. */
 export const ROUND_REASONS = ["review", "verify", "unblock"];
@@ -45,6 +49,7 @@ interface Job {
   mode: MemMode; priority?: Priority; throwaway: boolean; promptInDir: boolean; closeAfter: number; keep: boolean; tui?: boolean;
   okExit?: number[]; filter?: string; noReview?: string; idleCloseMin?: number; ro?: boolean; review?: boolean;
   orqCommits?: boolean; orqFetches?: boolean; scopeNote?: string; tuiBusy?: string; noHookGraceS?: number;
+  quotaGuard?: QuotaGuard; budget?: Budget;
 }
 
 const git = (dir: string, ...a: string[]) => {
@@ -56,7 +61,7 @@ export async function agent(argv: string[]): Promise<number> {
   if (argv[0] === "--run") return runJob(argv[1]);
   if (argv[0] === "--turn") return turn(argv[1], argv[2], argv.slice(3));
   let a = process.env.AGENT || "", g = "", t = "", d = "", o = "", model = "", effort = "", acc = "", resume = "", base = "", baseBranch = "";
-  let ro = false, tui = false, force = 0, prompt: string | undefined, reason = "review";
+  let ro = false, tui = false, force = 0, prompt: string | undefined, reason = "review", level = "";
   const inc: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i], v = () => argv[++i] ?? "";
@@ -65,7 +70,7 @@ export async function agent(argv: string[]): Promise<number> {
     else if (x === "-o") o = v(); else if (x === "-m") model = v(); else if (x === "-e") effort = v();
     else if (x === "-c") acc = v(); else if (x === "-i") inc.push(resolve(v())); else if (x === "-R") resume = v();
     else if (x === "-b") base = v(); else if (x === "-p") v(); else if (x === "-r") ro = true; else if (x === "-T") tui = true; else if (x === "-F") force++;
-    else if (x === "--reason") reason = v(); else if (x === "--base-branch") baseBranch = v();
+    else if (x === "--reason") reason = v(); else if (x === "--level") level = v(); else if (x === "--base-branch") baseBranch = v();
     else if (!x.startsWith("-") && prompt === undefined) prompt = x;
     else { console.error(USAGE); return 2; }
   }
@@ -145,6 +150,8 @@ export async function agent(argv: string[]): Promise<number> {
   if (!existsSync(repo)) { console.error(m(`no folder ${repo}`, `pasta ${repo} não existe`)); return 2; }
   if (!existsSync(P)) { console.error(m(`no prompt file ${P}`, `arquivo de prompt ${P} não existe`)); return 2; }
   mkdirSync(dirname(O), { recursive: true });
+  const budget = budgetFor((cfg.policy ?? {}) as Obj, ro ? "review" : "impl", level || undefined);
+  if (resume && budget) for (const w of followUpWarnings(O, P, resume, budget)) console.error(`[orq agent] ${w}`);
   // -b <base>: attaches `git diff origin/<base>...HEAD` (review without running git; required for Antigravity).
   // A base with no origin/<base> but naming a commit (a fix round's round-<n>.sha) attaches `<base>..HEAD`: only that round's delta.
   // An agent that can't review a commit base (agents.<name>.base_commit) gets the branch base instead: the whole branch.
@@ -234,11 +241,22 @@ export async function agent(argv: string[]): Promise<number> {
     return 2;
   }
   const env: Record<string, string> = {};
+  let quotaGuard: QuotaGuard | undefined;
   for (const [k, val] of Object.entries(def.env ?? {})) env[k] = expandString(String(val), vars);
   if (acc) {
     const ac = claudeAccounts().find((x) => x.name === acc);
     if (!ac) { console.error(m(`account '${acc}' does not exist`, `a conta '${acc}' não existe`)); return 2; }
     env.CLAUDE_CONFIG_DIR = ac.dir;
+    // -R on another account (e.g. after a quota stop): bring the session over, or Claude won't find it.
+    if (resume) {
+      const from = carrySession(claudeAccounts(), acc, resume);
+      if (from) console.log(m(`[orq agent] session ${resume} copied from account ${from} to ${acc}`, `[orq agent] sessão ${resume} copiada da conta ${from} para ${acc}`));
+    }
+    // Stop the run once the account reaches the pick limits (policy.quota_guard = false turns it off).
+    if (getPath(cfg, "policy.quota_guard") !== false) {
+      const ad = ((cfg.agents ?? {}) as Record<string, Obj>)[a] ?? {};
+      quotaGuard = guardFor(ac, limitsFor((cfg.policy ?? {}) as Obj, "high"), Number(ad.headroom ?? 0));
+    }
   }
   const closeAfter = Number(process.env.HERDR_CLOSE_DELAY ?? mach.close_tab_after ?? 20);
   const unit = `herdr-agent-${Math.floor(Date.now() / 1000)}-${process.pid}`; // herdr-board lists herdr-agent-* scopes
@@ -255,7 +273,7 @@ export async function agent(argv: string[]): Promise<number> {
     // A review (-r, prefix review*) must end with a verdict; policy.review_verdict = false turns the check off.
     review: ro && /^review/i.test(basename(O)) && getPath(cfg, "policy.review_verdict") !== false,
     idleCloseMin: tui ? Number(mach.tui_idle_close_min ?? 30) : undefined,
-    tuiBusy: tui ? def.tui_busy : undefined, noHookGraceS: tui ? def.no_hook_grace : undefined,
+    tuiBusy: tui ? def.tui_busy : undefined, noHookGraceS: tui ? def.no_hook_grace : undefined, quotaGuard, budget,
   };
   writeAtomic(`${O}.job.json`, JSON.stringify(job, null, 1));
   countRound?.();
@@ -267,6 +285,33 @@ export async function agent(argv: string[]): Promise<number> {
   writeFileSync(`${O}.pane`, `${where}\n`);
   console.log(`[orq agent] ${t} → ${where}${tui ? " (TUI)" : ""}`);
   return 0;
+}
+
+/** -R warnings: the session is already large (a fresh session with a summary costs less than re-sending it every
+ *  turn), and the follow-up names many files the run never touched (a separate agent may fit better). Read before
+ *  this launch overwrites the prefix's files. */
+function followUpWarnings(O: string, P: string, session: string, b: Budget): string[] {
+  const out: string[] = [], prev = readMeter(O);
+  let ctx = typeof prev?.context === "number" ? prev.context : undefined;
+  if (ctx === undefined) {
+    for (const d of [...claudeAccounts().map((a) => a.dir), process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude")]) {
+      const f = claudeTranscript(d, session);
+      if (f) { ctx = lastContext(f); break; }
+    }
+  }
+  const soft = b.context[0];
+  if (ctx !== undefined && soft > 0 && ctx >= soft)
+    out.push(m(`session ${session} re-sends ~${kfmt(ctx)} tokens of context every turn (policy.budget.context soft ${kfmt(soft)}): a fresh agent with a summary of the work costs less than -R`,
+      `a sessão ${session} reenvia ~${kfmt(ctx)} tokens de contexto a cada turno (policy.budget.context soft ${kfmt(soft)}): um agente novo com um resumo do trabalho custa menos que -R`));
+  if (b.scope_new_files > 0) {
+    let earlier = "";
+    try { earlier = readFileSync((JSON.parse(readFileSync(`${O}.job.json`, "utf8")) as Job).prompt, "utf8"); } catch { /* first run on the prefix */ }
+    const wide = newScope(readFileSync(P, "utf8"), earlier, Object.keys(prev?.edits ?? {}));
+    if (wide.length >= b.scope_new_files)
+      out.push(m(`the follow-up names ${wide.length} files the run never touched (${wide.slice(0, 5).join(", ")}${wide.length > 5 ? ", ..." : ""}): a separate agent may fit better than continuing this session`,
+        `o follow-up cita ${wide.length} arquivos que a execução nunca tocou (${wide.slice(0, 5).join(", ")}${wide.length > 5 ? ", ..." : ""}): um agente separado pode ser melhor que continuar esta sessão`));
+  }
+  return out;
 }
 
 /** The previous run on prefix `O` is still going: its runner pid is alive, or (no pid file yet / runner gone) its systemd scope is. */
@@ -332,9 +377,19 @@ export default {
 }
 
 /** <prefix>.refs for a write run (the worktree is still there to check against); never fails the run. */
-function writeRefs(j: Job, answer: string, start?: string): void {
-  if (j.ro || j.throwaway || j.review || !existsSync(j.dir)) return;
-  try { writeFileSync(`${j.prefix}.refs`, refsLine(missingRefs(j.dir, answer, start))); } catch { /* stats only */ }
+function writeRefs(j: Job, answer: string, start?: string): number {
+  if (j.ro || j.throwaway || j.review || !existsSync(j.dir)) return 0;
+  try {
+    const r = missingRefs(j.dir, answer, start);
+    writeFileSync(`${j.prefix}.refs`, refsLine(r));
+    return r.missing.length;
+  } catch { return 0; }
+}
+
+/** Extra .done/notice fields: files the answer names that don't exist, and the guard's warnings during the run. */
+function guardFlags(j: Job, missing: number): string {
+  const w = (readMeter(j.prefix)?.warnings as unknown[] | undefined)?.length ?? 0;
+  return `${missing ? ` refs-missing=${missing}` : ""}${w ? ` guard-warn=${w}` : ""}`;
 }
 
 /** End of a turn on the agent's screen: answer, session and .done from the agent's own hook payload. Never fails the agent. */
@@ -365,9 +420,9 @@ function turn(file: string, kind: string, rest: string[]): number {
     const noReview = noReviewMatch(j.noReview, answer), noVerdict = Boolean(j.review) && /\S/.test(answer) && !hasVerdict(answer);
     const why = !/\S/.test(answer) ? " reason=empty" : noReview ? " reason=no-review" : noVerdict ? " reason=no-verdict" : "";
     const st = why ? "fail" : "ok";
-    writeRefs(j, answer);
-    writeAtomic(`${O}.done`, `status=${st} rc=0${why} at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
-    if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=0${why} answer: ${O}.out.md`);
+    const flags = guardFlags(j, writeRefs(j, answer));
+    writeAtomic(`${O}.done`, `status=${st} rc=0${why}${flags} at=${new Date().toISOString()} agent=${j.agent} mode=tui\n`);
+    if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=0${why}${flags} answer: ${O}.out.md`);
   } catch (e) { console.error(`orq agent --turn: ${(e as Error).message}`); }
   return 0;
 }
@@ -543,12 +598,97 @@ function orqCommit(dir: string, msg: string): string {
     : `FAILED (exit ${c.status}): ${(c.stderr || c.stdout).trim()}. The changes are still in the worktree.`;
 }
 
+const GUARD_MS = () => Math.max(30, Number(process.env.ORQ_QUOTA_GUARD_S ?? 180)) * 1000;
+
+/** Why orq stopped a run: the account's quota (quota guard) or the run's own budget or a loop (run guard). */
+interface Stop { reason: "quota" | "budget" | "loop"; why: string }
+
+/** Answer and .done of a run orq stopped: the work stays in the worktree and the session, and the answer says how to go on. */
+function guardStopped(j: Job, s: Stop, meter?: Meter): void {
+  const O = j.prefix, g = j.quotaGuard;
+  const sid = existsSync(`${O}.id`) ? readFileSync(`${O}.id`, "utf8").trim() : j.session ?? "";
+  const kept = `The work so far stays in the worktree${sid ? ` and in session ${sid}` : ""}.`;
+  const text = s.reason === "quota"
+    ? `quota exhausted: account ${g?.account} (${s.why}); stopped by orq before the limit\n\n${kept} Re-pick (the account is blocked until it resets) ` +
+      `and continue with \`orq agent ... -c <other account> -R ${sid || "<session>"}\` (the session is copied to the new account).\n`
+    : `stopped by orq: reason=${s.reason} (${s.why})${meter ? `; readings: ${meterLine(meter)}` : ""}\n\n${kept} Re-plan before going on: ` +
+      `look at the worktree, then give a narrower task or start a fresh agent with a summary of what was done; repeating the same ` +
+      `instructions with -R usually repeats the same loop. Limits: [policy.budget] (see ${O}.guard).\n`;
+  writeFileSync(`${O}.out.md`, text);
+  const acct = s.reason === "quota" && g ? ` account=${g.account}` : "";
+  writeAtomic(`${O}.done`, `status=fail rc=3 reason=${s.reason}${acct} at=${new Date().toISOString()} agent=${j.agent}${j.tui ? " mode=tui" : ""}\n`);
+  if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=fail rc=3 reason=${s.reason}${acct} answer: ${O}.out.md`);
+}
+
+const TICK_MS = () => Math.max(5, Number(process.env.ORQ_GUARD_TICK_S ?? 30)) * 1000;
+
+/**
+ * The run guard's loop: every few seconds, the readings (fed by the caller from the agent's stream, or read here from
+ * Claude's transcript for -T) are saved to <prefix>.meter.json and the board's state, each soft limit warns the
+ * conductor once, and a hard limit or a loop calls `stop`. `flush` takes the last readings when the run ends.
+ */
+function watchRun(j: Job, mt: Meter, save: (meter: Obj) => void, stop: (s: Stop) => void): { timer?: NodeJS.Timeout; flush: () => void } {
+  const b = j.budget, O = j.prefix, warned = new Set<string>(), warnings: string[] = [];
+  // Only streams the meter can read: anything else would show readings of 0 that mean "unknown".
+  const readable = j.tui ? j.format === "claude" : j.format === "claude" || j.format === "opencode";
+  if (!b || !readable) return { flush: () => undefined };
+  const write = !j.ro && !j.throwaway;
+  const cdir = j.env.CLAUDE_CONFIG_DIR ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+  let tf = j.tui && j.format === "claude" && j.session ? claudeTranscript(cdir, j.session) : undefined;
+  let at = 0, fired = false;
+  try { if (tf) at = statSync(tf).size; } catch { /* new session */ } // a resumed transcript: only this run's turns count
+  const read = () => {
+    if (!j.tui || j.format !== "claude" || !j.session) return;
+    tf ??= claudeTranscript(cdir, j.session);
+    if (!tf) return;
+    const r = tailLines(tf, at);
+    at = r.at;
+    for (const l of r.lines) feed(mt, l);
+  };
+  const keep = () => {
+    const snap = snapshot(mt, warnings);
+    try { writeAtomic(`${O}.meter.json`, JSON.stringify(snap)); } catch { /* best effort */ }
+    save({ ...snap, line: meterLine(mt) });
+  };
+  if (write && existsSync(j.dir)) progress(mt, treeState(j.dir));
+  const timer = setInterval(() => {
+    if (fired) return;
+    try {
+      read();
+      if (write && existsSync(j.dir)) progress(mt, treeState(j.dir));
+      const v = judge(mt, b, warned, write);
+      for (const w of v.warn) {
+        warnings.push(w);
+        appendFileSync(`${O}.guard`, `${new Date().toISOString()} warn ${w}\n`);
+        if (j.parent) notify(j.parent, `[ORQ AGENT WARN] ${j.title} ${w}; ${meterLine(mt)} (see ${O}.guard)`);
+      }
+      keep();
+      if (v.stop) {
+        fired = true;
+        clearInterval(timer);
+        appendFileSync(`${O}.guard`, `${new Date().toISOString()} stop reason=${v.stop.reason} ${v.stop.why}\n`);
+        stop(v.stop);
+      }
+    } catch { /* a failed reading never stops the agent */ }
+  }, TICK_MS());
+  timer.unref();
+  return { timer, flush: () => { try { read(); keep(); } catch { /* best effort */ } } };
+}
+
+/** Block the account in orq pick until its window resets (best effort, same as `orq block <acct> --quota`). */
+function blockAccount(acct: string, why: string): void {
+  spawnSync(process.execPath, [CLI, "block", acct, "--quota", "--reason", `quota guard: ${why}`], { stdio: "ignore", timeout: 30_000 });
+}
+
 async function runJob(file: string): Promise<number> {
   const j = JSON.parse(readFileSync(file, "utf8")) as Job, O = j.prefix;
   writeFileSync(`${O}.pid`, String(process.pid));
   const stateF = join(stateDir(), "agents", `${j.unit}.json`);
   const at = new Date().toISOString();
-  const state = (extra: Obj = {}) => { try { writeAtomic(stateF, JSON.stringify({ pid: process.pid, prefix: O, title: j.title, agent: j.agent, model: argvModel(j.argv), host: j.host, cap: j.cap, at, ...extra })); } catch { /* best effort */ } };
+  let meterState: Obj | undefined;
+  const state = (extra: Obj = {}) => { try { writeAtomic(stateF, JSON.stringify({ pid: process.pid, prefix: O, title: j.title, agent: j.agent, model: argvModel(j.argv), host: j.host, cap: j.cap, at, ...(meterState ? { meter: meterState } : {}), ...extra })); } catch { /* best effort */ } };
+  const mt = newMeter();
+  rmSync(`${O}.guard`, { force: true }); rmSync(`${O}.meter.json`, { force: true });
   state();
   const fmt = FORMATS[j.format] ?? FORMATS.text;
   let rc = 0, stdout = "", logText = "";
@@ -581,11 +721,12 @@ async function runJob(file: string): Promise<number> {
   };
   if (j.tui) {
     // The agent's own screen: the terminal is its; answers come from the end-of-turn hook (`--turn`).
-    let ended = false, tuiErr: NodeJS.ErrnoException | undefined;
+    let ended = false, tuiErr: NodeJS.ErrnoException | undefined, stopped: Stop | undefined;
     const end = (code: number, killed = false): string => {
       if (ended) return "fail";
       ended = true;
       post();
+      if (stopped) { guardStopped(j, stopped, mt); rmSync(`${O}.pid`, { force: true }); return "fail"; }
       // Closed before any turn ended (or mid follow-up): a failure, so `orq wait` doesn't hang.
       const ok = !killed && /\bstatus=ok\b/.test(existsSync(`${O}.done`) ? readFileSync(`${O}.done`, "utf8") : "");
       if (killed) {
@@ -606,7 +747,8 @@ async function runJob(file: string): Promise<number> {
       for (const k of j.unset) delete env[k];
       // Ctrl+C belongs to the agent (it reaches us too, as part of the terminal's foreground group). The screen going
       // away (tab or tmux server closed) still ends the agent and cleans up.
-      let child: number | undefined, idleT: NodeJS.Timeout | undefined, idleClosed = false;
+      let child: number | undefined, idleT: NodeJS.Timeout | undefined, guardT: NodeJS.Timeout | undefined, idleClosed = false;
+      let run: ReturnType<typeof watchRun> | undefined;
       process.on("SIGINT", () => { /* the agent's */ });
       // The screen going away or being killed from outside: end the agent, and close the tab too (a dead tab stayed open).
       const gone = () => { if (child) killTree(child, false); end(129); closeOwnTab(j.host); process.exit(0); };
@@ -615,6 +757,17 @@ async function runJob(file: string): Promise<number> {
         onError: (e) => { tuiErr = e; writeFileSync(`${O}.out.md`, spawnFailText(j, e)); },
         onSpawn: (c) => {
           child = c.pid;
+          run = watchRun(j, mt, (x) => { meterState = x; state(); }, (s) => {
+            stopped ??= s;
+            console.log(m(`[orq agent] ${s.reason}: ${s.why}: stopping the agent`, `[orq agent] ${s.reason}: ${s.why}: parando o agente`));
+            if (child) killTree(child, false);
+          });
+          if (j.quotaGuard) guardT = watchQuota(j.quotaGuard, (g) => claudeQuota(g.account, g.dir), (why) => {
+            stopped ??= { reason: "quota", why };
+            console.log(m(`[orq agent] account ${j.quotaGuard!.account} at the limit (${why}): stopping the agent`, `[orq agent] conta ${j.quotaGuard!.account} no limite (${why}): parando o agente`));
+            blockAccount(j.quotaGuard!.account, why);
+            if (child) killTree(child, false);
+          }, GUARD_MS());
           // A finished agent waits for a follow-up forever and holds its memory: after the idle timeout without a new
           // turn, kill it; the normal end below cleans up and closes the tab. "New turn" = .done removed (`-R` typed
           // into the screen removes it) or rewritten (the next end of turn), so idle = .done untouched that long.
@@ -641,7 +794,7 @@ async function runJob(file: string): Promise<number> {
           }, pane ? 15_000 : Math.min(30_000, Math.max(1_000, idleMs / 2)));
           idleT.unref();
         } });
-      clearInterval(idleT);
+      clearInterval(idleT); clearInterval(guardT); clearInterval(run?.timer); run?.flush();
       if (idleClosed) rc = 0; // closed on purpose after a finished turn: not a kill
     }
     const st = end(rc, killedRc(rc)), reason = st === "fail" ? /\breason=(\S+)/.exec(existsSync(`${O}.done`) ? readFileSync(`${O}.done`, "utf8") : "")?.[1] : undefined;
@@ -651,15 +804,18 @@ async function runJob(file: string): Promise<number> {
     return 0;
   }
   const log = createWriteStream(`${O}.log`);
+  let stopped: Stop | undefined;
   let spawnErr: NodeJS.ErrnoException | undefined;
   if (!pre()) rc = 2;
   else {
     const env: NodeJS.ProcessEnv = { ...process.env, ...j.env, NODE_OPTIONS: withHeap(j.env.NODE_OPTIONS ?? process.env.NODE_OPTIONS, heapMB(j.cap)) };
     for (const k of j.unset) delete env[k];
     const kmode = resolveMode(j.mode, j.cap);
-    let lastLine = "", lastAt = Date.now(), watch: NodeJS.Timeout | undefined, streams: Promise<unknown> = Promise.resolve();
+    let lastLine = "", lastAt = Date.now(), watch: NodeJS.Timeout | undefined, guardT: NodeJS.Timeout | undefined, streams: Promise<unknown> = Promise.resolve();
+    let run: ReturnType<typeof watchRun> | undefined;
     const onLine = (l: string, isOut: boolean) => {
       log.write(`${l}\n`); logText += `${l}\n`; lastLine = l; lastAt = Date.now();
+      if (isOut && j.budget) feed(mt, l);
       if (j.format === "text") { if (isOut) { stdout += `${l}\n`; process.stdout.write(`${l}\n`); } return; }
       const s = fmt.show(l);
       if (s) process.stdout.write(s);
@@ -670,6 +826,21 @@ async function runJob(file: string): Promise<number> {
         stdio: [j.stdin ? openSync(j.prompt, "r") : "ignore", "pipe", "pipe"],
         onError: (e) => { spawnErr = e; log.write(`[orq agent] could not start ${j.argv[0]}: ${e.message}\n`); },
         onSpawn: (c) => {
+          const kill = () => {
+            if (kmode === "kernel") spawnSync("systemctl", ["--user", "stop", `${j.unit}.scope`], { stdio: "ignore" });
+            else if (c.pid) killTree(c.pid);
+          };
+          run = watchRun(j, mt, (x) => { meterState = x; state(); }, (s) => {
+            stopped ??= s;
+            log.write(`[orq agent] ${s.reason}: ${s.why}: stopping the agent\n`);
+            kill();
+          });
+          if (j.quotaGuard) guardT = watchQuota(j.quotaGuard, (g) => claudeQuota(g.account, g.dir), (why) => {
+            stopped ??= { reason: "quota", why };
+            log.write(`[orq agent] account ${j.quotaGuard!.account} at the limit (${why}): stopping the agent\n`);
+            blockAccount(j.quotaGuard!.account, why);
+            kill();
+          }, GUARD_MS());
           streams = Promise.all([lines(c.stdout, (l) => onLine(l, true)), lines(c.stderr, (l) => onLine(l, false))]);
           // OpenCode sometimes doesn't exit after its final event (helpers hold the pipe): stop it after 30 s of quiet.
           if (fmt.idle) watch = setInterval(() => {
@@ -681,8 +852,9 @@ async function runJob(file: string): Promise<number> {
           }, 10_000);
         },
       });
-    } finally { clearInterval(watch); }
+    } finally { clearInterval(watch); clearInterval(guardT); clearInterval(run?.timer); }
     await Promise.race([streams, sleep(5000)]);
+    run?.flush();
   }
   await new Promise((r) => log.end(r));
   const res = fmt.finish(logText, stdout);
@@ -736,11 +908,18 @@ async function runJob(file: string): Promise<number> {
   // Why a run failed with nothing in rc to say so (a failed filter, an empty or no-review answer, no verdict).
   const why = spawnErr ? ` reason=spawn:${spawnErr.code ?? "error"}` : st !== "fail" ? "" : !verdict ? (rc === 0 ? " reason=filter" : "")
     : noReview ? " reason=no-review" : noVerdict ? " reason=no-verdict" : !/\S/.test(answer) ? " reason=empty" : "";
-  writeRefs(j, answer, headBefore);
-  writeAtomic(`${O}.done`, `status=${st} rc=${rc}${why} at=${new Date().toISOString()} agent=${j.agent}\n`);
+  const flags = guardFlags(j, writeRefs(j, answer, headBefore));
+  if (stopped) {
+    guardStopped(j, stopped, mt);
+    rmSync(`${O}.pid`, { force: true });
+    state({ status: "fail", rc: 3, end: new Date().toISOString(), reason: stopped.reason });
+    if (j.host !== "plain" && !j.keep) { await sleep(j.closeAfter * 1000); closeOwnTab(j.host); }
+    return 0;
+  }
+  writeAtomic(`${O}.done`, `status=${st} rc=${rc}${why}${flags} at=${new Date().toISOString()} agent=${j.agent}\n`);
   rmSync(`${O}.pid`, { force: true });
   state({ status: st, rc, end: new Date().toISOString(), ...(why ? { reason: why.slice(8) } : {}) });
-  if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=${rc}${why} answer: ${O}.out.md`);
+  if (j.parent) notify(j.parent, `[HERDR-AGENT DONE] ${j.title} status=${st} rc=${rc}${why}${flags} answer: ${O}.out.md`);
   console.log(`\n[${j.agent} ${m("finished", "terminou")}: exit ${rc} status=${st}] ${m("answer", "resposta")}: ${O}.out.md`);
   if (j.host !== "plain" && !j.keep) { await sleep(j.closeAfter * 1000); closeOwnTab(j.host); }
   return 0;

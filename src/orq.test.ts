@@ -3581,3 +3581,184 @@ test("release: a squash release excludes already published commits when calculat
     assert.deepEqual(commits("v0.9.0").map((c: { subject: string }) => c.subject), ["fix: after a normal tag"]);
   } finally { process.chdir(cwd); rmSync(root, { recursive: true, force: true }); }
 });
+
+test("quota guard: breach at the pick limits minus headroom, never on unknown readings", async () => {
+  const { quotaBreach, guardFor } = await import("./quota-guard.js");
+  const g = guardFor({ name: "alpha", dir: "/x" }, [90, 95], 25);
+  assert.deepEqual([g.limit5, g.limitWeek], [65, 70]);
+  assert.equal(quotaBreach({ five: 64, week: 10 }, g), undefined);
+  assert.match(quotaBreach({ five: 98, week: 10 }, g)!, /^5h=98%/);
+  assert.match(quotaBreach({ five: 1, week: 70 }, g)!, /^week=70%/);
+  assert.equal(quotaBreach({ five: "?", week: "-" }, g), undefined);
+});
+
+test("quota guard: watchQuota stops once on a breach and survives failed readings", async () => {
+  const { watchQuota } = await import("./quota-guard.js");
+  const g = { account: "alpha", dir: "/x", limit5: 50, limitWeek: 90 };
+  const reads = [() => Promise.reject(new Error("429")), () => Promise.resolve({ five: 10, week: 1 }), () => Promise.resolve({ five: 60, week: 1 })];
+  let i = 0; const stops: string[] = [];
+  const t = watchQuota(g, () => reads[Math.min(i++, reads.length - 1)](), (w) => stops.push(w), 5);
+  await new Promise((r) => setTimeout(r, 80)); clearInterval(t);
+  assert.equal(stops.length, 1);
+  assert.match(stops[0], /5h=60%/);
+});
+
+test("carrySession: -R on another account copies the session file under the same project slug", async () => {
+  const { carrySession } = await import("./quota-guard.js");
+  const root = mkdtempSync(join(tmpdir(), "orq-carry-"));
+  const alpha = join(root, "alpha"), beta = join(root, "beta");
+  mkdirSync(join(alpha, "projects", "-repo"), { recursive: true });
+  writeFileSync(join(alpha, "projects", "-repo", "abc-1.jsonl"), "{}\n");
+  const accs = [{ name: "alpha", dir: alpha }, { name: "beta", dir: beta }];
+  assert.equal(carrySession(accs, "beta", "abc-1"), "alpha");
+  assert.equal(readFileSync(join(beta, "projects", "-repo", "abc-1.jsonl"), "utf8"), "{}\n");
+  assert.equal(carrySession(accs, "beta", "abc-1"), undefined); // already there
+  assert.equal(carrySession(accs, "beta", "../evil"), undefined);
+  rmSync(root, { recursive: true, force: true });
+});
+
+const GUARD_FIX = fileURLToPath(new URL("../src/fixtures/guard/", import.meta.url));
+const guardBudget = (over: Record<string, unknown> = {}) => ({ turns: [0, 0], tokens: [0, 0], context: [0, 0], same_file_edits: 0, same_command: 0,
+  same_error: 0, no_progress_turns: 0, scope_new_files: 0, ...over });
+
+async function meterOf(file: string) {
+  const { feed, newMeter } = await import("./run-guard.js");
+  const mt = newMeter();
+  for (const l of readFileSync(join(GUARD_FIX, file), "utf8").split("\n")) feed(mt, l);
+  return mt;
+}
+
+test("run guard: budgetFor merges role and level sections, 0/false turn a check off, guard = false turns it all off", async () => {
+  const { budgetFor } = await import("./run-guard.js");
+  const pol = { budget: { turns: [10, 20], same_file_edits: 40, same_error: false, review: { turns: [5, 8] }, heavy: { same_file_edits: 80 } } };
+  const b = budgetFor(pol, "review", "heavy")!;
+  assert.deepEqual([b.turns, b.same_file_edits, b.same_error, b.tokens], [[5, 8], 80, 0, [0, 0]]);
+  assert.deepEqual(budgetFor(pol, "impl")!.turns, [10, 20]);
+  assert.equal(budgetFor({ ...pol, guard: false }, "impl"), undefined);
+});
+
+test("run guard: the same file edited N times is a loop (fixture transcript)", async () => {
+  const { judge } = await import("./run-guard.js");
+  const mt = await meterOf("same-file.jsonl");
+  assert.equal(mt.turns, 7);
+  assert.equal(mt.edits["/w/src/order.service.ts"], 6);
+  assert.deepEqual(judge(mt, guardBudget({ same_file_edits: 6 }), new Set(), true).stop, { reason: "loop", why: "/w/src/order.service.ts edited 6 times" });
+  assert.equal(judge(mt, guardBudget({ same_file_edits: 7 }), new Set(), true).stop, undefined);
+  assert.equal(judge(mt, guardBudget(), new Set(), true).stop, undefined); // 0 = off
+});
+
+test("run guard: a command repeated with no edit between is a loop; an edit starts the count again", async () => {
+  const { judge } = await import("./run-guard.js");
+  const mt = await meterOf("same-command.jsonl");
+  assert.equal(mt.cmds["npm run lint"], 4); // 3 before the edit are not counted
+  assert.match(judge(mt, guardBudget({ same_command: 4 }), new Set(), true).stop!.why, /`npm run lint` run 4 times/);
+  assert.equal(judge(mt, guardBudget({ same_command: 5 }), new Set(), true).stop, undefined);
+});
+
+test("run guard: the same tool error in a row is a loop, even when its line number moves", async () => {
+  const { judge } = await import("./run-guard.js");
+  const mt = await meterOf("same-error.jsonl");
+  assert.equal(mt.errRun, 5);
+  assert.match(judge(mt, guardBudget({ same_error: 5 }), new Set(), true).stop!.why, /5 times in a row: src\/a\.ts\(#,#\): error TS#/);
+  const { feed } = await import("./run-guard.js");
+  feed(mt, JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", is_error: true, content: "other error" }] } }));
+  assert.equal(mt.errRun, 1);
+});
+
+test("run guard: turns, new tokens and context from usage; a repeated message id is one turn; soft warns once, hard stops", async () => {
+  const { judge, meterLine } = await import("./run-guard.js");
+  const mt = await meterOf("budget.jsonl");
+  assert.equal(mt.turns, 3);
+  assert.equal(mt.tokens, 3 * 1510);
+  assert.equal(mt.context, 10 + 1000 + 300000);
+  assert.equal(meterLine(mt), "turns=3 tokens=4.5k ctx=301k");
+  const warned = new Set<string>(), b = guardBudget({ context: [250_000, 400_000], turns: [2, 0] });
+  assert.deepEqual(judge(mt, b, warned, true).warn, ["turns=3 >= 2 (soft)", "context=301k >= 250k (soft)"]);
+  assert.deepEqual(judge(mt, b, warned, true).warn, []); // once
+  assert.deepEqual(judge(mt, guardBudget({ tokens: [0, 4000] }), new Set(), true).stop, { reason: "budget", why: "tokens=4.5k >= 4.0k" });
+});
+
+test("run guard: OpenCode steps and tools; no tokens in the stream = no token reading", async () => {
+  const { feed, judge, meterLine, newMeter } = await import("./run-guard.js");
+  const mt = await meterOf("opencode.jsonl");
+  assert.deepEqual([mt.turns, mt.tokens, mt.context, mt.edits["/w/x.go"]], [4, 4 * 175, 9150, 4]);
+  assert.equal(judge(mt, guardBudget({ same_file_edits: 4 }), new Set(), true).stop?.reason, "loop");
+  const bare = newMeter();
+  feed(bare, JSON.stringify({ type: "step_finish", part: {} }));
+  assert.equal(meterLine(bare), "turns=1");
+});
+
+test("run guard: no change in the worktree for N turns is a loop on write runs only", async () => {
+  const { judge, newMeter, progress } = await import("./run-guard.js");
+  const mt = newMeter();
+  progress(mt, "tree-a");
+  mt.turns = 10; progress(mt, "tree-a");
+  const b = guardBudget({ no_progress_turns: 10 });
+  assert.match(judge(mt, b, new Set(), true).stop!.why, /10 turns with no change/);
+  assert.equal(judge(mt, b, new Set(), false).stop, undefined);
+  progress(mt, "tree-b");
+  assert.equal(judge(mt, b, new Set(), true).stop, undefined);
+});
+
+test("run guard: transcript tail, last context and the scope a follow-up adds", async () => {
+  const { claudeTranscript, lastContext, newScope, tailLines } = await import("./run-guard.js");
+  const root = mkdtempSync(join(tmpdir(), "orq-guard-"));
+  mkdirSync(join(root, "projects", "-repo"), { recursive: true });
+  const f = join(root, "projects", "-repo", "s-1.jsonl");
+  writeFileSync(f, readFileSync(join(GUARD_FIX, "budget.jsonl"), "utf8") + '{"partial');
+  assert.equal(claudeTranscript(root, "s-1"), f);
+  assert.equal(claudeTranscript(root, "../x"), undefined);
+  const t = tailLines(f, 0);
+  assert.equal(t.lines.length, 10); // the partial line waits
+  assert.deepEqual(tailLines(f, t.at).lines, []);
+  assert.equal(lastContext(f), 301010);
+  assert.deepEqual(newScope("fix src/a.ts, src/b.ts and lib/c.ts", "do src/a.ts", ["/w/lib/c.ts"]), ["src/b.ts"]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("run guard: an answer that says the tests pass on the commit a failing verify tested is flagged", async () => {
+  const { falsePassClaims } = await import("./run-guard.js");
+  const dir = mkdtempSync(join(tmpdir(), "orq-claims-"));
+  writeFileSync(join(dir, "impl-api.refs"), "head=abc1234def checked=0 missing=\n");
+  writeFileSync(join(dir, "impl-api.out.md"), "Done. All tests pass.\n");
+  writeFileSync(join(dir, "impl-web.refs"), "head=999 checked=0 missing=\n");
+  writeFileSync(join(dir, "impl-web.out.md"), "All tests pass.\n");
+  assert.deepEqual(falsePassClaims(dir, "abc1234def5678", "verify-api"), ["impl-api"]);
+  assert.match(readFileSync(join(dir, "impl-api.guard"), "utf8"), /says the tests pass, but verify-api fails on the same commit abc1234def56/);
+  assert.equal(existsSync(join(dir, "impl-web.guard")), false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("run guard: orq agent stops a looping child with reason=loop and keeps the readings", () => {
+  const { root, env, run } = sandbox();
+  for (const k of ["HERDR_PANE_ID", "TMUX", "AGENT"]) delete (env as Record<string, string | undefined>)[k];
+  Object.assign(env, { ORQ_TERMINAL: "plain", ORQ_GUARD_TICK_S: "5" });
+  const fake = join(root, "fake.mjs");
+  writeFileSync(fake, `const fs = await import("node:fs");
+for (const l of fs.readFileSync(${JSON.stringify(join(GUARD_FIX, "same-file.jsonl"))}, "utf8").split("\\n")) if (l) console.log(l);
+setInterval(() => {}, 1000);\n`);
+  mkdirSync(join(env.XDG_CONFIG_HOME!, "orq"), { recursive: true });
+  writeFileSync(join(env.XDG_CONFIG_HOME!, "orq", "config.json"), JSON.stringify({
+    agents: { fake: { run: `'${process.execPath}' '${fake}'`, write: "", format: "claude", mem_max: "off", session: "uuid" } },
+    policy: { budget: { same_file_edits: 5 } } }));
+  mkdirSync(join(root, "w"));
+  writeFileSync(join(root, "p.md"), "loop\n");
+  const O = join(root, "out", "impl-x");
+  const r = run("agent", "-a", "fake", "-t", "loop", "-d", join(root, "w"), "-o", O, "--", join(root, "p.md"));
+  assert.equal(r.status, 0, r.stderr);
+  const w = run("wait", "--timeout", "60", O);
+  assert.equal(w.status, 1, w.stdout + w.stderr);
+  assert.match(readFileSync(`${O}.done`, "utf8"), /^status=fail rc=3 reason=loop /);
+  assert.match(readFileSync(`${O}.out.md`, "utf8"), /stopped by orq: reason=loop \(\/w\/src\/order\.service\.ts edited 6 times\); readings: turns=7/);
+  assert.match(readFileSync(`${O}.guard`, "utf8"), /stop reason=loop/);
+  assert.equal((JSON.parse(readFileSync(`${O}.meter.json`, "utf8")) as { turns: number }).turns, 7);
+});
+
+test("run guard: a subagent's turns count, but its context is not the session's", async () => {
+  const { feed, newMeter } = await import("./run-guard.js");
+  const mt = newMeter(), u = (n: number) => ({ input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: n, output_tokens: 1 });
+  feed(mt, JSON.stringify({ type: "assistant", message: { id: "a", content: [], usage: u(100_000) } }));
+  feed(mt, JSON.stringify({ type: "assistant", parent_tool_use_id: "t1", message: { id: "b", content: [], usage: u(5_000) } }));
+  feed(mt, JSON.stringify({ type: "assistant", isSidechain: true, message: { id: "c", content: [], usage: u(6_000) } }));
+  assert.deepEqual([mt.turns, mt.tokens, mt.context], [3, 3, 100_000]);
+});

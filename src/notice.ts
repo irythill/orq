@@ -54,7 +54,7 @@ export function issueOf(text: string): string | undefined {
 /** Popup title and body from a notice line: "✗ <title>" / "✓ <title>", details in the body. */
 export function popup(line: string): { title: string; body: string } {
   const loud = isLoud(line);
-  const t = line.replace(/^\[(HERDR-AGENT DONE|ORQ AGENT DONE|ORQ CI)\] /, "");
+  const t = line.replace(/^\[(HERDR-AGENT DONE|ORQ AGENT DONE|ORQ AGENT WARN|ORQ CI)\] /, "");
   const i = t.indexOf(" status=");
   const title = i < 0 ? t : t.slice(0, i), body = i < 0 ? "" : t.slice(i + 1).replace(/ answer: .*/, "");
   return { title: `${loud ? "✗" : /\bstatus=/.test(line) ? "✓" : "•"} ${title}`, body };

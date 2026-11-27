@@ -1,0 +1,15 @@
+{"type": "assistant", "message": {"id": "msg_0", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "npm run lint"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_1", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "npm run lint"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_2", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "npm run lint"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_10", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Edit", "input": {"file_path": "/w/a.ts", "old_string": "a", "new_string": "b"}}]}}
+{"type": "assistant", "message": {"id": "msg_20", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "npm run lint"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_21", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "npm run lint"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_22", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "npm run lint"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
+{"type": "assistant", "message": {"id": "msg_23", "role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "npm run lint"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok", "is_error": false}]}}
