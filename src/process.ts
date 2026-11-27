@@ -7,7 +7,7 @@
 // mode "auto" = kernel when available, else watchdog. (Windows Job Objects need a native addon: later, if the
 // watchdog proves too coarse.)
 import { type ChildProcess, execFile, spawn, spawnSync, type StdioOptions } from "node:child_process";
-import { setPriority } from "node:os";
+import { getPriority, setPriority } from "node:os";
 import { m } from "./i18n.js";
 
 export type MemMode = "auto" | "kernel" | "watchdog" | "off";
@@ -47,10 +47,11 @@ export function withHeap(nodeOptions: string | undefined, mb: number | undefined
 /** systemd-run -p arguments for a priority. */
 export const priorityProps = (p: Priority | undefined): string[] => (p ? PRIO[p].props : []).flatMap((x) => ["-p", x]);
 
-/** Lower the started command's priority (no-op for normal/undefined; a gone process or a denied call is ignored). */
+/** Lower the started command's priority, never raise it (orq itself may already run niced); no-op for
+ * normal/undefined; a gone process or a denied call is ignored. */
 export function applyPriority(pid: number | undefined, p: Priority | undefined): void {
   if (!pid || !p || PRIO[p].nice === 0) return;
-  try { setPriority(pid, PRIO[p].nice); } catch { /* exited already, or not allowed */ }
+  try { if (getPriority(pid) < PRIO[p].nice) setPriority(pid, PRIO[p].nice); } catch { /* exited already, or not allowed */ }
 }
 
 /** "4G", "512M", "1.5G", "off" → bytes (undefined = no cap). */
