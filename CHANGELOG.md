@@ -6,16 +6,14 @@ Português: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-11-27
+
 ### Added
 - `machine.agent_priority` (#169): agents run at a lower CPU and disk priority so the desktop stays responsive while they compile. `low` (the default) sets niceness 10, inherited by everything the agent starts (`tsc`, `npm`, `bun`), and, with the kernel memory cap, `CPUWeight=20` and `IOWeight=20` on the agent's scope, which only take effect when the machine is busy. `idle` goes further (niceness 19, `CPUWeight=idle`); `normal` keeps the old behavior. Applies in every `mem_enforce` mode, including `off`. Conductors are not affected.
 - `orq agent` sets the agent's V8 heap from its memory cap: `NODE_OPTIONS=--max-old-space-size=<cap - 1 GB>` (half the cap when it is 2 GB or less), so `tsc`, `eslint` and builds inside the agent run out of heap before the cap kills the whole agent. An existing `--max-old-space-size` is replaced; other `NODE_OPTIONS` flags are kept. The `/issue` skill no longer hardcodes a heap.
 
 ### Changed
 - `machine.agent_mem_max` defaults to `5G` (was `4G`), so the derived heap (4 GB) covers `tsc` on large repos: 3 GB was not enough for one.
-
-## [0.12.0] — 2026-11-24
-
-### Changed
 - `orq pick` weighs cost by the account, not only the agent (#105). **Economy** compares new tokens per approved delivery (the median run ÷ the share approved on the first review, or answered for reviewers) instead of per run. A new continuous **scarcity** penalty (`policy.weights.scarcity`, default 0.60) grows with each account's usage at the pace so far against its pick limit, `(min(pressure, 2) ÷ 2)²`, and an agent with several accounts takes the least scarce one. Accounts shared with the conductors (`agents.<name>.shared = true` or a list of accounts; the conductor's agent by default) count their usage × `policy.weights.shared` (default 1.5). The fixed `reserve` penalty and `policy.pacing_penalty` are gone: `orq pick` warns about them and reads `agents.<name>.reserve` as `shared`. `orq setup` suggests `shared` instead of `reserve`.
 
 ### Fixed
