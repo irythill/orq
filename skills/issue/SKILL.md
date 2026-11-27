@@ -158,7 +158,7 @@ orq agent $(cat $O/impl-<repo>.pick) -g <group> -t "<ID> impl <repo>" -d $WT -o 
 - **Verification in the child: lint and tsc only, one command at a time** (the cap is 4 GB per agent and jest/vitest
   blow it; tests are yours, step 4b): use the Verification column of the workspace `ORQ.md` and put in the prompt
   "verify sequentially, never in parallel or watch mode: (1) lint only the changed files (`git diff --name-only
-  origin/<BASE>...HEAD`); (2) `NODE_OPTIONS=--max-old-space-size=2048 tsc --noEmit` for the project. Don't run tests".
+  origin/<BASE>...HEAD`); (2) `NODE_OPTIONS=--max-old-space-size=4096 tsc --noEmit` for the project. Don't run tests".
   Full suite only in CI (or a manual `orq baseline` if the user asks).
 - An issue that changes an API contract: **API first**; consumers afterwards, with the new contract in the prompt.
 - **A red board line / `✗` pane title = a failure you may have missed.** If you see one (or the user says notices aren't
